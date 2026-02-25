@@ -1,0 +1,29 @@
+# Sender
+import json
+import numpy as np
+import socket  # or any IPC
+
+
+device_id = "ALERT"
+arr = np.array([0.05, 1.99, 0.74])
+
+payload = {
+    "device_id": device_id,
+    "values": arr.tolist()   # convert numpy array to list for JSON
+}
+
+json_str = json.dumps(payload)
+data = json_str.encode('utf-8')  # convert to bytes for sending
+
+# send `data` over socket, pipe, etc.
+
+# receive `data` as bytes
+json_str = data.decode('utf-8')
+payload = json.loads(json_str)
+
+device_id = payload["device_id"]
+arr = np.array(payload["values"])  # reconstruct numpy array
+
+print(device_id, arr)
+if(device_id == "ALERT"):
+    print("AHHHH")
