@@ -19,7 +19,7 @@ class MotorDriver:
         self.UI_lock = False
 
     async def motorcommand_receiver(self, data):        
-        print(f"Processing Motor Commands {data}" )
+        # print(f"Processing Motor Commands {data}" )
 
         try:
             cmd_id = data["Id"]
