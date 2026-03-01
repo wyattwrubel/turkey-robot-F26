@@ -8,13 +8,12 @@ from . import PathGenerator
 class TrajectoryTracker:
     Max_Allowed_Speed = 3
     MPC_Loop_Running = False
-    Desired_State = np.array([0, 0, 0], dtype=np.float32)
-    Desired_Trajectory = None
 
     Current_State = np.array([0, 0, 0], dtype=np.float32)
     Verbose = False
 
     Map = MapUpdater.Map()
+    MPC = MovementExecutor.MPC_loop()
 
     def __init__(self, Verbose=False):
         self.Verbose = Verbose
@@ -96,19 +95,9 @@ class TrajectoryTracker:
         except KeyError:
             print(f"Bad Trajectory Command ID Received: 'Cmd' key missing in {data}")
 
-        # MPC INTERFACING GOES HERE TODO
-        # Curr_Pos = np.array([2, 5])
-        input_cmd = np.array(input_cmd)
-        trajectory = PathGenerator.GenerateTrajectory(self.Map.Zone_Map, self.Current_State[0:2], input_cmd)
-        temp_map = self.Map.Zone_Map.copy().astype('<U1')
-
+        trajectory = PathGenerator.GenerateTrajectory(self.Map.Zone_Map, self.Current_State, input_cmd)
+        self.MPC.Move_CMD_Receiver(trajectory)
         
-        # if self.Verbose: 
-        #     for x,y, in trajectory:
-        #         temp_map[y,x] = 'X'
-        #     print(temp_map)
-        #     print(trajectory)
-
         if self.Verbose:
             start = trajectory[0]
             end = trajectory[-1]
@@ -133,7 +122,7 @@ class TrajectoryTracker:
         except KeyError:
             print(f"Bad Trajectory Command ID Received: 'Cmd' key missing in {data}")
 
-        # MPC INTERFACING GOES HERE TODO
+        self.MPC.Orient_CMD_Receiver(input_cmd)
 
     # Regulates Maximum Speed Traversed By The Robot
     def SpeedCap_CMD_Receiver(self, data):

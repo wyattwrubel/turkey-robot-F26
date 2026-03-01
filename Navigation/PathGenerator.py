@@ -4,10 +4,11 @@ import heapq
 # Library to interface with TrajectoryTracker -> High Level Function
 def GenerateTrajectory(map, current_state, desired_state):
     neighbors = [(-1,0),(1,0),(0,-1),(0,1),
-                (-1,-1),(-1,1),(1,-1),(1,1)]  
-
-    current_state = tuple(np.array(current_state).astype(int))
-    desired_state = tuple(np.array(desired_state).astype(int))
+                (-1,-1),(-1,1),(1,-1),(1,1)]
+  
+    desired_state = np.array(desired_state)
+    current_state = tuple(np.array(current_state[0:2]).astype(int))
+    desired_state = tuple(np.array(desired_state[0:2]).astype(int))
 
     width = map.shape[1]
     height = map.shape[0]

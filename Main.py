@@ -138,10 +138,8 @@ async def TurkeyChase(VisionObject_Publisher):
 
 async def FakeVision(VisionObject_Publisher):
         TURKEYDATA = np.array([[5, 5, 0], [10, 4, 0]])
-        HUMANDATA = np.array([[7, 7, 0], [12, 13, 0]])
+        HUMANDATA = np.array([[7, 7, 0], [12, 9, 0]])
         
-        payload = {"Id": "Clear"}
-        await VisionObject_Publisher.publish(payload)
         payload = {"Id": "DynamicObjects", "Turkeys": TURKEYDATA.tolist(), "Humans": HUMANDATA.tolist()}
         await VisionObject_Publisher.publish(payload)
     
@@ -172,10 +170,16 @@ async def FakeVision(VisionObject_Publisher):
         ##############
 
 async def FakeHighLevel(TrajectoryCMD_Publisher):
-    await asyncio.sleep(1)
-    DESIRED_LOCATION = np.array([17, 5])
-    payload = {"Id": "Move", "Cmd": DESIRED_LOCATION.tolist()}
-    await TrajectoryCMD_Publisher.publish(payload)
+    while True:
+        await asyncio.sleep(1)
+        DESIRED_LOCATION = np.array([17, 5])
+        payload = {"Id": "Move", "Cmd": DESIRED_LOCATION.tolist()}
+        await TrajectoryCMD_Publisher.publish(payload)
+
+        await asyncio.sleep(1)
+        DESIRED_LOCATION = np.array([17, 5, np.pi/2])
+        payload = {"Id": "Orient", "Cmd": DESIRED_LOCATION.tolist()}
+        await TrajectoryCMD_Publisher.publish(payload)
 
 # ----------------- Main -----------------
 async def main():
@@ -201,6 +205,7 @@ async def main():
         # Transmit_Orders(command_publisher),
         FakeVision(visionobject_publisher),
         FakeHighLevel(TrajectoryCMD_Publisher),
+        navigator.MPC.DriveTrain_Sender(),
 
         # plot_after_delay(10)
     )
