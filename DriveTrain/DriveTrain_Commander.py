@@ -9,7 +9,7 @@ class MotorDriver:
         
         self.SimDynamics = Dynamics_Sim
         self.motorspeeds = np.array([0,0], dtype=np.float32)
-        self.state = np.array([0, 0, 0], dtype=np.float32)
+        self.state = np.array([2, 2, 0], dtype=np.float32)
 
         # TO BE REVISED WHEN REAL NUMBERS COME OUT
         self.wheel_length = 1
@@ -19,8 +19,7 @@ class MotorDriver:
         self.UI_lock = False
 
     async def motorcommand_receiver(self, data):        
-        # print(f"Processing Motor Commands {data}" )
-
+        
         try:
             cmd_id = data["Id"]
         except KeyError:
@@ -49,7 +48,6 @@ class MotorDriver:
             await self.pose_publisher.publish(self.state)
             await asyncio.sleep(0.1)
 
-    
     async def increment_dynamics(self):
         while self.running:
             self.state = self.SimDynamics.differential_drive(self.state, self.motorspeeds, self.wheel_length, self.sampling_period)

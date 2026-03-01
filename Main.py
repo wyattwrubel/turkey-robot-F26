@@ -126,8 +126,7 @@ async def TurkeyChase(VisionObject_Publisher):
         payload = {"Id": "DynamicObjects", "Turkeys": TURKEYDATA.tolist(), "Humans": HUMANDATA.tolist()}
         await VisionObject_Publisher.publish(payload)
         await asyncio.sleep(0.5)
-
-
+        
         for i in range(6,16):
             TURKEYDATA = np.array([[6, i, 0]])
             HUMANDATA = np.empty((0, 3))
@@ -138,8 +137,16 @@ async def TurkeyChase(VisionObject_Publisher):
         await asyncio.sleep(0.5)
 
 async def FakeVision(VisionObject_Publisher):
-    while True:
-        await TurkeyChase(VisionObject_Publisher)
+        TURKEYDATA = np.array([[5, 5, 0], [10, 4, 0]])
+        HUMANDATA = np.array([[7, 7, 0], [12, 13, 0]])
+        
+        payload = {"Id": "Clear"}
+        await VisionObject_Publisher.publish(payload)
+        payload = {"Id": "DynamicObjects", "Turkeys": TURKEYDATA.tolist(), "Humans": HUMANDATA.tolist()}
+        await VisionObject_Publisher.publish(payload)
+    
+    # while True:
+    #     await TurkeyChase(VisionObject_Publisher)
         # CMDData = np.array([5, 5, 0])
         # payload = {"Id": "Turkey", "Cmd": CMDData.tolist()}
         # await VisionObject_Publisher.publish(payload)
@@ -164,6 +171,11 @@ async def FakeVision(VisionObject_Publisher):
         # await VisionObject_Publisher.publish(payload)
         ##############
 
+async def FakeHighLevel(TrajectoryCMD_Publisher):
+    await asyncio.sleep(1)
+    DESIRED_LOCATION = np.array([17, 5])
+    payload = {"Id": "Move", "Cmd": DESIRED_LOCATION.tolist()}
+    await TrajectoryCMD_Publisher.publish(payload)
 
 # ----------------- Main -----------------
 async def main():
@@ -171,21 +183,25 @@ async def main():
     command_publisher = AsyncPublisher()
     visionobject_publisher = AsyncPublisher()
 
+    TrajectoryCMD_Publisher = AsyncPublisher()
+
     driver = Drive.MotorDriver(pose_publisher, command_publisher)
     pose_publisher.subscribe(Receiver)
     
     navigator = Nav.TrajectoryTracker(Verbose=True)
     pose_publisher.subscribe(navigator.RobotPose_Receiver)
     visionobject_publisher.subscribe(navigator.VisionObject_Receiver)
+    TrajectoryCMD_Publisher.subscribe(navigator.TrajectoryCMD_Receiver)
 
     navigator.Map.Zone_Map = navigator.Map.Zone_Map[0:15, 0:20]
 
     await asyncio.gather(
         driver.robotpose_transmitter(),
-
         driver.increment_dynamics(),
-        Transmit_Orders(command_publisher),
+        # Transmit_Orders(command_publisher),
         FakeVision(visionobject_publisher),
+        FakeHighLevel(TrajectoryCMD_Publisher),
+
         # plot_after_delay(10)
     )
 

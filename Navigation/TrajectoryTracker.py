@@ -81,9 +81,9 @@ class TrajectoryTracker:
            print(f"Bad Trajectory Command ID Received: 'Id' key missing in {data}")
 
         if(input_id == "Orient"):
-            self.Move_CMD_Receiver(data)
-        elif(input_id == "Move"):
             self.Orient_CMD_Receiver(data)
+        elif(input_id == "Move"):
+            self.Move_CMD_Receiver(data)
         elif(input_id == "SpeedCap"):
             self.SpeedCap_CMD_Receiver(data)
         else:
@@ -97,6 +97,34 @@ class TrajectoryTracker:
             print(f"Bad Trajectory Command ID Received: 'Cmd' key missing in {data}")
 
         # MPC INTERFACING GOES HERE TODO
+        # Curr_Pos = np.array([2, 5])
+        input_cmd = np.array(input_cmd)
+        trajectory = PathGenerator.GenerateTrajectory(self.Map.Zone_Map, self.Current_State[0:2], input_cmd)
+        temp_map = self.Map.Zone_Map.copy().astype('<U1')
+
+        
+        # if self.Verbose: 
+        #     for x,y, in trajectory:
+        #         temp_map[y,x] = 'X'
+        #     print(temp_map)
+        #     print(trajectory)
+
+        if self.Verbose:
+            start = trajectory[0]
+            end = trajectory[-1]
+            for y in range(self.Map.Zone_Map.shape[0]):
+                row_str = ""
+                for x in range(self.Map.Zone_Map.shape[1]):
+                    if (x, y) == start:
+                        row_str += "S "
+                    elif (x, y) == end:
+                        row_str += "E "
+                    elif (x, y) in trajectory:
+                        row_str += "* "
+                    else:
+                        row_str += f"{self.Map.Zone_Map[y, x]} "
+                print(row_str)
+            print(trajectory)
 
     # Used to Max Fine Adjustments For Rotation and Alert Routines
     def Orient_CMD_Receiver(self, data):    
