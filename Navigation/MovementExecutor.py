@@ -5,6 +5,7 @@ class MPC_loop:
     
     Tracked_Trajectory = []
     Desired_State = np.array([0, 0, 0], dtype=np.float32)
+    Verbose = False
 
     def Orient_CMD_Receiver(self, data):
         self.Desired_State = data
@@ -15,9 +16,9 @@ class MPC_loop:
         self.Desired_State = np.array([0, 0, 0], dtype=np.float32)
 
     async def MPC_Main(self):
-        print("TRACKING ", self.Tracked_Trajectory)
-        print("Driving to ", self.Desired_State)
-
+        if(self.Verbose):
+            print("TRACKING ", self.Tracked_Trajectory)
+            print("Driving to ", self.Desired_State)
     async def DriveTrain_Sender(self):
         while True:
             await asyncio.sleep(0.1)
