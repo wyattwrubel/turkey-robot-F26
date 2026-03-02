@@ -3,6 +3,8 @@ import asyncio
 import numpy as np
 import matplotlib.pyplot as plt
 import Navigation.TrajectoryTracker as Nav
+import Canine.Canine as K9
+import time
 
 # ----------------- Async Publisher -----------------
 class AsyncPublisher:
@@ -39,7 +41,7 @@ async def Transmit_Orders(command_publisher):
     global totaltime
     while True:
         CMDData = np.array([2, 2])
-        payload = {"Id": "Nav", "Cmd": CMDData.tolist()}
+        payload = {"Id": "System", "Cmd": CMDData.tolist()}
         await command_publisher.publish(payload)
         await asyncio.sleep(2)
         input.append(CMDData)
@@ -47,7 +49,7 @@ async def Transmit_Orders(command_publisher):
         totaltime += 2
         
         CMDData = np.array([2, 1.7])
-        payload = {"Id": "Nav", "Cmd": CMDData.tolist()}
+        payload = {"Id": "System", "Cmd": CMDData.tolist()}
         await command_publisher.publish(payload)
         input.append(CMDData)
         time.append(totaltime)
@@ -55,7 +57,7 @@ async def Transmit_Orders(command_publisher):
         await asyncio.sleep(4)
 
         CMDData = np.array([-2, 2])
-        payload = {"Id": "Nav", "Cmd": CMDData.tolist()}
+        payload = {"Id": "System", "Cmd": CMDData.tolist()}
         await command_publisher.publish(payload)
         input.append(CMDData)
         time.append(totaltime)
@@ -63,7 +65,7 @@ async def Transmit_Orders(command_publisher):
         await asyncio.sleep(0.3)
 
         CMDData = np.array([1, 1])
-        payload = {"Id": "Nav", "Cmd": CMDData.tolist()}
+        payload = {"Id": "System", "Cmd": CMDData.tolist()}
         await command_publisher.publish(payload)
         input.append(CMDData)
         time.append(totaltime)
@@ -181,6 +183,10 @@ async def FakeHighLevel(TrajectoryCMD_Publisher):
         payload = {"Id": "Orient", "Cmd": DESIRED_LOCATION.tolist()}
         await TrajectoryCMD_Publisher.publish(payload)
 
+async def K9_tester(K9_pub):
+    payload = {"Id": "UI", "Type": "Audio", "Data": "startup"}
+    await K9_pub.publish(payload)
+
 # ----------------- Main -----------------
 async def main():
     pose_publisher = AsyncPublisher()
@@ -192,12 +198,17 @@ async def main():
     driver = Drive.MotorDriver(pose_publisher, command_publisher)
     pose_publisher.subscribe(Receiver)
     
-    navigator = Nav.TrajectoryTracker(Verbose=True)
+    navigator = Nav.TrajectoryTracker(Verbose=False)
     pose_publisher.subscribe(navigator.RobotPose_Receiver)
     visionobject_publisher.subscribe(navigator.VisionObject_Receiver)
     TrajectoryCMD_Publisher.subscribe(navigator.TrajectoryCMD_Receiver)
 
     navigator.Map.Zone_Map = navigator.Map.Zone_Map[0:15, 0:20]
+
+
+    Canine = K9.CanineDriver()
+    K9_publisher = AsyncPublisher()
+    K9_publisher.subscribe(Canine.CanineCommand_Receiver)
 
     await asyncio.gather(
         driver.robotpose_transmitter(),
@@ -206,6 +217,7 @@ async def main():
         FakeVision(visionobject_publisher),
         FakeHighLevel(TrajectoryCMD_Publisher),
         navigator.MPC.DriveTrain_Sender(),
+        K9_tester(K9_publisher),
 
         # plot_after_delay(10)
     )

@@ -37,7 +37,7 @@ class MotorDriver:
                 self.UI_lock = True
                 self.motorspeeds = cmd_data
 
-            elif(cmd_id == "Nav"):
+            elif(cmd_id == "System"):
                 if(self.UI_lock == False):
                     self.motorspeeds = cmd_data
             else:
