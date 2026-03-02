@@ -1,4 +1,8 @@
 class PoseDriver():
 
-    def CanineMotor_Receiver():
-        print()
+    def CanineMotor_Receiver(self, data):
+
+        # HANDLE INSTANCE OF SERVO COMMAND OR POSE COMMANDS -> FIGURE OUT HOW TO BEST DO THIS
+        print("RECEIVED", data)
+
+# USE SCHEDULER TO HAVE PATH A PATH B etc. RUN/ CANCEL SELECT TASKS AS DATA COMES IN

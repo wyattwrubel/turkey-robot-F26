@@ -184,35 +184,39 @@ async def FakeHighLevel(TrajectoryCMD_Publisher):
         await TrajectoryCMD_Publisher.publish(payload)
 
 async def K9_tester(K9_pub):
-    print("System HOWL")
-    payload = {"Id": "System", "Type": "Audio", "Data": "howl"}
+    payload = {"Id": "System", "Type": "Servo", "Data": "howl"}
     await K9_pub.publish(payload)
     await asyncio.sleep(2)
 
-    print("UI HOWL")
-    payload = {"Id": "UI", "Type": "Audio", "Data": "howl"}
-    await K9_pub.publish(payload)
-    await asyncio.sleep(2)
+    # print("System HOWL")
+    # payload = {"Id": "System", "Type": "Audio", "Data": "howl"}
+    # await K9_pub.publish(payload)
+    # await asyncio.sleep(2)
 
-    print("System HOWL")
-    payload = {"Id": "System", "Type": "Audio", "Data": "howl"}
-    await K9_pub.publish(payload)
-    await asyncio.sleep(2)
+    # print("UI HOWL")
+    # payload = {"Id": "UI", "Type": "Audio", "Data": "howl"}
+    # await K9_pub.publish(payload)
+    # await asyncio.sleep(2)
 
-    print("UI HOWL")
-    payload = {"Id": "UI", "Type": "Audio", "Data": "howl"}
-    await K9_pub.publish(payload)
-    await asyncio.sleep(2)
+    # print("System HOWL")
+    # payload = {"Id": "System", "Type": "Audio", "Data": "howl"}
+    # await K9_pub.publish(payload)
+    # await asyncio.sleep(2)
 
-    print("System UNLOCK")
-    payload = {"Id": "UnlockUI"}
-    await K9_pub.publish(payload)
-    await asyncio.sleep(2)
+    # print("UI HOWL")
+    # payload = {"Id": "UI", "Type": "Audio", "Data": "howl"}
+    # await K9_pub.publish(payload)
+    # await asyncio.sleep(2)
 
-    print("System HOWL")
-    payload = {"Id": "System", "Type": "Audio", "Data": "howl"}
-    await K9_pub.publish(payload)
-    await asyncio.sleep(2)
+    # print("System UNLOCK")
+    # payload = {"Id": "UnlockUI"}
+    # await K9_pub.publish(payload)
+    # await asyncio.sleep(2)
+
+    # print("System HOWL")
+    # payload = {"Id": "System", "Type": "Audio", "Data": "howl"}
+    # await K9_pub.publish(payload)
+    # await asyncio.sleep(2)
 
 # ----------------- Main -----------------
 async def main():
@@ -232,7 +236,6 @@ async def main():
 
     navigator.Map.Zone_Map = navigator.Map.Zone_Map[0:15, 0:20]
 
-
     Canine = K9.CanineDriver()
     K9_publisher = AsyncPublisher()
     K9_publisher.subscribe(Canine.CanineCommand_Receiver)
@@ -244,8 +247,7 @@ async def main():
         FakeVision(visionobject_publisher),
         FakeHighLevel(TrajectoryCMD_Publisher),
         navigator.MPC.DriveTrain_Sender(),
-        # K9_tester(K9_publisher),
-
+        K9_tester(K9_publisher),
         # plot_after_delay(10)
     )
 
