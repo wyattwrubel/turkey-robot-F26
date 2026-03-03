@@ -18,6 +18,8 @@ class ServoController:
             self._execute_pattern(command_name, data)
         )
 
+#HI THERE
+
     async def _execute_pattern(self, command_name, data):
         if command_name == "swing":
             await self._pattern_swing()
