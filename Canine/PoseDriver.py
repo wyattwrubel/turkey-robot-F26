@@ -1,3 +1,7 @@
+import sys
+import os
+sys.path.append(os.path.dirname(__file__))
+
 import ServoDriver as SD
 import ServoController as SC
 import asyncio
@@ -5,7 +9,7 @@ import asyncio
 class PoseDriver():
     def __init__(self):
         self.servos = {}
-        Verbose = False
+        Verbose = True
         self.servos["FrontLeft"] = SC.ServoController(SD.Servo(None, None, Verbose), Verbose)
         self.servos["FrontRight"] = SC.ServoController(SD.Servo(None, None, Verbose), Verbose)
         self.servos["RearRight"] = SC.ServoController(SD.Servo(None, None, Verbose), Verbose)

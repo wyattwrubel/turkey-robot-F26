@@ -3,7 +3,7 @@ import asyncio
 import numpy as np
 import matplotlib.pyplot as plt
 import Navigation.TrajectoryTracker as Nav
-import Canine.Canine as K9
+import Canine.CanineDriver as K9
 import time
 
 # ----------------- Async Publisher -----------------
@@ -103,6 +103,8 @@ async def plot_after_delay(delay=10):
     plt.show()
 
 async def TurkeyChase(VisionObject_Publisher):
+        
+        await asyncio.sleep(0.01)
         TURKEYDATA = np.array([[4, 4, 0]])
         HUMANDATA = np.empty((0, 3))
         
@@ -184,7 +186,32 @@ async def FakeHighLevel(TrajectoryCMD_Publisher):
         await TrajectoryCMD_Publisher.publish(payload)
 
 async def K9_tester(K9_pub):
-    payload = {"Id": "System", "Type": "Servo", "Data": "howl"}
+    payload = {"Id": "System", "Type": "Audio", "Data": "howl"}
+    await K9_pub.publish(payload)
+    await asyncio.sleep(2)
+
+    payload = {"Id": "System", "Type": "Servo", "Name": "FrontLeft", "Data": 75}
+    await K9_pub.publish(payload)
+    await asyncio.sleep(2)
+
+    payload = {"Id": "System", "Type": "Pose", "Data": "Pose2"}
+    await K9_pub.publish(payload)
+    await asyncio.sleep(2)
+
+    print("WAVE /////////////////////////")
+    payload = {"Id": "System", "Type": "Servo", "Name": "FrontLeft", "Data": 0}
+    await K9_pub.publish(payload)
+    payload = {"Id": "System", "Type": "Servo", "Name": "FrontRight", "Data": 10}
+    await K9_pub.publish(payload)
+    payload = {"Id": "System", "Type": "Servo", "Name": "RearLeft", "Data": 20}
+    await K9_pub.publish(payload)
+    payload = {"Id": "System", "Type": "Servo", "Name": "RearRight", "Data": 30}
+    await K9_pub.publish(payload)
+    
+    await asyncio.sleep(2)
+
+
+    payload = {"Id": "System", "Type": "Pose", "Data": "Pose1"}
     await K9_pub.publish(payload)
     await asyncio.sleep(2)
 
@@ -220,10 +247,10 @@ async def K9_tester(K9_pub):
 
 # ----------------- Main -----------------
 async def main():
+
     pose_publisher = AsyncPublisher()
     command_publisher = AsyncPublisher()
     visionobject_publisher = AsyncPublisher()
-
     TrajectoryCMD_Publisher = AsyncPublisher()
 
     driver = Drive.MotorDriver(pose_publisher, command_publisher)
@@ -241,12 +268,12 @@ async def main():
     K9_publisher.subscribe(Canine.CanineCommand_Receiver)
 
     await asyncio.gather(
-        driver.robotpose_transmitter(),
-        driver.increment_dynamics(),
+        # driver.robotpose_transmitter(),
+        # driver.increment_dynamics(),
         # Transmit_Orders(command_publisher),
-        FakeVision(visionobject_publisher),
-        FakeHighLevel(TrajectoryCMD_Publisher),
-        navigator.MPC.DriveTrain_Sender(),
+        # FakeVision(visionobject_publisher),
+        # FakeHighLevel(TrajectoryCMD_Publisher),
+        # navigator.MPC.DriveTrain_Sender(),
         K9_tester(K9_publisher),
         # plot_after_delay(10)
     )

@@ -1,5 +1,9 @@
-from . import PoseDriver
-from . import AudioDriver
+import sys
+import os
+sys.path.append(os.path.dirname(__file__))
+
+import PoseDriver
+import AudioDriver
 
 class CanineDriver:
     
@@ -45,6 +49,6 @@ class CanineDriver:
         if(cmd_type == "Audio" and cmd_data in self.Audio.sounds):
             self.Audio.play(cmd_data)
         elif(cmd_type == "Servo" or cmd_type == "Pose"):
-            self.PoseDriver.CanineMotor_Receiver(data)
+            await self.PoseDriver.CanineMotor_Receiver(data)
         else: 
             print(f"Bad Canine Command Type Received: Invalid 'Type' missing in {data}") 
