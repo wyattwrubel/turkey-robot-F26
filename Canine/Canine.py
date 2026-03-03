@@ -1,16 +1,8 @@
 from . import PoseDriver
-from . import ServoDriver
 from . import AudioDriver
-
-import asyncio
 
 class CanineDriver:
     
-    # TO DEFINE: 
-        # AUDIO DRIVER
-        # POSE DRIVER -> THIS MANAGES SERVO DRIVER
-    Audio = []
-    PoseDriver = []
     UI_lock = False
 
     def __init__(self):
@@ -18,7 +10,6 @@ class CanineDriver:
         self.PoseDriver = PoseDriver.PoseDriver()
     
     async def CanineCommand_Receiver(self, data):
-        
         try:
             cmd_id = data["Id"]
         except KeyError:

@@ -3,10 +3,8 @@ import ServoController
 import asyncio
 
 class PoseDriver():
-
     def __init__(self):
         self.servos = {}
-
         Verbose = True
         self.servos["FrontLeft"] = ServoController.ServoController(ServoDriver.Servo(None, None, Verbose))
         self.servos["FrontRight"] = ServoController.ServoController(ServoDriver.Servo(None, None, Verbose))
@@ -79,6 +77,8 @@ async def main():
         "Pattern": "static",
         "Data": 90
     })
+
+    await asyncio.sleep(5)
 
 if __name__ == "__main__":
     asyncio.run(main())

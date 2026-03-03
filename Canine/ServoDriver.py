@@ -25,12 +25,10 @@ class Servo:
         motor_angle = max(self.Motor_Min_Angle, min(self.Motor_Max_Angle, Angle))
         pulse_width = (motor_angle + self.Motor_Max_Angle) / (self.Motor_Max_Angle - self.Motor_Min_Angle)
         pulse_width = pulse_width * (self.Motor_Max_Pulse - self.Motor_Min_Pulse) + self.Motor_Min_Pulse
-        self._SendPulse(motor_angle, pulse_width)
+        self._SendPulse(pulse_width)
 
     # TODO On raspberry pi | Establish PWMs and I2C connections
-    def _SendPulse(self, motor_angle, pulse_width):
+    def _SendPulse(self,pulse_width):
         if self.Verbose: print("SENDING PULSE OF WIDTH IN MICROSECONDS", pulse_width)
         # self._pi.set_servo_pulsewidth(self.gpio_pin, pulse_width)
-        self.Current_Angle = motor_angle
-
             
