@@ -79,14 +79,20 @@ class Servo:
                 print("ANGLE SEQUENCE ROUTINE", self.Current_Angle)
             await asyncio.sleep(self.SEQUENCE_TIME_STEP)
 
+    def _HandleOscillatingRoutine(self):
+        print()
+    
+    def _HandleSequenceRoutine(self):
+        print()
+
+    # FUNCTION TO DETERMINE APPROPRIATE DELAY
+    async def _ComputeTimeStep(self):
+        print()
+
     # DRIVE PWM PINS TO OUTPUT TODO
     async def _ServoAngle(self):
         print("SENDING ANGLE ", self.Current_Angle, "OUTPUT TO", self.Name)
         # SPEED COMES IN DELAY + INTERVALS?
-
-    async def _ComputeTimeStep(self):
-        print()
-
 
 async def main():
     # Create a servo instance
@@ -119,7 +125,6 @@ async def main():
         servo1.Freeze()
 
         await asyncio.sleep(5)
-
 
     # Stop the servo
     servo1.Freeze()
