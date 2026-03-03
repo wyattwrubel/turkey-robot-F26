@@ -12,21 +12,24 @@ class Servo:
     Address = None # Address for I2C TODO figure out hardware needs of PWM expander
     I2C_Pin = None # TODO once wiring finalized
 
+    Verbose = False
+
     # TODO change this interfacce to account for min and max angles if Team 19 needs
-    def __init__(self, I2C_Pin,  Address):
+    def __init__(self, I2C_Pin,  Address, Verbose=False):
         self.I2C_Pin = I2C_Pin
         self.Address = Address
+        self.Verbose = Verbose
 
     # TODO validate that this works
     def SetAngle(self, Angle):
         motor_angle = max(self.Motor_Min_Angle, min(self.Motor_Max_Angle, Angle))
         pulse_width = (motor_angle + self.Motor_Max_Angle) / (self.Motor_Max_Angle - self.Motor_Min_Angle)
         pulse_width = pulse_width * (self.Motor_Max_Pulse - self.Motor_Min_Pulse) + self.Motor_Min_Pulse
-        self._SendPulse(pulse_width)
+        self._SendPulse(motor_angle, pulse_width)
 
     # TODO On raspberry pi | Establish PWMs and I2C connections
     def _SendPulse(self, motor_angle, pulse_width):
-        print("SENDING PULSE OF WIDTH IN MICROSECONDS", pulse_width)
+        if self.Verbose: print("SENDING PULSE OF WIDTH IN MICROSECONDS", pulse_width)
         # self._pi.set_servo_pulsewidth(self.gpio_pin, pulse_width)
         self.Current_Angle = motor_angle
 
