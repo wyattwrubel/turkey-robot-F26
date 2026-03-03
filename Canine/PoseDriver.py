@@ -9,7 +9,7 @@ import asyncio
 class PoseDriver():
     def __init__(self):
         self.servos = {}
-        Verbose = True
+        Verbose = False
         self.servos["FrontLeft"] = SC.ServoController(SD.Servo(None, None, Verbose), Verbose)
         self.servos["FrontRight"] = SC.ServoController(SD.Servo(None, None, Verbose), Verbose)
         self.servos["RearRight"] = SC.ServoController(SD.Servo(None, None, Verbose), Verbose)
