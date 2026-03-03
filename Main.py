@@ -1,4 +1,4 @@
-import DriveTrain.DriveTrain_Commander as Drive
+import DriveTrain.DriveTrainDriver as Drive
 import asyncio
 import numpy as np
 import matplotlib.pyplot as plt
@@ -186,9 +186,9 @@ async def FakeHighLevel(TrajectoryCMD_Publisher):
         await TrajectoryCMD_Publisher.publish(payload)
 
 async def K9_tester(K9_pub):
-    payload = {"Id": "System", "Type": "Audio", "Data": "howl"}
-    await K9_pub.publish(payload)
-    await asyncio.sleep(2)
+    # payload = {"Id": "System", "Type": "Audio", "Data": "howl"}
+    # await K9_pub.publish(payload)
+    # await asyncio.sleep(2)
 
     payload = {"Id": "System", "Type": "Servo", "Name": "FrontLeft", "Data": 75}
     await K9_pub.publish(payload)
@@ -268,12 +268,12 @@ async def main():
     K9_publisher.subscribe(Canine.CanineCommand_Receiver)
 
     await asyncio.gather(
-        # driver.robotpose_transmitter(),
-        # driver.increment_dynamics(),
-        # Transmit_Orders(command_publisher),
-        # FakeVision(visionobject_publisher),
-        # FakeHighLevel(TrajectoryCMD_Publisher),
-        # navigator.MPC.DriveTrain_Sender(),
+        driver.robotpose_transmitter(),
+        driver.increment_dynamics(),
+        Transmit_Orders(command_publisher),
+        FakeVision(visionobject_publisher),
+        FakeHighLevel(TrajectoryCMD_Publisher),
+        navigator.MPC.DriveTrain_Sender(),
         K9_tester(K9_publisher),
         # plot_after_delay(10)
     )
