@@ -64,7 +64,7 @@ class PoseDriver():
             print("Invalid pose received in ", data)
 
     #TODO Update Once Have ServoController Elements Defined < Team 19
-    # INCLUDE ANY PRINTOUTS WITH VERBOSE
+    # INCLUDE ANY PRINTOUTS WITH VERBOSE DELAYS ARE DONE MANUALLY
     async def _Pose1_Protocol(self):
         await asyncio.gather(
             self.servos["FrontLeft"].servo_control_receiver("Fixed", 90),

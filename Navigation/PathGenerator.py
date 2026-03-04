@@ -46,7 +46,7 @@ def GenerateTrajectory(map, current_state, desired_state):
                 continue
             if neighbor in close_set: 
                 continue
-            # ANY OTHER PRUNING TACTICS GOES HERE
+            # TODO ANY OTHER PRUNING TACTICS GOES HERE
 
             tentative_g = gscore[current] + np.hypot(dx, dy)
             if (map[y, x] >= 2):

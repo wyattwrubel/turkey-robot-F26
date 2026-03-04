@@ -13,7 +13,7 @@ class CanineDriver:
         self.Audio = AudioDriver.AsyncAudioDriver()
         self.PoseDriver = PoseDriver.PoseDriver(Verbose)
 
-    async def CanineCommand_Receiver(self, data):
+    async def CanineDriver_Receiver(self, data):
         try:
             cmd_id = data["Id"]
         except KeyError:
@@ -23,15 +23,15 @@ class CanineDriver:
             self.UI_lock = False
         elif(cmd_id == "UI"):
             self.UI_lock = True
-            await self.Process_CanineData(data)
+            await self._Process_CanineData(data)
         elif(cmd_id == "System"):
             if(self.UI_lock == False):
-                await self.Process_CanineData(data)
+                await self._Process_CanineData(data)
         else:
             print(f"CanineDriver: Invalid 'Id' in {data}") 
 
     # HANDLE AUDIO, RAW MOTOR, MOTOR POSES
-    async def Process_CanineData(self, data):
+    async def _Process_CanineData(self, data):
         try:
             cmd_type = data["Type"]
             cmd_data = data["Data"]
