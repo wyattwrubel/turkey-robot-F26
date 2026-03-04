@@ -10,9 +10,7 @@ import numpy as np
 import asyncio
 import time
 
-
 class MotorDriver: 
-
     def __init__(self, PosePublisher, UWBPublisher, Simulated=False):
         self.PosePublisher = PosePublisher
         self.UWBPublisher = UWBPublisher
@@ -99,6 +97,7 @@ class MotorDriver:
                 else:
                     self.emergency_mode = False
 
+                # BUG TODO FIX THIS BUG
                 self.CurrentState = SimulatedDynamics.differential_drive(
                     self.CurrentState,
                     self.MotorSpeeds,

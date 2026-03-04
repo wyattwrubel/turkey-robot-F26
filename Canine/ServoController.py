@@ -1,7 +1,6 @@
 import asyncio
 
 class ServoController:
-    
     def __init__(self, servo, Verbose=False):
         self.servo = servo
         self._task = None
@@ -27,7 +26,7 @@ class ServoController:
         elif command_name == "Oscillate":
             await self._Oscillate_Command()
         else:
-            print(f"Unknown pattern: {command_name}")
+            print(f"ServoController: Unknown command {command_name}")
 
     # DEFINE ALL THE COMMANDS TO BE RUN TODO
     async def _Fixed_Command(self, angle):

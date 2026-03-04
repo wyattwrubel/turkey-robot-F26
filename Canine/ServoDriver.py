@@ -9,15 +9,13 @@ class Servo:
     Motor_Max_Pulse = 2350 #microseconds TODO Team 19
 
     Current_Angle = None
-    Address = None # Address for I2C TODO figure out hardware needs of PWM expander
-    I2C_Pin = None # TODO once wiring finalized
+    GPIO_PIN = None # TODO once wiring finalized
 
     Verbose = False
 
     # TODO change this interfacce to account for min and max angles if Team 19 needs
-    def __init__(self, I2C_Pin,  Address, Verbose=False):
-        self.I2C_Pin = I2C_Pin
-        self.Address = Address
+    def __init__(self, GPIO_PIN, Verbose=False):
+        self.GPIO_PIN = GPIO_PIN
         self.Verbose = Verbose
 
     # TODO validate that this works
