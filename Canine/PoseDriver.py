@@ -7,14 +7,18 @@ import ServoController as SC
 import asyncio
 
 class PoseDriver():
-    def __init__(self):
+    def __init__(self, Verbose):
         self.servos = {}
-        Verbose = False
-        self.servos["FrontLeft"] = SC.ServoController(SD.Servo(None, None, Verbose), Verbose)
-        self.servos["FrontRight"] = SC.ServoController(SD.Servo(None, None, Verbose), Verbose)
-        self.servos["RearRight"] = SC.ServoController(SD.Servo(None, None, Verbose), Verbose)
-        self.servos["RearLeft"] = SC.ServoController(SD.Servo(None, None, Verbose), Verbose)
-        self.servos["Head"] = SC.ServoController(SD.Servo(None, None, Verbose), Verbose)
+        self.Verbose = Verbose
+
+        #TODO UPDATE WITH CORRECT PINOUTS
+        #TODO ADD IN DIFFERENT MOTOR SPECS?
+
+        self.servos["FrontLeft"] = SC.ServoController(SD.Servo(None, Verbose), Verbose)
+        self.servos["FrontRight"] = SC.ServoController(SD.Servo(None, Verbose), Verbose)
+        self.servos["RearRight"] = SC.ServoController(SD.Servo(None, Verbose), Verbose)
+        self.servos["RearLeft"] = SC.ServoController(SD.Servo(None, Verbose), Verbose)
+        self.servos["Head"] = SC.ServoController(SD.Servo(None, Verbose), Verbose)
 
     async def CanineMotor_Receiver(self, data):
         if data["Type"] == "Servo":
@@ -22,18 +26,18 @@ class PoseDriver():
         elif data["Type"] == "Pose":
             await self._Process_PoseCommands(data)
         else:
-            print("INVALID POSEDRIVER TYPE RECEIVED")
+            print(f"PoseDriver: Invalid 'Type' in {data}") 
 
     async def _Process_ServoCommands(self, data):
         try:
             name = data["Name"]
             data = data["Data"]
         except KeyError:
-            print(f"Malformed command: {data}")
+            print(f"PoseDriver: Missing 'Name' or 'Data' in {data}") 
             return
 
         if name not in self.servos:
-            print(f"Invalid servo name: {name}")
+            print(f"PoseDriver: Invalid 'Data' in {data}") 
             return
 
         await self.servos[name].servo_control_receiver("Fixed", data)
@@ -42,9 +46,10 @@ class PoseDriver():
         try: 
             data = data["Data"]
         except KeyError:
-            print(f"Data not found in ", data)
+            print(f"PoseDriver: Missing 'Data' in {data}") 
             return
         
+        #TODO UPDATE THESE WITH REAL NEEDS FROM 19
         if(data == "Pose1"):
             await self._Pose1_Protocol()
         elif(data == "Pose2"):
@@ -59,6 +64,7 @@ class PoseDriver():
             print("Invalid pose received in ", data)
 
     #TODO Update Once Have ServoController Elements Defined < Team 19
+    # INCLUDE ANY PRINTOUTS WITH VERBOSE DELAYS ARE DONE MANUALLY
     async def _Pose1_Protocol(self):
         await asyncio.gather(
             self.servos["FrontLeft"].servo_control_receiver("Fixed", 90),
@@ -76,67 +82,13 @@ class PoseDriver():
             self.servos["FrontLeft"].servo_control_receiver("Fixed", 90),
             self.servos["FrontRight"].servo_control_receiver("Fixed", 90),
         )
-
     async def _Pose4_Protocol(self):
         await asyncio.gather(
             self.servos["FrontLeft"].servo_control_receiver("static", 90),
             self.servos["FrontRight"].servo_control_receiver("static", 90),
         )
-
     async def _Pose5_Protocol(self):
         await asyncio.gather(
             self.servos["FrontLeft"].servo_control_receiver("static", 90),
             self.servos["FrontRight"].servo_control_receiver("static", 90),
         )
-
-async def main():
-    driver = PoseDriver()
-
-    # await driver.CanineMotor_Receiver({
-    #     "Type": "Servo",
-    #     "Name": "FrontLeft",
-    #     "Data": 90
-    # })
-    await driver.CanineMotor_Receiver({
-            "Type": "Pose",
-            "Data": "Pose1",
-        })
-
-    await asyncio.sleep(5)
-
-    await driver.CanineMotor_Receiver({
-            "Type": "Pose",
-            "Data": "Pose2",
-        })
-
-    # await driver.CanineMotor_Receiver({
-    #     "Type": "Servo",
-    #     "Name": "FrontRight",
-    #     "Pattern": "swing"
-    # })
-
-    # await driver.CanineMotor_Receiver({
-    #     "Type": "Servo",
-    #     "Name": "RearRight",
-    #     "Pattern": "swing"
-    # })
-
-    # await driver.CanineMotor_Receiver({
-    #     "Type": "Servo",
-    #     "Name": "RearLeft",
-    #     "Pattern": "swing"
-    # })
-
-    # await asyncio.sleep(0.5)
-
-    # await driver.CanineMotor_Receiver({
-    #     "Type": "Servo",
-    #     "Name": "FrontLeft",
-    #     "Pattern": "static",
-    #     "Data": 90
-    # })
-
-    # await asyncio.sleep(5)
-
-if __name__ == "__main__":
-    asyncio.run(main())

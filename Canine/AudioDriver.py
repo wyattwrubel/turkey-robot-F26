@@ -8,7 +8,10 @@ class AsyncAudioDriver:
         pygame.mixer.init()
         pygame.mixer.set_num_channels(max_channels)
 
+        #TODO UPDATE BASE ON RASPBERRY PI
         base = "/home/meathead/ME450/MainDesign/Canine/AudioFiles"
+
+        #TODO UPDATE THESE WITH TEAM 19 NEW SOUND FILES
         self.sounds = {
             "startup": pygame.mixer.Sound(f"{base}/TEMP_Bark1.wav"),
             "alert":   pygame.mixer.Sound(f"{base}/TEMP_Bark2.wav"),
