@@ -2,7 +2,7 @@ import DriveTrain.DriveTrainDriver as Drive
 import asyncio
 import numpy as np
 import matplotlib.pyplot as plt
-import Navigation.TrajectoryTracker as Nav
+import Navigation.NavigationDriver as Nav
 import Canine.CanineDriver as K9
 import time
 
@@ -256,16 +256,16 @@ async def main():
     driver = Drive.MotorDriver(pose_publisher, command_publisher)
     pose_publisher.subscribe(Receiver)
     
-    navigator = Nav.TrajectoryTracker(Verbose=False)
+    navigator = Nav.TrajectoryTracker(Verbose=True)
     pose_publisher.subscribe(navigator.RobotPose_Receiver)
     visionobject_publisher.subscribe(navigator.VisionObject_Receiver)
     TrajectoryCMD_Publisher.subscribe(navigator.TrajectoryCMD_Receiver)
 
     navigator.Map.Zone_Map = navigator.Map.Zone_Map[0:15, 0:20]
 
-    Canine = K9.CanineDriver()
-    K9_publisher = AsyncPublisher()
-    K9_publisher.subscribe(Canine.CanineCommand_Receiver)
+    # Canine = K9.CanineDriver()
+    # K9_publisher = AsyncPublisher()
+    # K9_publisher.subscribe(Canine.CanineCommand_Receiver)
 
     await asyncio.gather(
         driver.robotpose_transmitter(),
@@ -274,7 +274,7 @@ async def main():
         FakeVision(visionobject_publisher),
         FakeHighLevel(TrajectoryCMD_Publisher),
         navigator.MPC.DriveTrain_Sender(),
-        K9_tester(K9_publisher),
+        # K9_tester(K9_publisher),
         # plot_after_delay(10)
     )
 
