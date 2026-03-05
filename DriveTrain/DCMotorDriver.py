@@ -33,10 +33,10 @@ class DC_Driver:
         return crc
 
     def UpdateMotorSpeeds(self, MotorSpeed):
-        self._DriveMotor(address=self.front_left_adr, velocity=self.MotorSpeed[0])
-        self._DriveMotor(address=self.rear_left_adr, velocity=self.MotorSpeed[0])
-        self._DriveMotor(address=self.front_right_adr, velocity=self.MotorSpeed[1])
-        self._DriveMotor(address=self.rear_right_adr, velocity=self.MotorSpeed[1])
+        self._DriveMotor(address=self.front_left_adr, velocity=MotorSpeed[0])
+        self._DriveMotor(address=self.rear_left_adr, velocity=MotorSpeed[0])
+        self._DriveMotor(address=self.front_right_adr, velocity=MotorSpeed[1])
+        self._DriveMotor(address=self.rear_right_adr, velocity=MotorSpeed[1])
 
     # Drive M1 with signed linear velocity (m/s)
     def _DriveMotor(self, address: int, velocity: float):
