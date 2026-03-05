@@ -5,22 +5,25 @@ import DifferentialDrive as DD
 import numpy as np
 
 class UKF:
-    # """
-    # Unscented Kalman Filter for a skid-steer robot.
+    """
+    Unscented Kalman Filter for a skid-steer robot.
 
-    # State vector: [x, y, theta]
-    #     x, y   - position in meters
-    #     theta  - heading in radians, kept in (-pi, pi]
+    State vector: [x, y, theta]
+        x, y   - position in meters
+        theta  - heading in radians, kept in (-pi, pi]
 
-    # Two inputs drive the filter:
-    #     predict()       - called on every encoder tick (high rate, ~50 ms)
-    #     update_uwb()    - called on every UWB fix (low rate, ~2 s)
-    # """
+    Three inputs drive the filter:
+        predict()       - called on every encoder tick (high rate, ~50 ms)
+        update_uwb()    - called on every UWB fix (low rate, ~2 s)
+        update_accel()  - called on every Accelerometer fix (faster rate, ~50 ms)
+    """
 
     # UKF tuning knobs -------------------------------------------------------
     ALPHA = 1e-3   # spread of sigma points around mean (small = tightly packed)
     BETA  = 2.0    # optimal for Gaussian priors
     KAPPA = 0.0    # secondary scaling; 0 is a safe default for state estimation
+    
+    # UKF intermediate parameters --------------------------------------------
     L = 3
     _lambda = ALPHA**2 * (L + KAPPA) - L
     
@@ -44,6 +47,10 @@ class UKF:
         self._wc = np.full(2 * self.L + 1, 0.5 / (self.L + self._lambda))
         self._wm[0] = self._lambda / (self.L + self._lambda)
         self._wc[0] = self._lambda / (self.L + self._lambda) + (1 - self.ALPHA**2 + self.BETA)
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
 
     @staticmethod
     def _wrap_angle(theta: float) -> float:
@@ -150,7 +157,7 @@ class UKF:
         self.x[2] = self._wrap_angle(self.x[2])
         self.P = self.P - K @ Pyy @ K.T
 
-    def update_accelerometer(self, accel_theta: float):
+    def update_accel(self, accel_theta: float):
         """
         Accelerometer Update Step — driven by theta estimated values from Accelerometer.
 
@@ -158,7 +165,7 @@ class UKF:
         ----------
         accel_theta    : Estimate theta from accelerometer (rad)
         """     
-    
+
         z = np.array([accel_theta])
         sp = self._sigma_points()
 
