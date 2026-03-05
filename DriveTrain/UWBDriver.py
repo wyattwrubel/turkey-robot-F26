@@ -3,7 +3,7 @@ from scipy.optimize import least_squares
 import serial
 
 class UWB:
-    
+
     #TODO Update These Locations Inside Zone
     anchors = [
         [12.0, 15.0],
@@ -16,6 +16,8 @@ class UWB:
     # port = "/dev/ttyACM0"
     port = "/tmp/vserial1"
     baudrate = 9600
+    estimated_UWB_x = 10
+    estimated_UWB_y = 5
 
     def __init__(self):
         self.UWBSerial = serial.Serial(port = self.port, baudrate=self.baudrate, timeout=1)
@@ -61,5 +63,3 @@ class UWB:
             # happens if the line cannot be converted to floats
             print("UWBDriver: Error parsing line:", line)
             return
-
-            
