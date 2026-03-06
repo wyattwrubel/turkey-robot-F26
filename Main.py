@@ -27,7 +27,6 @@ time = []
 totaltime = 0
 input = []
 
-
 # ----------------- Receiver -----------------
 async def Receiver(data):
     global totaltime
@@ -71,7 +70,6 @@ async def Transmit_Orders(command_publisher):
         time.append(totaltime)
         totaltime += 1.7
         await asyncio.sleep(1.7)
-
 
 # ----------------- Plot after delay -----------------
 async def plot_after_delay(delay=10):
