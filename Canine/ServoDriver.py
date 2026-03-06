@@ -63,3 +63,4 @@ class Servo:
         if self.Verbose: print("ServoDriver: ", self.Name, " Sending Pulsewidth: ", pulse_width)
         # self._pi.set_servo_pulsewidth(self.gpio_pin, pulse_width)
             
+    # TODO Potentially add a helper function to compute time needed for slower speed

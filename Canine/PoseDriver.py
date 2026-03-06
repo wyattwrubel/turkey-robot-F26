@@ -17,7 +17,6 @@ class PoseDriver():
     def __init__(self, Verbose):
         self.servos = {}
         self.Verbose = Verbose
-
         self.servos["FrontLeft"] = SC.ServoController("FrontLeft", "Leg", self.Front_Left_Pin, True)
         self.servos["FrontRight"] = SC.ServoController("FrontRight", "Leg", self.Front_Right_Pin, True)
         self.servos["RearLeft"] = SC.ServoController("RearLeft", "Leg", self.Rear_Left_Pin, True)
