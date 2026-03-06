@@ -112,7 +112,7 @@ class UKF:
 
         # Predicted covariance + process noise
         P_pred = self.Q.copy()
-        for i in range(2 * self.n + 1):
+        for i in range(2 * self.L + 1):
             d = sp_pred[i] - x_pred
             d[2] = self._wrap_angle(d[2])          # angle residual must be wrapped
             P_pred += self._wc[i] * np.outer(d, d)
@@ -120,7 +120,7 @@ class UKF:
         self.x = x_pred
         self.P = P_pred
 
-    def update_uwb(self, uwb_x: float, uwb_y: float, uwb_theta: float):
+    def update_uwb(self, uwb_x: float, uwb_y: float):
         """
         UWB Update Step — driven by x,y,theta estimated values from UWB Anchors.
 
@@ -128,23 +128,21 @@ class UKF:
         ----------
         uwb_x        : Estimated X position of UWB anchors (m)
         uwb_y        : Estimated Y position of UWB anchors (m)
-        uwb_theta    : Estimate theta of UWB anchors (rad)
         """     
     
-        z = np.array([uwb_x, uwb_y, uwb_theta])
+        z = np.array([uwb_x, uwb_y])
         sp = self._sigma_points()
 
         # Predicted measurement mean
-        z_sigma = sp[:, :3]
+        z_sigma = sp[:, :2]
         z_pred = np.dot(self._wm, z_sigma)
-        z_pred[2] = self._mean_angle(sp[:, 2], self._wm)
 
         # Innovation covariance Pyy and cross-covariance Pxy
         Pyy = self.R_uwb.copy()
-        Pxy = np.zeros((self.L, 3))
+        Pxy = np.zeros((self.L, 2))
+
         for i in range (2 * self.L + 1):
             dz = z_sigma[i] - z_pred
-            dz[2] = self._wrap_angle(dz[2])
             dx = sp[i] - self.x
             dx[2] = self._wrap_angle(dx[2])
             Pyy += self._wc[i] * np.outer(dz, dz)
@@ -152,7 +150,6 @@ class UKF:
 
         K = Pxy @ np.linalg.inv(Pyy)
         innovation = z - z_pred
-        innovation[2] = self._wrap_angle(innovation[2])
         self.x = self.x + K @ innovation
         self.x[2] = self._wrap_angle(self.x[2])
         self.P = self.P - K @ Pyy @ K.T
@@ -181,15 +178,14 @@ class UKF:
             dz = self._wrap_angle(z_sigma[i] - z_pred)
             dx = sp[i] - self.x
             dx[2] = self._wrap_angle(dx[2])
-
-            Pyy += self._wc[i] * dz**2
-            Pxy += self._wc[i] * dz.reshape(-1, 1) * dz
+            Pyy += self._wc[i] * np.array([[dz**2]])
+            Pxy += self._wc[i] * dx.reshape(-1, 1) * dz
 
         K = Pxy / Pyy
-        innovation = self._wrap_angle(z - z_pred)
+        innovation = self._wrap_angle(float(z[0]) - z_pred)
         self.x = self.x + K.flatten() * innovation
         self.x[2] = self._wrap_angle(self.x[2])
-        self.P = self.P - K * Pyy * K.T
+        self.P = self.P - K @ Pyy @ K.T
 
     @property
     def state(self) -> np.ndarray:
