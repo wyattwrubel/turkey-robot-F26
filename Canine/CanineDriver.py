@@ -14,6 +14,8 @@ class CanineDriver:
         self.PoseDriver = PoseDriver.PoseDriver(Verbose)
 
     async def CanineDriver_Receiver(self, data):
+        """ Receiver For All Canine Related Commands. See Protocol #2 For More Details """
+    
         try:
             cmd_id = data["Id"]
         except KeyError:
@@ -30,8 +32,9 @@ class CanineDriver:
         else:
             print(f"CanineDriver: Invalid 'Id' in {data}") 
 
-    # HANDLE AUDIO, RAW MOTOR, MOTOR POSES
     async def _Process_CanineData(self, data):
+        """  Handles audio, poses, and raw motor commands """
+
         try:
             cmd_type = data["Type"]
             cmd_data = data["Data"]

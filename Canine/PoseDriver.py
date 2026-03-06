@@ -7,18 +7,22 @@ import ServoController as SC
 import asyncio
 
 class PoseDriver():
+    # TODO Revise With RPi Wiring
+    Front_Left_Pin = 4
+    Front_Right_Pin = 5
+    Rear_Left_Pin = 6
+    Rear_Right_Pin = 7
+    Head_Pin = 8
+ 
     def __init__(self, Verbose):
         self.servos = {}
         self.Verbose = Verbose
 
-        #TODO UPDATE WITH CORRECT PINOUTS
-        #TODO ADD IN DIFFERENT MOTOR SPECS?
-
-        self.servos["FrontLeft"] = SC.ServoController(SD.Servo(None, Verbose), Verbose)
-        self.servos["FrontRight"] = SC.ServoController(SD.Servo(None, Verbose), Verbose)
-        self.servos["RearRight"] = SC.ServoController(SD.Servo(None, Verbose), Verbose)
-        self.servos["RearLeft"] = SC.ServoController(SD.Servo(None, Verbose), Verbose)
-        self.servos["Head"] = SC.ServoController(SD.Servo(None, Verbose), Verbose)
+        self.servos["FrontLeft"] = SC.ServoController("FrontLeft", "Leg", self.Front_Left_Pin, True)
+        self.servos["FrontRight"] = SC.ServoController("FrontRight", "Leg", self.Front_Right_Pin, True)
+        self.servos["RearLeft"] = SC.ServoController("RearLeft", "Leg", self.Rear_Left_Pin, True)
+        self.servos["RearRight"] = SC.ServoController("RearRight", "Leg", self.Rear_Right_Pin, True)
+        self.servos["Head"] = SC.ServoController("Head", "Head", self.Front_Left_Pin, True)
 
     async def CanineMotor_Receiver(self, data):
         if data["Type"] == "Servo":

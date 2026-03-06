@@ -1,8 +1,16 @@
+import sys
+import os
+sys.path.append(os.path.dirname(__file__))
+import ServoDriver as SD
 import asyncio
 
 class ServoController:
-    def __init__(self, servo, Verbose=False):
-        self.servo = servo
+    def __init__(self, Name, ServoType, GPIO_PIN, Verbose=False):
+        if(ServoType == "Leg" or ServoType == "Head"):
+            self.servo = SD.Servo(Name, ServoType, GPIO_PIN, Verbose)
+        else:
+            print("ServoController: Invalid 'ServoType' Received ", ServoType)
+        
         self._task = None
         self.Verbose = Verbose
 
@@ -12,8 +20,7 @@ class ServoController:
             try:
                 await self._task
             except asyncio.CancelledError:
-                pass
-            
+                pass  
         self._task = asyncio.create_task(self._execute_servo_command(command_name, data))
 
     async def _execute_servo_command(self, command_name, data):

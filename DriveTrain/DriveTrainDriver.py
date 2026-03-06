@@ -33,8 +33,8 @@ class MotorDriver:
         self.UI_lock = False
 
         # Variables for UKF
-        P = np.eye(3) * 0.1
-        Q = np.diag([0.02, 0.02, 0.01])
+        self.P = np.eye(3) * 0.1
+        self.Q = np.diag([0.02, 0.02, 0.01])
         
     async def MotorCommandReceiver(self, data):        
         try:
@@ -75,7 +75,7 @@ class MotorDriver:
 
     async def ReadUWBPosition(self):
         while self.running:
-            # READ UWB ANCHOR POSITIONS TODO
+            # READ UWB ANCHOR POSITIONS TODO DELAY DEPENDING ON ESP32 IMPLEMENTATION
             self.CurrentState = self.UWB.UpdatePosition(self.CurrentState)
 
     # UPDATES MOTOR COMMANDS WITH SPEEDS EVERY 0.2 SECONDS
@@ -100,12 +100,12 @@ class MotorDriver:
                 # Read motor speeds from encoder speeds
                 leftspeed, rightspeed = self.DCDriver.AverageLinearSpeed()
 
-                self.ukf_predict(leftspeed, rightspeed, time_elapsed)
+                self._ukf_predict(leftspeed, rightspeed, time_elapsed)
 
                 await asyncio.sleep(self.ReadMotorDataPeriod) 
 
     # TODO NEED TO VALIDATE THAT THIS WORKS? 
-    def ukf_predict(self, v_l, v_r, dt):
+    def _ukf_predict(self, v_l, v_r, dt):
         n = 3
         alpha = 1e-3
         beta = 2
