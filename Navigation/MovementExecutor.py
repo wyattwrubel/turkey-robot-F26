@@ -1,6 +1,7 @@
 import asyncio
 import numpy as np
 
+#TODO NEED TO ADD CASADI AND IMPLEMENT THIS THING
 class MPC_loop:
     
     Tracked_Trajectory = []

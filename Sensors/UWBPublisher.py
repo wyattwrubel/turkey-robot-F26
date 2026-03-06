@@ -141,7 +141,7 @@ class UWB:
                     f"expected {self.RECEIVER_SEPARATION}m")
 
     async def run(self):
-        """Start all UWB coroutines."""
+        """Start all UWB coroutines. Expecting data frequency every ~2 Hz"""
         await self.connect()
         await asyncio.gather(
             self._read_front_receiver(),

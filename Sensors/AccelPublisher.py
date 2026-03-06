@@ -68,7 +68,7 @@ class IMUDriver:
 
     async def run(self):
         """
-        Continuously reads heading at PUBLISH_RATE_HZ and
+        Continuously reads heading at PUBLISH_RATE_HZ (100 Hz)and
         publishes to all subscribers.
         """
         await self.wait_for_calibration()
