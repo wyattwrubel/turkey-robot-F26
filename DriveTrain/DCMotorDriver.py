@@ -18,28 +18,34 @@ class DC_Driver:
 
     def __init__(self):
         self.DCSerial = serial.Serial(port=self.port, baudrate= self.baudrate, timeout=1)
-        self.MaxMotorSpeed = 3 # m/s UPDATE WITH REAL TODO
-
-    # 16 Bit Checksum
-    def crc16_ccitt(packet: bytes) -> int:
-        crc = 0
-        for byte in packet:
-            crc ^= (byte << 8)
-            for _ in range(8):
-                if crc & 0x8000:
-                    crc = ((crc << 1) ^ 0x1021) & 0xFFFF
-                else:
-                    crc = (crc << 1) & 0xFFFF
-        return crc
-
+        
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
     def UpdateMotorSpeeds(self, MotorSpeed):
         self._DriveMotor(address=self.front_left_adr, velocity=MotorSpeed[0])
         self._DriveMotor(address=self.rear_left_adr, velocity=MotorSpeed[0])
         self._DriveMotor(address=self.front_right_adr, velocity=MotorSpeed[1])
         self._DriveMotor(address=self.rear_right_adr, velocity=MotorSpeed[1])
 
-    # Drive M1 with signed linear velocity (m/s)
+    def AverageLinearSpeed(self):
+        left_vals = [self._ReadMotorSpeed(self.front_left_adr),
+                    self._ReadMotorSpeed(self.rear_left_adr)]
+        right_vals = [self._ReadMotorSpeed(self.front_right_adr),
+                    self._ReadMotorSpeed(self.rear_right_adr)]
+
+        if None in left_vals + right_vals:
+            return None, None
+
+        left_speed = sum(left_vals) / 2
+        right_speed = sum(right_vals) / 2
+        return left_speed, right_speed
+
+    # ------------------------------------------------------------------
+    # MotorDriver Interfacing
+    # ------------------------------------------------------------------
     def _DriveMotor(self, address: int, velocity: float):
+        """Drive M1 with signed linear velocity (m/s)"""
         DRIVE_CMD = 35
 
         # Clip velocity
@@ -56,30 +62,17 @@ class DC_Driver:
         
         speed_bytes = counts_per_sec.to_bytes(4, byteorder='big', signed=True)
         packet = bytes([address, DRIVE_CMD]) + speed_bytes
-        check_sum = self.crc16_ccitt(packet)
+        check_sum = self._crc16_ccitt(packet)
         packet_with_crc = packet + bytes([check_sum >> 8, check_sum & 0xFF])
 
         self.DCSerial.write(packet_with_crc)
 
         ack = self.DCSerial.read(1)
         if ack != b'\xFF':
-            print(address, " MOTOR SPEED COMMAND NACK")
+            print(address, " Motor Speed NACK")
 
-    def AverageLinearSpeed(self):
-        left_vals = [self._ReadMotorSpeed(self.front_left_adr),
-                    self._ReadMotorSpeed(self.rear_left_adr)]
-        right_vals = [self._ReadMotorSpeed(self.front_right_adr),
-                    self._ReadMotorSpeed(self.rear_right_adr)]
-
-        if None in left_vals + right_vals:
-            return None, None
-
-        left_speed = sum(left_vals) / 2
-        right_speed = sum(right_vals) / 2
-        return left_speed, right_speed
-
-    # Returns outputted linear speed
     def _ReadMotorSpeed(self, address):
+        """ Returns outputted linear speed"""
         READ_SPEED_CMD = 18
         packet = bytes([address, READ_SPEED_CMD])
         self.DCSerial.write(packet)
@@ -90,10 +83,10 @@ class DC_Driver:
         speed_bytes = response[0:4]
         status = response[4]
         received_crc_bytes = response[5:7]
-        crc_calc = self.crc16_ccitt(response[:5])
+        crc_calc = self._crc16_ccitt(response[:5])
         crc_bytes = bytes([crc_calc >> 8, crc_calc & 0xFF])
         if received_crc_bytes != crc_bytes:
-            print("INVALID CRC RECEIVED")
+            print(address, " Invalid Crc Received")
             return None
 
         pulses_per_sec = int.from_bytes(speed_bytes, byteorder='big', signed=True)
@@ -107,8 +100,10 @@ class DC_Driver:
 
         return linear_speed
 
-    # Returns measured motor currents TODO FIGURE OUT SAFETY ROUTINES NEEDED | UNSURE
     def ReadMotorCurrent(self, address):
+
+        """ Returns measured motor currents """
+
         MOTORCURRENT_CMD = 49
         packet = bytes([address, MOTORCURRENT_CMD])
 
@@ -119,14 +114,26 @@ class DC_Driver:
 
         # Validate CRC
         received_crc_bytes = Current_Readings[4:6]
-        crc = self.crc16_ccitt(Current_Readings[:4])
+        crc = self._crc16_ccitt(Current_Readings[:4])
         crc_bytes = bytes([crc >> 8, crc & 0xFF])
         if received_crc_bytes != crc_bytes:
-            print("INVALID CURRENT DATA RECEIVED")
+            print(address, " Invalid Current Data Received")
             return None
 
         m1_counts = int.from_bytes(Current_Readings[0:2], byteorder='big')
         m1_amps = m1_counts / 100.0
-
         return m1_amps
-
+    
+        # 16 Bit Checksum
+    
+    def _crc16_ccitt(packet: bytes) -> int:
+        """ Check Sum Protocol Per MotorDriver Manual """
+        crc = 0
+        for byte in packet:
+            crc ^= (byte << 8)
+            for _ in range(8):
+                if crc & 0x8000:
+                    crc = ((crc << 1) ^ 0x1021) & 0xFFFF
+                else:
+                    crc = (crc << 1) & 0xFFFF
+        return crc

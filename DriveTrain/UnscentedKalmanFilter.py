@@ -1,7 +1,6 @@
 import sys
 import os
 sys.path.append(os.path.dirname(__file__))
-import DifferentialDrive as DD
 import numpy as np
 
 class UKF:
@@ -51,7 +50,6 @@ class UKF:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
-
     @staticmethod
     def _wrap_angle(theta: float) -> float:
         """Wrap angle to (-pi, pi]."""
@@ -80,7 +78,6 @@ class UKF:
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
-
     def predict(self, v_l: float, v_r: float, wheel_base: float, dt: float):
         """
         Prediction step — driven by left/right wheel speeds from encoders.
