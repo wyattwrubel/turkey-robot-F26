@@ -8,7 +8,7 @@ Usage:
 
 import sys
 import uvicorn
-
+   
 def main():
     if "--test" in sys.argv:
         from tests import run_tests
@@ -27,5 +27,5 @@ def main():
     )
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":     
     main()

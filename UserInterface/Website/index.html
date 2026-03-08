@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>CANINE DETERRENT SYSTEM — CONTROL INTERFACE</title>
-<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow+Condensed:wght@300;400;600;700;900&display=swap" rel="stylesheet">
+<!-- <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow+Condensed:wght@300;400;600;700;900&display=swap" rel="stylesheet"> -->
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -93,37 +93,44 @@
             θ:<span class="v ok" id="ukf-t"> —</span>°
           </div>
           <div class="ds">
-            σx:<span id="sx"> —</span> &nbsp;·&nbsp;
-            σy:<span id="sy"> —</span> &nbsp;·&nbsp;
-            σθ:<span id="st"> —</span>°
+            Confidence: <span class="conf-dot" id="conf-dot"></span><span id="conf-label" style="margin-left:5px">—</span>
+            &nbsp;·&nbsp; σ_pos:<span id="conf-val"> —</span> m
           </div>
         </div>
       </div>
       <div class="drow">
         <div class="db">
-          <div class="dl">Distance to Target</div>
+          <div class="dl">Destination</div>
           <div class="dv"><span class="v w" id="dist-t">— m</span></div>
           <div class="ds" id="tgt-s">no target acquired</div>
         </div>
         <div class="db">
           <div class="dl">Current Waypoint</div>
           <div class="dv"><span class="v" id="wp-id">WP — / —</span></div>
-          <div class="ds" id="wp-i">dist: — · bearing: —°</div>
+          <div class="ds" id="wp-i">dist: — m</div>
         </div>
       </div>
       <div class="drow">
-        <div class="db">
+        <div class="db full">
           <div class="dl">Drivetrain Commands</div>
           <div class="crow">
             <span class="chip">L: <span id="cmd-l">0.00</span></span>
             <span class="chip">R: <span id="cmd-r">0.00</span></span>
+            <span class="chip" id="drv-src-chip">—</span>
           </div>
           <div class="ds" id="drv-src">source: —</div>
         </div>
-        <div class="db wb">
-          <div class="dl">Canine Deterrent</div>
-          <div class="crow"><span class="chip" id="det-chip">IDLE</span></div>
-          <div class="ds" id="det-i">fires: 0 · last: —</div>
+      </div>
+      <div class="drow">
+        <div class="db">
+          <div class="dl">System State</div>
+          <div class="dv"><span class="v w" id="sys-state">—</span></div>
+          <div class="ds" id="sys-dest">destination: —</div>
+        </div>
+        <div class="db">
+          <div class="dl">Navigation Command</div>
+          <div class="dv"><span class="v" id="nav-cmd-type">—</span></div>
+          <div class="ds" id="nav-cmd-detail">—</div>
         </div>
       </div>
     </div>
@@ -144,11 +151,11 @@
 
           <div class="clbl">Robot Poses</div>
           <div class="pose-g">
-            <button class="btn" onclick="sendPose('POSE_1',this)">Pose 1</button>
-            <button class="btn" onclick="sendPose('POSE_2',this)">Pose 2</button>
-            <button class="btn" onclick="sendPose('POSE_3',this)">Pose 3</button>
-            <button class="btn" onclick="sendPose('POSE_4',this)">Pose 4</button>
-            <button class="btn" onclick="sendPose('POSE_5',this)">Pose 5</button>
+            <button class="btn" data-pose-id="Pose1" onclick="sendPose('Pose1',this)">Pose 1</button>
+            <button class="btn" data-pose-id="Pose2" onclick="sendPose('Pose2',this)">Pose 2</button>
+            <button class="btn" data-pose-id="Pose3" onclick="sendPose('Pose3',this)">Pose 3</button>
+            <button class="btn" data-pose-id="Pose4" onclick="sendPose('Pose4',this)">Pose 4</button>
+            <button class="btn" data-pose-id="Pose5" onclick="sendPose('Pose5',this)">Pose 5</button>
           </div>
 
           <div class="div"></div>

@@ -25,7 +25,8 @@ async def handle_message(ws: WebSocket, data: dict, robot: RobotInterface) -> No
         left     = float(cmd[0])
         right    = float(cmd[1])
 
-        robot.apply_motor_command(left, right, speed_ms)
+        robot.apply_motor_command(left, right, source="UI")
+        robot.apply_speed_limit(speed_ms)
         log_cmd("MOTOR", f"L={left:+.2f}  R={right:+.2f}  speed_limit={speed_ms:.1f} m/s")
 
     # ── Speed limit ───────────────────────────────────────────
@@ -43,7 +44,7 @@ async def handle_message(ws: WebSocket, data: dict, robot: RobotInterface) -> No
 
     # ── Pose preset ───────────────────────────────────────────
     elif msg_type == "pose_command":
-        pose = data.get("pose", "?")
+        pose = data.get("pose", "?")   # canonical format: 'Pose1'..'Pose5'
         robot.apply_pose(pose)
         log_evt("POSE", f"Executing -> {pose}")
 
@@ -53,21 +54,16 @@ async def handle_message(ws: WebSocket, data: dict, robot: RobotInterface) -> No
         robot.apply_audio(sound)
         log_evt("AUDIO", f"Playing -> {sound}")
 
-    # ── Mode switching ────────────────────────────────────────
-    elif msg_type == "unlock":
-        log_warn("MODE", "Switched to MANUAL — UI inputs active")
-
-    elif msg_type == "lock_manual":
-        robot.apply_motor_command(0.0, 0.0, 0.0)
-        log_warn("MODE", "Switched to AUTO — motors zeroed, UI inputs locked")
-
     # ── Emergency stop ────────────────────────────────────────
+    # estop / estop_reset are internal UI states — not part of the DriveTrain protocol.
+    # The browser engages/releases the hold; no message leaves to external subscribers.
     elif msg_type == "estop":
-        robot.apply_estop()
-        log_err("ESTOP", "EMERGENCY STOP ENGAGED — all motors halted")
+        robot.apply_estop_engage()
+        log_err("ESTOP", "EMERGENCY STOP ENGAGED — motor commands blocked")
 
     elif msg_type == "estop_reset":
-        log_warn("ESTOP", "E-stop reset — system ready")
+        robot.apply_estop_release()
+        log_warn("ESTOP", "E-stop released — motor commands accepted")
 
     # ── Unknown ───────────────────────────────────────────────
     else:

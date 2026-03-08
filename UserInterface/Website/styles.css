@@ -1,4 +1,4 @@
-  :root {
+:root {
     --bg-primary:   #080b0f;
     --bg-panel:     #0d1117;
     --bg-raised:    #141b24;
@@ -19,8 +19,8 @@
     --text:         #c8d8e8;
     --text-dim:     #4a6070;
     --text-hi:      #ffffff;
-    --mono:         'Share Tech Mono', monospace;
-    --disp:         'Barlow Condensed', sans-serif;
+    --mono:         'Courier New', Courier, monospace;
+    --disp:         'Arial Narrow', Arial, sans-serif;
   }
 
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -138,16 +138,21 @@
   .ph-sub { font-size:9px; color:var(--text-dim); letter-spacing:.1em; }
 
   .pbody {
-    flex:1; overflow-y:auto; overflow-x:hidden;
+    flex:1; min-height:0;
+    overflow-y:auto; overflow-x:hidden;
     padding:10px;
+    display:flex; flex-direction:column;
   }
   .pbody::-webkit-scrollbar { width:3px; }
   .pbody::-webkit-scrollbar-track { background:var(--bg-panel); }
   .pbody::-webkit-scrollbar-thumb { background:var(--border-hi); }
 
   /* ── FEED PLACEHOLDER ── */
+  /* pbody with padding:0 is a flex column item — feed-ph must be flex:1
+     so it stretches to fill the available height rather than relying on
+     height:100% (which resolves to scroll-height in an overflow container). */
   .feed-ph {
-    width:100%; height:100%;
+    width:100%; flex:1; min-height:0;
     display:flex; flex-direction:column;
     align-items:center; justify-content:center;
     background:var(--bg-input);
@@ -171,7 +176,7 @@
   .cr.br{bottom:8px;right:8px;border-width:0 1px 1px 0}
 
   /* ── DIAG BLOCKS ── */
-  .drow { display:grid; grid-template-columns:1fr 1fr; gap:5px; margin-bottom:5px; }
+  .drow { display:grid; grid-template-columns:1fr 1fr; gap:5px; margin-bottom:5px; flex-shrink:0; }
   .db {
     background:var(--bg-raised); border:1px solid var(--border);
     padding:6px 9px; position:relative;
@@ -184,6 +189,7 @@
   .dv .v    { color:var(--accent); }
   .dv .v.ok { color:var(--success); }
   .dv .v.w  { color:var(--warn); }
+  .dv .v.d  { color:var(--danger); }
   .ds { font-size:12px; color:var(--text-dim); margin-top:2px; }
   .crow { display:flex; gap:4px; flex-wrap:wrap; margin-top:3px; }
   .chip { background:var(--accent-dim); border:1px solid var(--accent); color:var(--accent); font-size:10px; padding:1px 6px; }
@@ -308,3 +314,16 @@
     100% { box-shadow: 0 0 0 rgba(168,85,247,0); }
   }
   .audio-playing { animation: audioflash .5s ease; }
+
+  /* ── CONFIDENCE INDICATOR ── */
+  .conf-dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    vertical-align: middle;
+    margin-bottom: 1px;
+    box-shadow: 0 0 5px currentColor;
+  }
+  .conf-dot.good { background: var(--success); color: var(--success); animation: blink 2s infinite; }
+  .conf-dot.warn { background: var(--warn);    color: var(--warn);    animation: blink 1.2s infinite; }
+  .conf-dot.poor { background: var(--danger);  color: var(--danger);  animation: blink 0.6s infinite; }

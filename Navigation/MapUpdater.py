@@ -5,7 +5,7 @@ class Map:
     Zone_Map = []
     _Human_List = []
     _Turkey_List = []
-    _Map_File = "/home/meathead/ME450/MainDesign/Navigation/Zone.csv"
+    _Map_File = "/home/turkeysquad/ME450/MainDesign/Navigation/Zone.csv"
 
     _Human_Obstacle_Width = 1
     _Human_Penalty_width = 2

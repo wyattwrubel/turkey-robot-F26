@@ -1,263 +1,379 @@
 """
 robot.py — Robot state interface
 
-This is YOUR integration point. Every method marked TODO is
-where you wire in your real MotorDriver, UKF, servo driver, etc.
+Variable → Protocol mapping
+────────────────────────────────────────────────────────────────
+  x, y, theta             ← RobotPose Channel (Ch. 4)
+                             array [X, Y, theta]
 
-When you're ready to connect your real code:
+  sigma_x/y/theta         ← UncertaintyPose Channel (new)
+                             array [sigma_x, sigma_y, sigma_theta]
 
-    1. Import your MotorDriver at the top of this file
-    2. Replace each TODO method body with the real call
-    3. Update to_state_msg() to pull live values from UKF
+  uwb_x, uwb_y            ← UWB_Values Channel (Ch. 8.1)
+                             array [UWB_X, UWB_Y]
+  uwb_age                 ← derived: time since last UWB_Values message
 
-Everything else in the server (handlers, broadcast, app)
-calls only the methods defined here — nothing else needs
-to change when you swap mock → real.
+  imu_theta               ← Acceler_Values Channel (Ch. 8.2)
+                             array [theta]
+
+  cmd_left, cmd_right     ← DriveTrain Channel (Ch. 3)
+                             Cmd [left, right]
+  drive_source            ← DriveTrain Channel Id field ("UI" / "System")
+
+  speed_limit             ← Navigation SpeedCap (Ch. 6.3)
+                             Cmd [speed_m/s]
+
+  active_pose             ← Canine Channel, Type "Pose"  (Ch. 2.1)
+  active_audio            ← Canine Channel, Type "Audio" (Ch. 2.3)
+  servo_angles            ← Canine Channel, Type "Servo" (Ch. 2.2)
+
+  destination             ← Navigation Channel (Chase/Scan/Alert only)
+  sys_state               ← MacroState Channel: "Chase"|"Scanning"|"Alert"|None
+  nav_cmd                 ← Navigation Channel (Move/Orient — target coords/state)
+                             Move:   {"type":"Move",   "x":float, "y":float}
+                             Orient: {"type":"Orient", "x":float, "y":float, "theta":float}
+  wp_id, wp_dist          ← WaypointInfo Protocol (separate channel)
+────────────────────────────────────────────────────────────────
+
+State-change callbacks (register in app.py or main.py)
+────────────────────────────────────────────────────────────────
+  robot.register_motor_callback(cb)       fired on apply_motor_command
+  robot.register_speed_callback(cb)       fired on apply_speed_limit
+  robot.register_servo_callback(cb)       fired on apply_servo_angle
+  robot.register_pose_callback(cb)        fired on apply_pose
+  robot.register_audio_callback(cb)       fired on apply_audio
+  robot.register_estop_callback(cb)       fired on apply_estop
+  robot.register_mission_callback(cb)     fired on apply_mission_state
+────────────────────────────────────────────────────────────────
 """
 
-import math
-import random
+import asyncio
 import time
 
 
+# ── Callback helper ───────────────────────────────────────────────────────────
+
+def _fire(callbacks: list, data: dict) -> None:
+    """Schedule all callbacks as asyncio tasks (non-blocking, fire-and-forget)."""
+    loop = asyncio.get_event_loop()
+    for cb in callbacks:
+        loop.create_task(cb(data))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 class RobotInterface:
     """
     Abstract interface the server expects.
-    Your real implementation should provide all these methods.
-    MockRobotState below is a drop-in stand-in for testing.
-    """
-
-    def tick(self, dt: float) -> None:
-        """Called at 10 Hz by the broadcast loop. Update internal state."""
-        raise NotImplementedError
-
-    def apply_motor_command(self, left: float, right: float, speed_ms: float) -> None:
-        """Receive a normalised [-1, 1] motor command with a speed cap in m/s."""
-        raise NotImplementedError
-
-    def apply_speed_limit(self, speed: float) -> None:
-        """Set the global speed limit in m/s."""
-        raise NotImplementedError
-
-    def apply_servo_angle(self, servo_id: str, angle: float) -> None:
-        """Command a single servo to an absolute angle in degrees."""
-        raise NotImplementedError
-
-    def apply_pose(self, pose_id: str) -> None:
-        """Execute a named pose preset (e.g. 'POSE_1')."""
-        raise NotImplementedError
-
-    def apply_audio(self, sound_id: str) -> None:
-        """Play a named audio clip (e.g. 'BARK')."""
-        raise NotImplementedError
-
-    def apply_estop(self) -> None:
-        """Immediately halt all motors."""
-        raise NotImplementedError
-
-    def to_state_msg(self) -> dict:
-        """Return a dict ready to JSON-serialise and push to the UI."""
-        raise NotImplementedError
-
-    def to_servo_state_msg(self) -> dict:
-        """Return current servo angles for UI sync on connect."""
-        raise NotImplementedError
-
-
-# ─────────────────────────────────────────────────────────────
-class MockRobotState(RobotInterface):
-    """
-    Simulated robot — used for UI development and testing.
-    Drives a slow circle so the map panel animates.
-
-    Replace with your real implementation when hardware is ready.
+    Subclass this (or use RobotState directly) when connecting real hardware.
     """
 
     def __init__(self):
-        # ── UKF pose ──────────────────────────────────────────
-        self.x     = 2.0
-        self.y     = 2.0
+        self._motor_callbacks   = []
+        self._speed_callbacks   = []
+        self._servo_callbacks   = []
+        self._pose_callbacks    = []
+        self._audio_callbacks   = []
+        self._estop_callbacks   = []
+        self._mission_callbacks = []
+
+    def register_motor_callback(self, cb)   -> None: self._motor_callbacks.append(cb)
+    def register_speed_callback(self, cb)   -> None: self._speed_callbacks.append(cb)
+    def register_servo_callback(self, cb)   -> None: self._servo_callbacks.append(cb)
+    def register_pose_callback(self, cb)    -> None: self._pose_callbacks.append(cb)
+    def register_audio_callback(self, cb)   -> None: self._audio_callbacks.append(cb)
+    def register_estop_callback(self, cb)   -> None: self._estop_callbacks.append(cb)
+    def register_mission_callback(self, cb) -> None: self._mission_callbacks.append(cb)
+
+    def tick(self, dt: float)                                    -> None: raise NotImplementedError
+    def apply_motor_command(self, left, right, source)           -> None: raise NotImplementedError
+    def apply_speed_limit(self, speed: float)                    -> None: raise NotImplementedError
+    def apply_servo_angle(self, servo_id: str, angle: float)     -> None: raise NotImplementedError
+    def apply_pose(self, pose_id: str)                           -> None: raise NotImplementedError
+    def apply_audio(self, sound_id: str)                         -> None: raise NotImplementedError
+    def apply_estop(self)                                        -> None: raise NotImplementedError
+    def apply_robot_pose(self, x, y, theta)                      -> None: raise NotImplementedError
+    def apply_uncertainty(self, sx, sy, stheta)                  -> None: raise NotImplementedError
+    def apply_uwb(self, uwb_x, uwb_y)                           -> None: raise NotImplementedError
+    def apply_imu(self, imu_theta)                               -> None: raise NotImplementedError
+    def apply_mission_state(self, **kwargs)                      -> None: raise NotImplementedError
+    def to_state_msg(self)                                       -> dict: raise NotImplementedError
+    def to_servo_state_msg(self)                                 -> dict: raise NotImplementedError
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+class RobotState(RobotInterface):
+    """
+    Live robot state — all fields are written by their respective protocol
+    receivers in app.py. tick() no longer generates fake data; it only
+    advances the pose/audio timeout timers.
+    """
+
+    def __init__(self):
+        super().__init__()
+
+        # ── RobotPose Channel (Ch. 4) ──────────────────────────
+        self.x     = 0.0
+        self.y     = 0.0
         self.theta = 0.0
 
-        # ── UKF covariance ────────────────────────────────────
-        self.sigma_x     = 0.08
-        self.sigma_y     = 0.07
-        self.sigma_theta = 0.021
+        # ── UncertaintyPose Channel (new) ──────────────────────
+        self.sigma_x     = 0.0
+        self.sigma_y     = 0.0
+        self.sigma_theta = 0.0
 
-        # ── Raw sensor readings ───────────────────────────────
-        self.uwb_x   = 2.0
-        self.uwb_y   = 2.0
-        self.uwb_age = 0.3
+        # ── UWB_Values Channel (Ch. 8.1) ──────────────────────
+        self.uwb_x            = 0.0
+        self.uwb_y            = 0.0
+        self._uwb_last_update = None   # timestamp of last UWB message
 
+        # ── Acceler_Values Channel (Ch. 8.2) ──────────────────
         self.imu_theta = 0.0
-        self.cal_sys   = 3
-        self.cal_gyro  = 3
-        self.cal_mag   = 3
 
-        # ── Mission state ─────────────────────────────────────
-        self.dist_target   = None
-        self.target_status = "no target acquired"
-        self.wp_id         = "WP 1 / 7"
-        self.wp_dist       = 12.4
-        self.wp_bearing    = 45.0
+        # ── DriveTrain Channel (Ch. 3) ────────────────────────
+        self.cmd_left     = 0.0
+        self.cmd_right    = 0.0
+        self.drive_source = None     # "UI" or "System" — None until first command
+        self._estop_active = False   # when True, apply_motor_command is a no-op
 
-        # ── Motor commands ────────────────────────────────────
-        self.cmd_left    = 0.0
-        self.cmd_right   = 0.0
-        self.drive_source = "IDLE"
-        self.speed_limit  = 1.5
+        # ── Navigation SpeedCap (Ch. 6.3) ─────────────────────
+        self.speed_limit = 1.5
 
-        # ── Deterrent ─────────────────────────────────────────
-        self.det_status = "IDLE"
-        self.det_count  = 0
-        self.det_last   = "\u2014"
+        # ── Navigation / MacroState Channel ──────────────────
+        self.destination   = None    # metres to current target (Chase/Scan/Alert only)
+        self.sys_state     = None    # "Chase" | "Scanning" | "Alert" | None
+        self.nav_cmd       = None    # Move/Orient target: dict or None
+        # ── WaypointInfo Protocol (separate) ──────────────────
+        self.wp_id         = "—"    # e.g. 'WP 3 / 7'
+        self.wp_dist       = 0.0    # metres to waypoint (from WaypointInfo)
 
-        # ── Servos ────────────────────────────────────────────
+        # ── Canine Channel (Ch. 2) ────────────────────────────
         self.servo_angles = {
-            "SERVO_1": 90.0,
-            "SERVO_2": 90.0,
-            "SERVO_3": 135.0,
-            "SERVO_4": 0.0,
-            "SERVO_5": 90.0,
+            "FrontLeft":  90.0,
+            "FrontRight": 90.0,
+            "RearLeft":   135.0,
+            "RearRight":  0.0,
+            "Head":       90.0,
         }
-
-        self._t = 0.0
-
-        # ── Active pose / audio (for UI feedback) ─────────────
-        self.active_pose  = None   # e.g. "POSE_1", cleared after timeout
-        self.active_audio = None   # e.g. "BARK", cleared after timeout
+        self.active_pose  = None
+        self.active_audio = None
         self._pose_timer  = 0.0
         self._audio_timer = 0.0
 
-    # ── Simulation tick ───────────────────────────────────────
+    # ── Tick — timers only, no simulation ────────────────────────────────────
     def tick(self, dt: float = 0.1) -> None:
-        """Simulates a slow circle. Remove when using real hardware."""
-        self._t += dt
-
-        self.x     = 20.0 + 5.0 * math.cos(self._t * 0.1)
-        self.y     = 10.0 + 5.0 * math.sin(self._t * 0.1)
-        self.theta = (self._t * 0.1) % (2 * math.pi)
-
-        self.uwb_x     = self.x + random.gauss(0, 0.05)
-        self.uwb_y     = self.y + random.gauss(0, 0.05)
-        self.uwb_age   = random.uniform(0.1, 0.6)
-        self.imu_theta = self.theta + random.gauss(0, 0.005)
-
-        self.sigma_x     = 0.06 + 0.02 * abs(math.sin(self._t * 0.2))
-        self.sigma_y     = 0.06 + 0.02 * abs(math.cos(self._t * 0.2))
-        self.sigma_theta = 0.018 + 0.005 * abs(math.sin(self._t))
-
-        self.dist_target   = 8.4 + 2.0 * math.sin(self._t * 0.15)
-        self.target_status = "acquired" if self.dist_target < 10 else "searching"
-
-        # decay pose/audio active flags after 2s
+        """
+        Called at 10 Hz by the broadcast loop.
+        Only manages pose/audio highlight timeouts — all state is now
+        written directly by the protocol receivers in app.py.
+        """
         if self.active_pose is not None:
             self._pose_timer -= dt
             if self._pose_timer <= 0:
                 self.active_pose = None
+
         if self.active_audio is not None:
             self._audio_timer -= dt
             if self._audio_timer <= 0:
                 self.active_audio = None
 
-    # ── TODO: wire these into your real drivers ───────────────
+    # ── uwb_age property — derived from last message timestamp ───────────────
+    @property
+    def uwb_age(self) -> float:
+        """Seconds since the last UWB_Values message. None if never received."""
+        if self._uwb_last_update is None:
+            return None
+        return round(time.monotonic() - self._uwb_last_update, 2)
 
-    def apply_motor_command(self, left: float, right: float, speed_ms: float) -> None:
+    # ── Protocol receivers (called by app.py subscriber methods) ─────────────
+
+    def apply_robot_pose(self, x: float, y: float, theta: float) -> None:
+        """RobotPose Channel (Ch. 4): array [X, Y, theta]"""
+        self.x     = x
+        self.y     = y
+        self.theta = theta
+
+    def apply_uncertainty(self, sx: float, sy: float, stheta: float) -> None:
+        """UncertaintyPose Channel: array [sigma_x, sigma_y, sigma_theta]"""
+        self.sigma_x     = sx
+        self.sigma_y     = sy
+        self.sigma_theta = stheta
+
+    def apply_uwb(self, uwb_x: float, uwb_y: float) -> None:
+        """UWB_Values Channel (Ch. 8.1): array [UWB_X, UWB_Y]"""
+        self.uwb_x            = uwb_x
+        self.uwb_y            = uwb_y
+        self._uwb_last_update = time.monotonic()
+
+    def apply_imu(self, imu_theta: float) -> None:
+        """Acceler_Values Channel (Ch. 8.2): array [theta]"""
+        self.imu_theta = imu_theta
+
+    def apply_motor_command(self, left: float, right: float, source: str) -> None:
         """
-        TODO: replace with real call, e.g.
-            await self.motor_driver.MotorCommandReceiver({
-                "Id": "UI", "Cmd": [left, right]
-            })
+        DriveTrain Channel (Ch. 3).
+        source = Id field from the protocol message ("UI", "System").
+        No-op while estop is active — call apply_estop_release() first.
         """
-        self.cmd_left    = left
-        self.cmd_right   = right
-        self.drive_source = "UI"
+        if self._estop_active:
+            return   # hold motors at zero until estop is released
+
+        self.cmd_left     = left
+        self.cmd_right    = right
+        self.drive_source = source
+
+        _fire(self._motor_callbacks, {
+            "cmd_left":     self.cmd_left,
+            "cmd_right":    self.cmd_right,
+            "drive_source": self.drive_source,
+        })
 
     def apply_speed_limit(self, speed: float) -> None:
-        """
-        TODO: forward to motor driver speed cap if applicable.
-        """
+        """Navigation SpeedCap (Ch. 6.3): Cmd [speed_m/s]"""
         self.speed_limit = speed
 
+        _fire(self._speed_callbacks, {"speed_limit": self.speed_limit})
+
+    def apply_mission_state(self, **kwargs) -> None:
+        """
+        MacroState / Navigation Channel — mission fields.
+        Accepts any subset of:
+          sys_state    — "Chase" | "Scanning" | "Alert" | None
+                         (Move and Orient do NOT set sys_state)
+          destination  — metres to current target.
+                         Set by Chase (hypot(X,Y)), cleared to None by Scan/Alert.
+                         Move and Orient never touch destination.
+          nav_cmd      — dict describing the current Move/Orient target, or None.
+                         Move:   {"type":"Move",   "x":float, "y":float}
+                         Orient: {"type":"Orient", "x":float, "y":float, "theta":float}
+        wp_id and wp_dist are written separately by apply_waypoint_info().
+        """
+        for field in ("destination", "sys_state", "nav_cmd"):
+            if field in kwargs:
+                setattr(self, field, kwargs[field])
+
+        _fire(self._mission_callbacks, {
+            "destination": self.destination,
+            "sys_state":   self.sys_state,
+            "nav_cmd":     self.nav_cmd,
+            "wp_id":       self.wp_id,
+            "wp_dist":     self.wp_dist,
+        })
+
+    def apply_waypoint_info(self, wp_id: str, wp_dist: float) -> None:
+        """
+        WaypointInfo Protocol — separate channel for waypoint progress.
+        wp_id   — label e.g. 'WP 3 / 7'
+        wp_dist — metres remaining to the waypoint
+        """
+        self.wp_id   = wp_id
+        self.wp_dist = wp_dist
+
+        _fire(self._mission_callbacks, {
+            "destination": self.destination,
+            "sys_state":   self.sys_state,
+            "nav_cmd":     self.nav_cmd,
+            "wp_id":       self.wp_id,
+            "wp_dist":     self.wp_dist,
+        })
+
     def apply_servo_angle(self, servo_id: str, angle: float) -> None:
-        """
-        TODO: replace with real servo driver call, e.g.
-            self.servo_driver.set_angle(servo_id, angle)
-        """
+        """Canine Channel, Type 'Servo' (Ch. 2.2)"""
         self.servo_angles[servo_id] = angle
+
+        _fire(self._servo_callbacks, {
+            "servo_id": servo_id,
+            "angle":    angle,
+            "servos":   dict(self.servo_angles),
+        })
 
     def apply_pose(self, pose_id: str) -> None:
         """
-        TODO: replace with real pose executor, e.g.
-            self.pose_manager.execute(pose_id)
-        Sets active_pose so the UI highlights the active button for 2s.
+        Canine Channel, Type 'Pose' (Ch. 2.1).
+        pose_id canonical format: 'Pose1'..'Pose5'
+        Sets active_pose and a 2s highlight timer — broadcast loop clears it after timeout.
+        Called from both Canine_Receiver (system) and handlers.py (UI browser).
         """
-        self.active_pose  = pose_id
-        self._pose_timer  = 2.0
+        self.active_pose = pose_id
+        self._pose_timer = 2.0
+
+        _fire(self._pose_callbacks, {"active_pose": self.active_pose})
 
     def apply_audio(self, sound_id: str) -> None:
-        """
-        TODO: replace with real audio driver call, e.g.
-            self.audio_driver.play(sound_id)
-        Sets active_audio so the UI highlights the active button for 2s.
-        """
-        self.active_audio  = sound_id
-        self._audio_timer  = 2.0
+        """Canine Channel, Type 'Audio' (Ch. 2.3)"""
+        self.active_audio = sound_id
+        self._audio_timer = 2.0
 
-    def apply_estop(self) -> None:
-        """
-        TODO: also send estop signal to hardware watchdog if you have one.
-        """
-        self.cmd_left    = 0.0
-        self.cmd_right   = 0.0
-        self.drive_source = "ESTOP"
+        _fire(self._audio_callbacks, {"active_audio": self.active_audio})
 
-    # ── Message serialisers ───────────────────────────────────
+    def apply_estop_engage(self) -> None:
+        """
+        Engage emergency stop.
+        Zeros motors, sets _estop_active = True so apply_motor_command
+        becomes a no-op until apply_estop_release() is called.
+        """
+        self._estop_active = True
+        self.cmd_left      = 0.0
+        self.cmd_right     = 0.0
+        self.drive_source  = None    # motors are held; source is internal
+
+        _fire(self._estop_callbacks, {
+            "cmd_left":     self.cmd_left,
+            "cmd_right":    self.cmd_right,
+            "drive_source": self.drive_source,
+        })
+
+    def apply_estop_release(self) -> None:
+        """
+        Release emergency stop.
+        Clears the hold so motor commands are accepted again.
+        drive_source is reset to None until the next motor command arrives.
+        """
+        self._estop_active = False
+        self.drive_source  = None
+
+        _fire(self._estop_callbacks, {
+            "cmd_left":     self.cmd_left,
+            "cmd_right":    self.cmd_right,
+            "drive_source": self.drive_source,
+        })
+
+    # ── Message serialisers ───────────────────────────────────────────────────
 
     def to_state_msg(self) -> dict:
-        """
-        Builds the JSON blob pushed to the UI at 10 Hz.
-        TODO: replace attribute reads with live UKF / sensor values, e.g.
-            "x": self.ukf.state[0],
-            "y": self.ukf.state[1],
-        """
         return {
-            "type":          "state",
-            # raw sensors
-            "uwb_x":         round(self.uwb_x,   3),
-            "uwb_y":         round(self.uwb_y,   3),
-            "uwb_age":       round(self.uwb_age,  2),
-            "imu_theta":     round(self.imu_theta, 4),
-            "cal_sys":       self.cal_sys,
-            "cal_gyro":      self.cal_gyro,
-            "cal_mag":       self.cal_mag,
-            # UKF fused pose
-            "x":             round(self.x,     3),
-            "y":             round(self.y,     3),
-            "theta":         round(self.theta, 4),
-            # UKF uncertainty
-            "sigma_x":       round(self.sigma_x,     4),
-            "sigma_y":       round(self.sigma_y,     4),
-            "sigma_theta":   round(self.sigma_theta, 4),
-            # mission
-            "dist_target":   round(self.dist_target, 2) if self.dist_target is not None else None,
-            "target_status": self.target_status,
-            "wp_id":         self.wp_id,
-            "wp_dist":       round(self.wp_dist,    1),
-            "wp_bearing":    round(self.wp_bearing, 1),
-            # commands
-            "cmd_left":      round(self.cmd_left,  3),
-            "cmd_right":     round(self.cmd_right, 3),
-            "drive_source":  self.drive_source,
-            "speed_ms":      self.speed_limit,
-            # deterrent
-            "det_status":    self.det_status,
-            "det_count":     self.det_count,
-            "det_last":      self.det_last,
-            # pose / audio active state
-            "active_pose":   self.active_pose,
-            "active_audio":  self.active_audio,
-            # servos
+            "type": "state",
+
+            # ── Raw sensors ───────────────────────────────────
+            "uwb_x":       round(self.uwb_x,    3),
+            "uwb_y":       round(self.uwb_y,    3),
+            "uwb_age":     self.uwb_age,            # None until first UWB msg
+            "imu_theta":   round(self.imu_theta, 4),
+
+            # ── UKF fused pose ────────────────────────────────
+            "x":           round(self.x,     3),
+            "y":           round(self.y,     3),
+            "theta":       round(self.theta, 4),
+
+            # ── UKF uncertainty (sigma_x/y used for confidence indicator) ──
+            "sigma_x":     round(self.sigma_x, 4),
+            "sigma_y":     round(self.sigma_y, 4),
+
+            # ── Mission ───────────────────────────────────────
+            "destination": round(self.destination, 2) if self.destination is not None else None,
+            "sys_state":   self.sys_state,
+            "nav_cmd":     self.nav_cmd,
+            "wp_id":       self.wp_id,
+            "wp_dist":     round(self.wp_dist, 1),
+
+            # ── Drivetrain ────────────────────────────────────
+            "cmd_left":     round(self.cmd_left,  3),
+            "cmd_right":    round(self.cmd_right, 3),
+            "drive_source": self.drive_source,
+            "speed_ms":     self.speed_limit,
+
+            # ── Canine ────────────────────────────────────────
+            "active_pose":  self.active_pose,
+            "active_audio": self.active_audio,
             "servos": [
                 {"id": k, "angle": v}
                 for k, v in self.servo_angles.items()
@@ -272,3 +388,9 @@ class MockRobotState(RobotInterface):
                 for k, v in self.servo_angles.items()
             ],
         }
+
+
+# ── Backwards-compatible alias ────────────────────────────────────────────────
+# MockRobotState is kept so existing imports don't break while you migrate.
+# Once app.py is updated to use RobotState directly, this can be removed.
+MockRobotState = RobotState

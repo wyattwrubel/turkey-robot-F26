@@ -74,6 +74,7 @@ function buildAudio() {
 function connect() {
   // ws = new WebSocket('ws://raspberrypi.local:8000/ws')
   ws = new WebSocket('ws://localhost:8000/ws')
+  // ws = new WebSocket('ws://192.168.4.2:8000/ws')
   ws.onopen    = ()  => { wsReady = true }
   ws.onclose   = ()  => { wsReady = false; setTimeout(connect, 1500) }
   ws.onmessage = (e) => {
@@ -109,29 +110,74 @@ function handle(m) {
     set('ukf-x', fmt(m.x, 2))
     set('ukf-y', fmt(m.y, 2))
     set('ukf-t', deg(m.theta))
-    set('sx',    fmt(m.sigma_x, 3))
-    set('sy',    fmt(m.sigma_y, 3))
-    set('st',    deg(m.sigma_theta))
 
-    // mission
-    set('dist-t', m.dist_target != null ? `${fmt(m.dist_target, 2)} m` : '— m')
-    set('tgt-s',  m.target_status ?? 'no target acquired')
-    set('wp-id',  m.wp_id ?? 'WP — / —')
-    set('wp-i',   m.wp_dist != null
-      ? `dist: ${fmt(m.wp_dist, 1)} m · bearing: ${fmt(m.wp_bearing, 0)}°`
-      : 'dist: — · bearing: —°')
+    // Confidence indicator — collapse sigma_x, sigma_y into a single position uncertainty
+    if (m.sigma_x != null && m.sigma_y != null) {
+      const sigmaPos = Math.max(m.sigma_x, m.sigma_y)
+      set('conf-val', sigmaPos.toFixed(3))
+      const dot   = document.getElementById('conf-dot')
+      const label = document.getElementById('conf-label')
+      if (sigmaPos < 0.08) {
+        dot.className = 'conf-dot good';  label.textContent = 'HIGH'
+      } else if (sigmaPos < 0.18) {
+        dot.className = 'conf-dot warn';  label.textContent = 'MED'
+      } else {
+        dot.className = 'conf-dot poor';  label.textContent = 'LOW'
+      }
+    }
+
+    // waypoint
+    set('wp-id', m.wp_id ?? 'WP — / —')
+    set('wp-i',  m.wp_dist != null ? `dist: ${fmt(m.wp_dist, 1)} m` : 'dist: — m')
 
     // drivetrain
-    set('cmd-l',   fmt(m.cmd_left, 2))
-    set('cmd-r',   fmt(m.cmd_right, 2))
-    set('drv-src', `source: ${m.drive_source ?? '—'}`)
+    set('cmd-l', fmt(m.cmd_left, 2))
+    set('cmd-r', fmt(m.cmd_right, 2))
+    {
+      const src     = m.drive_source ?? null
+      const srcChip = document.getElementById('drv-src-chip')
+      if (src === 'UI') {
+        srcChip.textContent = 'UI';     srcChip.className = 'chip ac'
+      } else if (src === 'System') {
+        srcChip.textContent = 'SYS';   srcChip.className = 'chip ok'
+      } else {
+        srcChip.textContent = '—';     srcChip.className = 'chip'
+      }
+      set('drv-src', `source: ${src ?? '—'}`)
+    }
 
-    // deterrent chip
-    const detChip = document.getElementById('det-chip')
-    const detStatus = m.det_status ?? 'IDLE'
-    detChip.textContent = detStatus
-    detChip.className   = 'chip' + (detStatus === 'FIRED' ? ' d' : detStatus === 'ARMED' ? ' w' : '')
-    set('det-i', `fires: ${m.det_count ?? 0} · last: ${m.det_last ?? '—'}`)
+    // system state
+    {
+      const ss    = m.sys_state ?? null
+      const ssEl  = document.getElementById('sys-state')
+      if (ss === 'Chase') {
+        ssEl.textContent = 'CHASE';    ssEl.className = 'v d'
+      } else if (ss === 'Alert') {
+        ssEl.textContent = 'ALERT';    ssEl.className = 'v d'
+      } else if (ss === 'Scanning') {
+        ssEl.textContent = 'SCANNING'; ssEl.className = 'v w'
+      } else {
+        ssEl.textContent = '—';        ssEl.className = 'v'
+      }
+      set('sys-dest', m.destination != null
+        ? `destination: ${fmt(m.destination, 2)} m`
+        : 'destination: —')
+    }
+
+    // navigation command
+    {
+      const nc = m.nav_cmd ?? null
+      if (nc && nc.type === 'Move') {
+        set('nav-cmd-type',   'MOVE')
+        set('nav-cmd-detail', `target: (${fmt(nc.x,2)}, ${fmt(nc.y,2)}) m`)
+      } else if (nc && nc.type === 'Orient') {
+        set('nav-cmd-type',   'ORIENT')
+        set('nav-cmd-detail', `target: (${fmt(nc.x,2)}, ${fmt(nc.y,2)}) m  θ=${deg(nc.theta)}°`)
+      } else {
+        set('nav-cmd-type',   '—')
+        set('nav-cmd-detail', '—')
+      }
+    }
 
     // speed slider sync
     if (m.speed_ms != null) {
@@ -157,12 +203,12 @@ function handle(m) {
       })
     }
 
-    // pose button highlight
+    // pose button highlight — works for both UI ('Pose1') and system ('Pose1') sources
     if (m.active_pose !== undefined) {
       document.querySelectorAll('.pose-g .btn').forEach(b => b.classList.remove('lit'))
       if (m.active_pose) {
         document.querySelectorAll('.pose-g .btn').forEach(b => {
-          if (b.getAttribute('onclick')?.includes(m.active_pose))
+          if (b.dataset.poseId === m.active_pose)
             b.classList.add('lit')
         })
       }
@@ -318,8 +364,7 @@ function reflectDriveOnButtons(left, right) {
 // ═══════════════════════════════════════════════
 function emergencyStop() {
   isStopped = true
-  send({ type: 'motor_command', Id: 'UI', Cmd: [0, 0], speed_ms: 0 })
-  send({ type: 'estop' })
+  send({ type: 'estop' })   // internal — handlers.py calls apply_estop_engage()
   const b = document.getElementById('estop-btn')
   b.textContent      = '⬡ STOPPED — CLICK TO RESET'
   b.style.background = 'rgba(255,34,51,.35)'
@@ -328,7 +373,7 @@ function emergencyStop() {
 
 function resetEStop() {
   isStopped = false
-  send({ type: 'estop_reset' })
+  send({ type: 'estop_reset' })   // internal — handlers.py calls apply_estop_release()
   const b = document.getElementById('estop-btn')
   b.textContent      = '⬡ EMERGENCY STOP'
   b.style.background = ''
@@ -340,7 +385,7 @@ function resetEStop() {
 // ═══════════════════════════════════════════════
 function toggleMode() {
   isManual = !isManual
-  send({ type: isManual ? 'unlock' : 'lock_manual' })
+  // Mode is local UI state only — no message sent to server
   document.getElementById('mode-badge').textContent = isManual ? 'MANUAL' : 'AUTO'
   document.getElementById('mode-badge').className   = isManual ? 'mode-badge manual' : 'mode-badge'
   document.getElementById('mode-btn').textContent   = isManual ? '⇄ SWITCH TO AUTO' : '⇄ SWITCH TO MANUAL'
