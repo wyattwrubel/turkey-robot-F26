@@ -6,6 +6,19 @@
 <title>CANINE DETERRENT SYSTEM — CONTROL INTERFACE</title>
 <!-- <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow+Condensed:wght@300;400;600;700;900&display=swap" rel="stylesheet"> -->
 <link rel="stylesheet" href="styles.css">
+<style>
+#csv-label {
+  position:absolute; bottom:8px; right:8px;
+  cursor:pointer; z-index:10;
+}
+#csv-btn {
+  font-family:'Courier New',monospace; font-size:10px;
+  letter-spacing:.1em; padding:3px 8px;
+  border:1px solid #2a4060; background:rgba(13,17,23,.85);
+  color:#4a6070; transition:color .15s, border-color .15s;
+}
+#csv-label:hover #csv-btn { color:#00d4ff; border-color:#00d4ff; }
+</style>
 </head>
 <body>
 
@@ -43,7 +56,7 @@
         <div class="fi">⬡</div>
         <div class="fl">Camera Feed</div>
         <div class="fs">AWAITING STREAM</div>
-        <img id="live-img" style="display:none;width:100%;height:100%;object-fit:contain;position:absolute;inset:0;" alt="live"/>
+        <img id="live-img" style="display:none;" alt="live"/>
       </div>
     </div>
   </div>
@@ -52,16 +65,15 @@
   <div class="panel">
     <div class="ph">
       <div class="ph-title">Zone Map</div>
-      <div class="ph-sub">40 × 80 M &nbsp;·&nbsp; UKF FUSED &nbsp;·&nbsp; 10 HZ</div>
+      <div class="ph-sub" id="map-sub">40 × 80 M &nbsp;·&nbsp; UKF FUSED &nbsp;·&nbsp; 10 HZ</div>
     </div>
-    <div class="pbody" style="padding:0;">
-      <div class="feed-ph">
-        <div class="cr tl"></div><div class="cr tr"></div>
-        <div class="cr bl"></div><div class="cr br"></div>
-        <div class="fi">◈</div>
-        <div class="fl">Annotated Map</div>
-        <div class="fs">CANVAS2D — ZONE BOUNDARY + ROBOT POSE</div>
-      </div>
+    <div class="pbody" style="padding:0; position:relative;">
+      <canvas id="map-canvas"></canvas>
+      <!-- CSV overlay — drop a file to load static obstacles -->
+      <label id="csv-label" title="Drop a CSV (x,y,type) to load obstacles">
+        <input type="file" id="csv-input" accept=".csv" style="display:none;" onchange="loadCSV(this)">
+        <span id="csv-btn">⊕ CSV</span>
+      </label>
     </div>
   </div>
 

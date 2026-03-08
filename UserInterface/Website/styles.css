@@ -147,6 +147,13 @@
   .pbody::-webkit-scrollbar-track { background:var(--bg-panel); }
   .pbody::-webkit-scrollbar-thumb { background:var(--border-hi); }
 
+  /* ── MAP CANVAS ── */
+  #map-canvas {
+    flex:1; min-height:0;
+    display:block;
+    width:100%;   /* fills flex cross-axis */
+  }
+
   /* ── FEED PLACEHOLDER ── */
   /* pbody with padding:0 is a flex column item — feed-ph must be flex:1
      so it stretches to fill the available height rather than relying on
@@ -166,6 +173,9 @@
                 linear-gradient(90deg,var(--border) 1px,transparent 1px);
     background-size:40px 40px; opacity:.25;
   }
+  /* Live camera image fills feed-ph as a flex child (not position:absolute) */
+  #live-img { flex:1; min-height:0; width:100%; object-fit:contain; display:none; }
+
   .fi  { font-size:28px; opacity:.25; position:relative; }
   .fl  { font-family:var(--disp); font-weight:600; font-size:13px; letter-spacing:.2em; text-transform:uppercase; opacity:.35; position:relative; }
   .fs  { font-size:9px; letter-spacing:.1em; opacity:.2; position:relative; }

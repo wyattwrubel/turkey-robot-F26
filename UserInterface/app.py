@@ -29,11 +29,9 @@ Usage in main.py
         ui.serve(),
     )
 """
-
 import sys
 import os
 sys.path.append(os.path.dirname(__file__))
-
 
 import asyncio
 import json
@@ -103,6 +101,7 @@ class CDSControlServer:
 
         # ── WebSocket connection list ───────────────────────────────────────
         self.connections: list[WebSocket] = []
+        self._last_vision: dict = {"type": "vision", "turkeys": [], "humans": []}  # most recent detection frame
 
         # ── Robot state (mock by default — swap in your real class) ─────────
         self.robot: RobotInterface = RobotState()
@@ -155,10 +154,33 @@ class CDSControlServer:
         """
         VisionObject Channel (Ch. 1)
         Expected keys:  Id="DynamicObjects", Turkeys=[[x,y,angle],...], Humans=[[x,y,angle],...]
-        Not written to robot state directly — consumed by Navigation.
-        Logged here for visibility; extend as needed.
+
+        Stores the latest detection frame and fans it out to all connected
+        browser clients as a  type:"vision"  WebSocket message so the map
+        canvas can animate the detections in real time.
+
+        Message schema pushed to browser:
+          { "type": "vision",
+            "turkeys": [[x, y, angle_rad], ...],
+            "humans":  [[x, y, angle_rad], ...] }
         """
-        log_info("VISION", f"Turkeys={len(data.get('Turkeys', []))}  Humans={len(data.get('Humans', []))}")
+        turkeys = data.get("Turkeys", [])
+        humans  = data.get("Humans",  [])
+        log_info("VISION", f"Turkeys={len(turkeys)}  Humans={len(humans)}")
+
+        # Store latest for clients that connect mid-session
+        self._last_vision = {"type": "vision", "turkeys": turkeys, "humans": humans}
+
+        # Fan out to every connected browser
+        msg  = json.dumps(self._last_vision)
+        dead = []
+        for ws in self.connections:
+            try:
+                await ws.send_text(msg)
+            except Exception:
+                dead.append(ws)
+        for ws in dead:
+            self.connections.remove(ws)
 
     async def RobotPose_Receiver(self, data: dict) -> None:
         """
@@ -422,8 +444,9 @@ class CDSControlServer:
             client = ws.client
             log("WS", f"Client connected  {client.host}:{client.port}", C.GREEN)
 
-            # sync servo positions to UI immediately on connect
+            # sync servo positions and last vision frame to UI immediately on connect
             await ws.send_text(json.dumps(self.robot.to_servo_state_msg()))
+            await ws.send_text(json.dumps(self._last_vision))
 
             try:
                 while True:
@@ -589,6 +612,43 @@ class CDSControlServer:
             log_info("TEST", "Navigation test complete — state cleared")
             return {"done": True, "sequence": "navigation"}
 
+        @app.get("/test/vision")
+        async def test_vision():
+            """
+            Simulate 10 frames of VisionObject detections, 0.5s apart.
+            Watch the map canvas animate turkey and human positions.
+            Positions are in metres relative to the field origin (0,0).
+            """
+            import math as _math
+            import random as _rand
+            log_info("TEST", "Vision sequence started")
+
+            for frame in range(10):
+                t = frame * 0.5
+                # Turkeys orbit slowly around (20, 10)
+                turkeys = [
+                    [20.0 + 4.0 * _math.cos(t * 0.7 + i * 2.1),
+                     10.0 + 4.0 * _math.sin(t * 0.7 + i * 2.1),
+                     (t * 0.7 + i * 2.1) % (2 * _math.pi)]
+                    for i in range(3)
+                ]
+                # Humans walk in from the edge
+                humans = [
+                    [5.0 + t * 0.8,
+                     15.0 + _math.sin(t * 1.2) * 2.0,
+                     _math.pi * 0.5]
+                ]
+                vision_data = {
+                    "Id":      "DynamicObjects",
+                    "Turkeys": turkeys,
+                    "Humans":  humans,
+                }
+                await self.VisionObject_Receiver(vision_data)
+                log_info("TEST", f"Vision frame {frame+1}/10  turkeys={len(turkeys)} humans={len(humans)}")
+                await asyncio.sleep(0.5)
+
+            return {"done": True, "sequence": "vision"}
+
         @app.get("/test/full")
         async def test_full():
             """Run all sequences back to back (~60s)."""
@@ -604,6 +664,8 @@ class CDSControlServer:
             await test_audio()
             await asyncio.sleep(0.5)
             await test_navigation()
+            await asyncio.sleep(0.5)
+            await test_vision()
             await asyncio.sleep(0.5)
             await test_estop()
             log_info("TEST", "Full sequence complete")
