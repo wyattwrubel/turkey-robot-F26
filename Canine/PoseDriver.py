@@ -13,6 +13,8 @@ class PoseDriver():
     Rear_Left_Pin = 6
     Rear_Right_Pin = 7
     Head_Pin = 8
+
+    Default_Angle_Delay = 0.5 # Seconds
  
     def __init__(self, Verbose):
         self.servos = {}
@@ -52,46 +54,142 @@ class PoseDriver():
             print(f"PoseDriver: Missing 'Data' in {data}") 
             return
         
-        #TODO UPDATE THESE WITH REAL NEEDS FROM 19
-        if(data == "Pose1"):
-            await self._Pose1_Protocol()
-        elif(data == "Pose2"):
-            await self._Pose2_Protocol()
-        elif(data == "Pose3"):
-            await self._Pose3_Protocol()
-        elif(data == "Pose4"):
-            await self._Pose4_Protocol()
-        elif(data == "Pose5"):
-            await self._Pose5_Protocol()
+        if(data == "IdlePose"):
+            await self._IdlePose_Command()
+        elif(data == "AlertPose"):
+            await self._AlertPose_Command()
+        elif(data == "AggressivePose"):
+            await self._AggressivePose_Command()
+        elif(data == "WalkGait"):
+            await self._WalkGait_Command()
+        elif(data == "ExcitedGait"):
+            await self._ExcitedGait_Command()
+        elif(data == "AlertStep"):
+            await self._AlertStep_Command()
+        elif(data == "HeadScan"):
+            await self._HeadScan_Command()
         else:
             print("Invalid pose received in ", data)
 
-    #TODO Update Once Have ServoController Elements Defined < Team 19
-    # INCLUDE ANY PRINTOUTS WITH VERBOSE DELAYS ARE DONE MANUALLY
-    async def _Pose1_Protocol(self):
+    # ------------------------------------------------------------------
+    # Fixed Command Protocols
+    # ------------------------------------------------------------------
+
+    async def _IdlePose_Command(self):
+        if(self.Verbose): print("PoseDriver: Activating IdlePose")
         await asyncio.gather(
-            self.servos["FrontLeft"].servo_control_receiver("Fixed", 90),
-            self.servos["FrontRight"].servo_control_receiver("Oscillate", 90),
+            self.servos["FrontLeft"].servo_control_receiver("Fixed", 0),
+            self.servos["FrontRight"].servo_control_receiver("Fixed", 0),
+            self.servos["RearLeft"].servo_control_receiver("Fixed", 0),
+            self.servos["RearRight"].servo_control_receiver("Fixed", 0),
+            self.servos["Head"].servo_control_receiver("Fixed", 0),
+            asyncio.sleep(self.Default_Angle_Delay)
         )
 
-    async def _Pose2_Protocol(self):
+    async def _AlertPose_Command(self):
+        if(self.Verbose): print("PoseDriver: Activating AlertPose")
         await asyncio.gather(
-            self.servos["FrontLeft"].servo_control_receiver("Fixed", 90),
-            self.servos["FrontRight"].servo_control_receiver("Fixed", 90),
+            self.servos["FrontLeft"].servo_control_receiver("Fixed", 10),
+            self.servos["FrontRight"].servo_control_receiver("Fixed", 10),
+            self.servos["RearLeft"].servo_control_receiver("Fixed", 15),
+            self.servos["RearRight"].servo_control_receiver("Fixed", 15),
+            self.servos["Head"].servo_control_receiver("Fixed", 0),
+            asyncio.sleep(self.Default_Angle_Delay)
         )
 
-    async def _Pose3_Protocol(self):
+    async def _AggressivePose_Command(self):
+        if(self.Verbose): print("PoseDriver: Activating AggressivePose")
         await asyncio.gather(
-            self.servos["FrontLeft"].servo_control_receiver("Fixed", 90),
-            self.servos["FrontRight"].servo_control_receiver("Fixed", 90),
+            self.servos["FrontLeft"].servo_control_receiver("Fixed", 30),
+            self.servos["FrontRight"].servo_control_receiver("Fixed", 30),
+            self.servos["RearLeft"].servo_control_receiver("Fixed", 0),
+            self.servos["RearRight"].servo_control_receiver("Fixed", 0),
+            self.servos["Head"].servo_control_receiver("Fixed", 0),
+            asyncio.sleep(self.Default_Angle_Delay)
         )
-    async def _Pose4_Protocol(self):
+
+    # ------------------------------------------------------------------
+    # Oscillation Command Protocols
+    # ------------------------------------------------------------------
+    
+    async def _WalkGait_Command(self):
+        
+        # Motor Initialization
+        if(self.Verbose): print("PoseDriver: Activating WalkGait Initialization")
         await asyncio.gather(
-            self.servos["FrontLeft"].servo_control_receiver("static", 90),
-            self.servos["FrontRight"].servo_control_receiver("static", 90),
+            self.servos["FrontLeft"].servo_control_receiver("Fixed", 15),
+            self.servos["FrontRight"].servo_control_receiver("Fixed", -15),
+            self.servos["RearLeft"].servo_control_receiver("Fixed", 15),
+            self.servos["RearRight"].servo_control_receiver("Fixed", -15),
+            asyncio.sleep(self.Default_Angle_Delay)
         )
-    async def _Pose5_Protocol(self):
+
+        # Motor Oscillation
+        if(self.Verbose): print("PoseDriver: Activating WalkGait Oscillation")
         await asyncio.gather(
-            self.servos["FrontLeft"].servo_control_receiver("static", 90),
-            self.servos["FrontRight"].servo_control_receiver("static", 90),
+            self.servos["FrontLeft"].servo_control_receiver("Oscillate", 25, -25, 2),
+            self.servos["FrontRight"].servo_control_receiver("Oscillate", -25, 25, 2),
+            self.servos["RearLeft"].servo_control_receiver("Oscillate", 25, -25, 2),
+            self.servos["RearRight"].servo_control_receiver("Oscillate", -25, 25, 2),
+            self.servos["Head"].servo_control_receiver("Random", -20, 20, 3),
+        )
+
+    async def _ExcitedGait_Command(self):
+        
+        # Motor Initialization
+        if(self.Verbose): print("PoseDriver: Activating ExcitedGait Initialization")
+        await asyncio.gather(
+            self.servos["FrontLeft"].servo_control_receiver("Fixed", 0),
+            self.servos["FrontRight"].servo_control_receiver("Fixed", 0),
+            self.servos["RearLeft"].servo_control_receiver("Fixed", 0),
+            self.servos["RearRight"].servo_control_receiver("Fixed", 0),
+            asyncio.sleep(self.Default_Angle_Delay)
+        )
+
+        # Motor Oscillation
+        if(self.Verbose): print("PoseDriver: Activating ExcitedGait Oscillation")
+        await asyncio.gather(
+            self.servos["FrontLeft"].servo_control_receiver("Oscillate", 40, -40, 1),
+            self.servos["FrontRight"].servo_control_receiver("Oscillate", -40, 40, 1),
+            self.servos["RearLeft"].servo_control_receiver("Oscillate", -40, 40, 1),
+            self.servos["RearRight"].servo_control_receiver("Oscillate", 40, -40, 1),
+            self.servos["Head"].servo_control_receiver("Random", -45, 45, 1),
+        )
+
+    async def _AlertStep_Command(self):
+        
+        # Motor Initialization
+        if(self.Verbose): print("PoseDriver: Activating AlertStep Initialization")
+        await asyncio.gather(
+            self.servos["FrontLeft"].servo_control_receiver("Fixed", 0),
+            self.servos["FrontRight"].servo_control_receiver("Fixed", 0),
+            self.servos["RearLeft"].servo_control_receiver("Fixed", 0),
+            self.servos["RearRight"].servo_control_receiver("Fixed", 0),
+            self.servos["Head"].servo_control_receiver("Fixed", 0),
+            asyncio.sleep(self.Default_Angle_Delay)
+        )
+
+        # Motor Oscillation
+        if(self.Verbose): print("PoseDriver: Activating AlertStep Oscillation")
+        await asyncio.gather(
+            self.servos["FrontLeft"].servo_control_receiver("Oscillate", 20, -10, 3),
+            self.servos["FrontRight"].servo_control_receiver("Oscillate", -10, 20, 3),
+            self.servos["RearLeft"].servo_control_receiver("Oscillate", -10, 20, 3),
+            self.servos["RearRight"].servo_control_receiver("Oscillate", 20, -10, 3),
+            self.servos["Head"].servo_control_receiver("Oscillate", -40, 40, 5),
+        )
+
+    async def _HeadScan_Command(self):
+
+        # Motor Initialization
+        if(self.Verbose): print("PoseDriver: Activating HeadScan Initialization")
+        await asyncio.gather(
+            self.servos["Head"].servo_control_receiver("Fixed", 0),
+            asyncio.sleep(self.Default_Angle_Delay)
+        )
+
+        # Motor Oscillation
+        if(self.Verbose): print("PoseDriver: Activating HeadScan Oscillation")        
+        await asyncio.gather(
+            self.servos["Head"].servo_control_receiver("Oscillate", -60, 60, 4),
         )

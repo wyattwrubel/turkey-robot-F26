@@ -8,14 +8,13 @@ class AsyncAudioDriver:
         pygame.mixer.init()
         pygame.mixer.set_num_channels(max_channels)
 
-        #TODO Update These With RPi Address
-        base = "/home/meathead/ME450/MainDesign/Canine/AudioFiles"
+        base = "/home/turkeysquad/ME450/MainDesign/Canine/AudioFiles"
 
-        #TODO Update These With Team 19 Sounds
         self.sounds = {
-            "startup": pygame.mixer.Sound(f"{base}/TEMP_Bark1.wav"),
-            "alert":   pygame.mixer.Sound(f"{base}/TEMP_Bark2.wav"),
-            "howl":    pygame.mixer.Sound(f"{base}/TEMP_Bark3.wav"),
+            "BarkShort": pygame.mixer.Sound(f"{base}/BarkShort.mp3"),
+            "BarkBurst":   pygame.mixer.Sound(f"{base}/BarkBurst.mp3"),
+            "Growl":    pygame.mixer.Sound(f"{base}/Growl.mp3"),
+            "AggressiveBark":    pygame.mixer.Sound(f"{base}/AggressiveBark.mp3"),
         }
     
     # ------------------------------------------------------------------
