@@ -29,6 +29,7 @@ Usage in main.py
         ui.serve(),
     )
 """
+
 import sys
 import os
 sys.path.append(os.path.dirname(__file__))
@@ -153,7 +154,8 @@ class CDSControlServer:
     async def VisionObject_Receiver(self, data: dict) -> None:
         """
         VisionObject Channel (Ch. 1)
-        Expected keys:  Id="DynamicObjects", Turkeys=[[x,y,angle],...], Humans=[[x,y,angle],...]
+        Expected keys:  Id="DynamicObjects", Turkeys=[[x,y],...], Humans=[[x,y],...]
+        Angle is ignored — the UI renders position-only detection boxes.
 
         Stores the latest detection frame and fans it out to all connected
         browser clients as a  type:"vision"  WebSocket message so the map
@@ -161,8 +163,8 @@ class CDSControlServer:
 
         Message schema pushed to browser:
           { "type": "vision",
-            "turkeys": [[x, y, angle_rad], ...],
-            "humans":  [[x, y, angle_rad], ...] }
+            "turkeys": [[x, y], ...],
+            "humans":  [[x, y], ...] }
         """
         turkeys = data.get("Turkeys", [])
         humans  = data.get("Humans",  [])
@@ -368,18 +370,18 @@ class CDSControlServer:
         if msg_type == "Pose":
             pose = data.get("Data", "")
             self.robot.apply_pose(pose)
-            log_info("K9", f"Pose -> {pose}")
+            log_evt("K9", f"Pose -> {pose}")
 
         elif msg_type == "Servo":
             name  = data.get("Name", "")
             angle = float(data.get("Data", 0.0))
             self.robot.apply_servo_angle(name, angle)
-            log_info("K9", f"Servo {name} -> {angle:.1f}°")
+            log_cmd("K9", f"Servo {name} -> {angle:.1f}°")
 
         elif msg_type == "Audio":
             sound = data.get("Data", "")
             self.robot.apply_audio(sound)
-            log_info("K9", f"Audio -> {sound}")
+            log_evt("K9", f"Audio -> {sound}")
 
         else:
             log_warn("K9", f"Unknown Canine message: Id={msg_id!r} Type={msg_type!r}")
@@ -625,18 +627,16 @@ class CDSControlServer:
 
             for frame in range(10):
                 t = frame * 0.5
-                # Turkeys orbit slowly around (20, 10)
+                # Turkeys orbit slowly around (20, 10) — position only
                 turkeys = [
-                    [20.0 + 4.0 * _math.cos(t * 0.7 + i * 2.1),
-                     10.0 + 4.0 * _math.sin(t * 0.7 + i * 2.1),
-                     (t * 0.7 + i * 2.1) % (2 * _math.pi)]
+                    [round(20.0 + 4.0 * _math.cos(t * 0.7 + i * 2.1), 2),
+                     round(10.0 + 4.0 * _math.sin(t * 0.7 + i * 2.1), 2)]
                     for i in range(3)
                 ]
-                # Humans walk in from the edge
+                # Human walks in from the left edge — position only
                 humans = [
-                    [5.0 + t * 0.8,
-                     15.0 + _math.sin(t * 1.2) * 2.0,
-                     _math.pi * 0.5]
+                    [round(5.0 + t * 0.8, 2),
+                     round(15.0 + _math.sin(t * 1.2) * 2.0, 2)]
                 ]
                 vision_data = {
                     "Id":      "DynamicObjects",
