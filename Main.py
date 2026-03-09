@@ -210,6 +210,7 @@ async def test_canine(canine_publisher: AsyncPublisher):
     """
     print("[TEST] Canine: starting sequence")
 
+
     # Poses 1 → 5
     for pose in ["Pose1", "Pose2", "Pose3", "Pose4", "Pose5"]:
         payload = {"Id": "System", "Type": "Pose", "Data": pose}
@@ -253,15 +254,6 @@ async def test_canine(canine_publisher: AsyncPublisher):
         await canine_publisher.publish(payload)
         print(f"  [K9] Audio -> {sound}")
         await asyncio.sleep(1.5)
-
-
-        # Audio clips
-    for poses in ["POSE1", "POSE2", "POSE3", "POSE4"]:
-        payload = {"Id": "System", "Type": "Pose", "Data": poses}
-        await canine_publisher.publish(payload)
-        print(f"  [K9] Pose -> {sound}")
-        await asyncio.sleep(1.5)
-
 
     print("[TEST] Canine: complete")
 
