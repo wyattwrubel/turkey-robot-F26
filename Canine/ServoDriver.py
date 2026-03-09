@@ -3,12 +3,10 @@ from gpiozero.pins.lgpio import LGPIOFactory
 
 class Servo:
 
-
     #TODO REVISE THESE SPEEDS WITH TESTING
     # ------------------------------------------------------------------
     # Leg Specifications
     # ------------------------------------------------------------------
-    Leg_Max_Motor_Speed = 498 # degree/s 
     Leg_Motor_Max_Angle = 74 # degrees 
     Leg_Motor_Min_Angle = -74 # degrees 
     Leg_Motor_Max_Pulse = 2350 # microseconds 
@@ -19,7 +17,6 @@ class Servo:
     # ------------------------------------------------------------------
     # Head Specifications
     # ------------------------------------------------------------------
-    Head_Max_Motor_Speed = 498 # degree/s 
     Head_Motor_Max_Angle = 74 # degrees 
     Head_Motor_Min_Angle = -74 # degrees
     Head_Motor_Max_Pulse = 2350 # microseconds 
@@ -51,7 +48,6 @@ class Servo:
         self.pwm = PWMOutputDevice(GPIO_PIN, frequency=50, pin_factory=factory)
 
         if(ServoType == "Leg"):
-            self.Max_Motor_Speed = self.Leg_Max_Motor_Speed
             self.Motor_Max_Angle = self.Leg_Motor_Max_Angle
             self.Motor_Min_Angle = self.Leg_Motor_Min_Angle
             self.Motor_Max_Pulse = self.Leg_Motor_Max_Pulse
@@ -59,7 +55,6 @@ class Servo:
             self.Max_Command_Angle = self.Max_Leg_Command
             self.Min_Command_Angle = self.Min_Leg_Command
         elif(ServoType == "Head"):
-            self.Max_Motor_Speed = self.Head_Max_Motor_Speed
             self.Motor_Max_Angle = self.Head_Motor_Max_Angle
             self.Motor_Min_Angle = self.Head_Motor_Min_Angle
             self.Motor_Max_Pulse = self.Head_Motor_Max_Pulse
@@ -70,6 +65,7 @@ class Servo:
             print("ServoDriver: Invalid 'ServoType' Received ", ServoType)
 
     def SetAngle(self, Angle):
+        # TODO Flip orientation of some motors maybe?
         motor_angle = max(self.Min_Command_Angle, min(self.Max_Command_Angle, Angle))
         self.Current_Angle = motor_angle
         t = (motor_angle - self.Motor_Min_Angle) / (self.Motor_Max_Angle - self.Motor_Min_Angle)
