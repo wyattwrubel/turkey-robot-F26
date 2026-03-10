@@ -29,7 +29,6 @@ Usage in main.py
         ui.serve(),
     )
 """
-
 import sys
 import os
 sys.path.append(os.path.dirname(__file__))
@@ -40,7 +39,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse
 
 from broadcast import broadcast_frames, broadcast_state
@@ -154,35 +153,37 @@ class CDSControlServer:
     async def VisionObject_Receiver(self, data: dict) -> None:
         """
         VisionObject Channel (Ch. 1)
-        Expected keys:  Id="DynamicObjects", Turkeys=[[x,y],...], Humans=[[x,y],...]
-        Angle is ignored — the UI renders position-only detection boxes.
 
-        Stores the latest detection frame and fans it out to all connected
-        browser clients as a  type:"vision"  WebSocket message so the map
-        canvas can animate the detections in real time.
+        Expected keys:
+          Id       = "DynamicObjects"
+          Turkeys  = [[world_x, world_y], ...]   — world coords for map overlay
+          Humans   = [[world_x, world_y], ...]
+          Bboxes   = [                            — pixel coords for camera overlay
+            { "label": str, "conf": float,
+              "x1": int, "y1": int, "x2": int, "y2": int },
+            ...
+          ]
 
-        Message schema pushed to browser:
-          { "type": "vision",
-            "turkeys": [[x, y], ...],
-            "humans":  [[x, y], ...] }
+        Writes to broadcast.set_vision() — the single source of truth.
+        broadcast_frames() picks it up and delivers to all clients at 2 Hz.
+        No direct WebSocket pushes here — that was causing competing messages
+        and flickering when test sequences also sent vision data.
         """
+        from broadcast import set_vision
         turkeys = data.get("Turkeys", [])
         humans  = data.get("Humans",  [])
-        log_info("VISION", f"Turkeys={len(turkeys)}  Humans={len(humans)}")
+        bboxes  = data.get("Bboxes",  [])
+        log_info("VISION", f"Turkeys={len(turkeys)}  Humans={len(humans)}  Bboxes={len(bboxes)}")
+        # Only overwrite bboxes if the message actually contains them.
+        # test_vision() sends world positions only (no Bboxes key) — we keep
+        # the existing demo/real bboxes so they don't disappear during chase.
+        from broadcast import _current_vision_msg
+        import json as _json
+        if "Bboxes" not in data and _current_vision_msg is not None:
+            existing = _json.loads(_current_vision_msg)
+            bboxes = existing.get("bboxes", [])
 
-        # Store latest for clients that connect mid-session
-        self._last_vision = {"type": "vision", "turkeys": turkeys, "humans": humans}
-
-        # Fan out to every connected browser
-        msg  = json.dumps(self._last_vision)
-        dead = []
-        for ws in self.connections:
-            try:
-                await ws.send_text(msg)
-            except Exception:
-                dead.append(ws)
-        for ws in dead:
-            self.connections.remove(ws)
+        set_vision(turkeys, humans, bboxes)
 
     async def RobotPose_Receiver(self, data: dict) -> None:
         """
@@ -451,7 +452,31 @@ class CDSControlServer:
                 return FileResponse(str(f), media_type="text/csv")
             return HTMLResponse("", status_code=404)
 
-        # ── WebSocket endpoint ────────────────────────────────────────────────
+        # ── Camera feed upload ────────────────────────────────────────────────
+        # POST /feed/upload  multipart file  ->  broadcasts frame to all clients
+        # Usage:
+        #   curl -X POST http://localhost:8000/feed/upload -F "file=@turkey.jpg"
+        #
+        # Any image PIL can open works (JPEG, PNG ...).
+        # Stored in broadcast._current_frame_msg; clients receive it within 0.1 s.
+
+        @app.post("/feed/upload")
+        async def feed_upload(file: UploadFile):
+            import base64, io
+            from PIL import Image
+            from broadcast import set_frame
+
+            data = await file.read()
+            img  = Image.open(io.BytesIO(data)).convert("RGB")
+            w, h = img.size
+            buf  = io.BytesIO()
+            img.save(buf, format="JPEG", quality=80)
+            b64  = base64.b64encode(buf.getvalue()).decode("ascii")
+            set_frame(b64, w, h)
+            log_info("CAM", f"Frame updated: {w}x{h}  ({len(b64)//1024} KB b64)")
+            return {"ok": True, "w": w, "h": h}
+
+        # ── WebSocket endpoint ────────────────────────────────────────────────────
         @app.websocket("/ws")
         async def websocket_endpoint(ws: WebSocket):
             await ws.accept()
@@ -459,9 +484,17 @@ class CDSControlServer:
             client = ws.client
             log("WS", f"Client connected  {client.host}:{client.port}", C.GREEN)
 
-            # sync servo positions and last vision frame to UI immediately on connect
+            # Sync servo positions on connect
             await ws.send_text(json.dumps(self.robot.to_servo_state_msg()))
-            await ws.send_text(json.dumps(self._last_vision))
+            # Send current frame + vision state once on connect.
+            # Both are maintained as single sources of truth in broadcast.py.
+            # The frame is never re-sent in the loop (static image = send once).
+            # Vision is re-sent at 2 Hz by broadcast_frames.
+            from broadcast import _current_frame_msg, _current_vision_msg
+            if _current_frame_msg  is not None:
+                await ws.send_text(_current_frame_msg)
+            if _current_vision_msg is not None:
+                await ws.send_text(_current_vision_msg)
 
             try:
                 while True:
