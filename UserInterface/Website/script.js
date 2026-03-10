@@ -18,6 +18,13 @@ const AUDIO_DEFS = [
 
 const SPEED_MAX = 3.0   // m/s — update when you have real value
 
+// ── Static map CSV ──────────────────────────────────────────────────────────
+// Set to '/map.csv' to auto-load your occupancy grid on page open.
+// Drop your CSV file in the Website/ folder and add the /map.csv route in
+// app.py (already done — see the static routes section).
+// Set to '' to disable auto-load and use the manual ⊕ CSV button instead.
+const MAP_CSV = '/map.csv'
+
 // WASD direction vectors (normalized, scaled by speed at send time)
 const WASD_DIRS = {
   w: [ 1,  1],
@@ -438,28 +445,26 @@ connect()
 // canvas never draws.
 requestAnimationFrame(initMap)
 // ═══════════════════════════════════════════════
-// MAP CANVAS  — Pseudo-3D Tron arena
+// MAP CANVAS  — 2D Top-Down Tron Arena
 // ═══════════════════════════════════════════════
 //
-// Projection model: oblique axonometric (Cabinet projection, 45°, ratio 0.5)
-//   World (x, y) in metres, y=0 at bottom, y=MAP_H at top.
-//   Screen origin is the bottom-centre of the arena.
-//
-//   sx(x,y) = originX + (x - MAP_W/2) * S  +  y * cos45 * S * TILT
-//   sy(x,y) = originY - y * sin45 * S * TILT  +  (x - MAP_W/2) * 0
-//
-//   TILT controls how steep the floor looks (0 = flat top-down, 1 = full iso).
-//   We use TILT=0.45 — enough depth without distorting entity positions badly.
+// Orthographic top-down projection — world x → screen right, world y → screen down.
+// Field is centred in the panel with equal margins. Zoom and pan supported.
 //
 // All draw calls are plain Canvas2D — no libraries, Pi-safe at 60 fps.
 
 let MAP_W = 100.0
 let MAP_H = 100.0
 
-// ── Projection constants (recomputed in drawMap each frame for resize safety) ──
-const TILT   = 0.45   // vertical compression factor
-const CAB    = 0.5    // cabinet projection oblique ratio
-const WALL_H = 18     // px height of the extruded arena wall
+// ── Zoom / pan state (modified by wheel + drag on the canvas) ────────────
+let mapZoom    = 1.0          // 1.0 = fit-to-panel; max capped at 6×
+let mapPanX    = 0.0          // pan offset in world metres (x)
+let mapPanY    = 0.0          // pan offset in world metres (y)
+let _dragActive = false
+let _dragLast   = { x: 0, y: 0 }
+
+// ── 2D top-down orthographic projection ─────────────────────────────────────
+// No oblique tilt — world x→screen right, world y→screen down (y=0 at top)
 
 function initMap() {
   const canvas = document.getElementById('map-canvas')
@@ -480,8 +485,82 @@ function initMap() {
   resize()
   new ResizeObserver(resize).observe(canvas)
 
+  // Auto-load the static map CSV if configured
+  if (MAP_CSV) {
+    fetch(MAP_CSV)
+      .then(r => {
+        if (!r.ok) throw new Error(`map.csv not found (${r.status})`)
+        return r.text()
+      })
+      .then(text => parseCSVText(text))
+      .catch(err => console.warn('MAP_CSV auto-load skipped:', err.message))
+  }
+
+  // ── Zoom: scroll wheel ──────────────────────────────────────────────────
+  canvas.addEventListener('wheel', e => {
+    e.preventDefault()
+    const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12
+    mapZoom = Math.min(6.0, Math.max(1.0, mapZoom * factor))
+    // Clamp pan so the view never goes empty
+    _clampPan()
+  }, { passive: false })
+
+  // ── Pan: mouse drag ──────────────────────────────────────────────────────
+  canvas.addEventListener('mousedown', e => {
+    _dragActive = true
+    _dragLast   = { x: e.clientX, y: e.clientY }
+    canvas.style.cursor = 'grabbing'
+  })
+  window.addEventListener('mousemove', e => {
+    if (!_dragActive) return
+    const dx = e.clientX - _dragLast.x
+    const dy = e.clientY - _dragLast.y
+    _dragLast = { x: e.clientX, y: e.clientY }
+    // Convert screen px delta → world metres (inverse of projection x-axis)
+    // proj x: OX + wx*S  →  dx px = dwx * S  →  dwx = dx / S
+    const S = _lastS || 1
+    mapPanX -= dx / S
+    mapPanY -= dy / S
+    _clampPan()
+  })
+  window.addEventListener('mouseup', () => {
+    _dragActive = false
+    canvas.style.cursor = 'crosshair'
+  })
+
+  // ── Touch pan (single finger) ────────────────────────────────────────────
+  canvas.addEventListener('touchstart', e => {
+    if (e.touches.length === 1) {
+      _dragActive = true
+      _dragLast   = { x: e.touches[0].clientX, y: e.touches[0].clientY }
+    }
+  }, { passive: true })
+  canvas.addEventListener('touchmove', e => {
+    if (!_dragActive || e.touches.length !== 1) return
+    const dx = e.touches[0].clientX - _dragLast.x
+    const dy = e.touches[0].clientY - _dragLast.y
+    _dragLast = { x: e.touches[0].clientX, y: e.touches[0].clientY }
+    const S = _lastS || 1
+    mapPanX -= dx / S
+    mapPanY -= dy / S
+    _clampPan()
+  }, { passive: true })
+  canvas.addEventListener('touchend', () => { _dragActive = false })
+
   ;(function loop() { drawMap(canvas); requestAnimationFrame(loop) })()
 }
+
+// How much of the world is visible at current zoom
+function _visibleWorld() {
+  return { hw: MAP_W / mapZoom, hh: MAP_H / mapZoom }
+}
+function _clampPan() {
+  const { hw, hh } = _visibleWorld()
+  mapPanX = Math.max(0, Math.min(MAP_W - hw, mapPanX))
+  mapPanY = Math.max(0, Math.min(MAP_H - hh, mapPanY))
+}
+// Expose for drawMap to record the last computed S
+let _lastS = 1
 
 function drawMap(canvas) {
   const ctx = canvas.getContext('2d')
@@ -489,96 +568,100 @@ function drawMap(canvas) {
   const ch  = canvas._cssH || canvas.offsetHeight
   if (!cw || !ch) return
 
-  const t = Date.now() / 1000   // animation clock (seconds)
+  const t = Date.now() / 1000
 
-  // ── Projection setup ─────────────────────────────────────────────────────
-  // Scale: fit the projected floor inside the panel with margin
-  const margin = 28
-  // In oblique projection the floor's rendered width = MAP_W * S
-  // and rendered height ≈ MAP_H * TILT * sin45 * S + MAP_W * 0 (no x shear on y)
-  // We use a simpler fit: scale to fit MAP_W horizontally and MAP_H*TILT vertically
-  const scaleX = (cw - margin * 2) / MAP_W
-  const scaleY = (ch - margin * 2 - WALL_H * 2) / (MAP_H * TILT + MAP_W * CAB * 0.5)
-  const S      = Math.min(scaleX, scaleY)
+  // ── Orthographic 2D projection ────────────────────────────────────────────
+  // World: x → right, y → down (origin top-left of field)
+  // Fit the entire field with equal margins on all sides
+  const margin = 14
+  const baseS  = Math.min((cw - margin * 2) / MAP_W, (ch - margin * 2) / MAP_H)
+  const S      = baseS * mapZoom
+  _lastS       = S
 
-  // Arena origin: bottom-centre of the panel (floor origin = world 0,0)
-  const OX = cw / 2 - (MAP_W / 2) * S          // left edge of floor at y=0
-  const OY = ch - margin - WALL_H               // bottom edge of floor
+  // Centre the field in the panel, then offset by pan
+  const OX = (cw - MAP_W * S) / 2 - mapPanX * S
+  const OY = (ch - MAP_H * S) / 2 - mapPanY * S
 
-  // Project world (x,y) → canvas (px,py)
-  // x goes right, y goes up-and-back (oblique)
-  function proj(wx, wy) {
-    const px = OX + wx * S + wy * CAB * S * 0.5
-    const py = OY - wy * TILT * S  + wx * 0
-    return [px, py]
-  }
+  function proj(wx, wy) { return [OX + wx * S, OY + wy * S] }
 
-  // ── Background ───────────────────────────────────────────────────────────
+  // ── Background ────────────────────────────────────────────────────────────
   ctx.clearRect(0, 0, cw, ch)
   ctx.fillStyle = '#05080c'
   ctx.fillRect(0, 0, cw, ch)
 
-  // ── Floor grid ───────────────────────────────────────────────────────────
-  // Draw grid lines on the oblique floor plane
+  // Dark field floor
+  const [fx0, fy0] = proj(0, 0)
+  const fw = MAP_W * S, fh = MAP_H * S
+  ctx.fillStyle = '#080e17'
+  ctx.fillRect(fx0, fy0, fw, fh)
+
+  // ── Grid ──────────────────────────────────────────────────────────────────
   const GRID_STEP = 10
-  const gridAlpha = 0.18
-
-  // Lines parallel to x-axis (constant y)
-  for (let gy = 0; gy <= MAP_H; gy += GRID_STEP) {
-    const [x0, y0] = proj(0,     gy)
-    const [x1, y1] = proj(MAP_W, gy)
-    const fade = 0.4 + 0.6 * (gy / MAP_H)  // lines farther back are slightly brighter
-    ctx.strokeStyle = `rgba(0,180,220,${gridAlpha * fade})`
-    ctx.lineWidth   = 0.5
-    ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke()
-  }
-
-  // Lines parallel to y-axis (constant x)
+  ctx.lineWidth = 0.5
   for (let gx = 0; gx <= MAP_W; gx += GRID_STEP) {
-    const [x0, y0] = proj(gx, 0)
-    const [x1, y1] = proj(gx, MAP_H)
-    ctx.strokeStyle = `rgba(0,180,220,${gridAlpha})`
-    ctx.lineWidth   = 0.5
-    ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke()
+    const x = OX + gx * S
+    ctx.strokeStyle = 'rgba(0,180,220,0.13)'
+    ctx.beginPath(); ctx.moveTo(x, OY); ctx.lineTo(x, OY + fh); ctx.stroke()
+  }
+  for (let gy = 0; gy <= MAP_H; gy += GRID_STEP) {
+    const y = OY + gy * S
+    ctx.strokeStyle = 'rgba(0,180,220,0.13)'
+    ctx.beginPath(); ctx.moveTo(OX, y); ctx.lineTo(OX + fw, y); ctx.stroke()
   }
 
-  // ── Scanline sweep ───────────────────────────────────────────────────────
-  // A line that travels from y=0 to y=MAP_H and back, like a radar sweep
-  const sweepY    = ((t * 0.18) % 1.0) * MAP_H   // world y of sweep line
+  // ── Scanline sweep (horizontal, travels top→bottom) ───────────────────────
+  const sweepWY   = ((t * 0.18) % 1.0) * MAP_H
   const sweepFade = Math.sin(t * 0.57 * Math.PI) * 0.5 + 0.5
-  const [sx0, sy0] = proj(0,     sweepY)
-  const [sx1, sy1] = proj(MAP_W, sweepY)
-  const sweepGrd   = ctx.createLinearGradient(sx0, sy0, sx1, sy1)
+  const sweepY    = OY + sweepWY * S
+  const sweepGrd  = ctx.createLinearGradient(OX, sweepY, OX + fw, sweepY)
   sweepGrd.addColorStop(0,   'rgba(0,212,255,0)')
-  sweepGrd.addColorStop(0.5, `rgba(0,212,255,${0.55 * sweepFade})`)
+  sweepGrd.addColorStop(0.3, `rgba(0,212,255,${0.45 * sweepFade})`)
+  sweepGrd.addColorStop(0.7, `rgba(0,212,255,${0.45 * sweepFade})`)
   sweepGrd.addColorStop(1,   'rgba(0,212,255,0)')
   ctx.strokeStyle = sweepGrd
   ctx.lineWidth   = 1.5
-  ctx.beginPath(); ctx.moveTo(sx0, sy0); ctx.lineTo(sx1, sy1); ctx.stroke()
+  ctx.beginPath(); ctx.moveTo(OX, sweepY); ctx.lineTo(OX + fw, sweepY); ctx.stroke()
 
-  // ── Occupancy wall tiles ─────────────────────────────────────────────────
+  // ── Wall pulse (shared by tiles + perimeter) ──────────────────────────────
+  const wallPulse  = 0.75 + 0.25 * Math.sin(t * 1.4)
+  const WALL_COLOR = `rgba(0,212,255,${wallPulse})`
+  const GLOW_COLOR = `rgba(0,212,255,${0.18 * wallPulse})`
+  const TILE_COLOR = `rgba(0,200,240,${wallPulse})`
+  const TILE_FILL  = `rgba(0,70,110,${0.45 * wallPulse})`
+
+  // ── Occupancy wall tiles — neon filled squares ────────────────────────────
   mapObstacles.filter(o => o.type === 'wall').forEach(ob => {
-    // Draw a flat filled quad for each 1m×1m cell
-    const [ax, ay] = proj(ob.x,     ob.y)
-    const [bx, by] = proj(ob.x + 1, ob.y)
-    const [cx2,cy2]= proj(ob.x + 1, ob.y + 1)
-    const [dx, dy] = proj(ob.x,     ob.y + 1)
-    ctx.fillStyle   = '#111c28'
-    ctx.strokeStyle = '#1a3045'
-    ctx.lineWidth   = 0.4
-    ctx.beginPath()
-    ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.lineTo(cx2, cy2); ctx.lineTo(dx, dy)
-    ctx.closePath(); ctx.fill(); ctx.stroke()
+    const tx = OX + ob.x * S
+    const ty = OY + ob.y * S
+    const ts = S   // 1 world unit = S px
+
+    // Filled cell
+    ctx.fillStyle = TILE_FILL
+    ctx.fillRect(tx, ty, ts, ts)
+
+    // Glow pass
+    ctx.strokeStyle = `rgba(0,200,240,${0.25 * wallPulse})`
+    ctx.lineWidth   = 4
+    ctx.shadowColor = '#00d4ff'; ctx.shadowBlur = 8
+    ctx.strokeRect(tx, ty, ts, ts)
+    ctx.shadowBlur  = 0
+
+    // Sharp neon outline
+    ctx.strokeStyle = TILE_COLOR
+    ctx.lineWidth   = 1
+    ctx.strokeRect(tx, ty, ts, ts)
   })
 
-  // Named point obstacles
+  // ── Named point obstacles ─────────────────────────────────────────────────
   mapObstacles.filter(o => o.type === 'point').forEach(ob => {
     const [px, py] = proj(ob.x, ob.y)
     const r = 5
-    ctx.strokeStyle = '#2a4060'; ctx.lineWidth = 1
     ctx.fillStyle   = '#0d1520'
+    ctx.strokeStyle = '#2a6080'; ctx.lineWidth = 1
+    ctx.shadowColor = '#00d4ff'; ctx.shadowBlur = 5
     ctx.beginPath(); ctx.rect(px - r, py - r, r * 2, r * 2)
     ctx.fill(); ctx.stroke()
+    ctx.shadowBlur  = 0
     ctx.fillStyle   = '#00d4ff'
     ctx.font        = 'bold 8px Courier New'
     ctx.textAlign   = 'center'
@@ -587,188 +670,142 @@ function drawMap(canvas) {
     ctx.shadowBlur  = 0
   })
 
-  // ── Neon arena wall (perimeter) ──────────────────────────────────────────
-  // Four corners of the arena
-  const corners = [
-    proj(0,     0),
-    proj(MAP_W, 0),
-    proj(MAP_W, MAP_H),
-    proj(0,     MAP_H),
-  ]
-  const wallPulse  = 0.75 + 0.25 * Math.sin(t * 1.4)
-  const WALL_COLOR = `rgba(0,212,255,${wallPulse})`
-  const GLOW_COLOR = `rgba(0,212,255,${0.18 * wallPulse})`
-
-  // Draw "extruded" wall face for each edge — a thin quad rising from the floor line
-  const edges = [[0,1],[1,2],[2,3],[3,0]]
-  edges.forEach(([a, b]) => {
-    const [x0, y0] = corners[a]
-    const [x1, y1] = corners[b]
-    // Wall face: floor edge + top of wall (raised straight up in screen space)
-    ctx.fillStyle = `rgba(0,130,180,${0.07 * wallPulse})`
-    ctx.beginPath()
-    ctx.moveTo(x0, y0)
-    ctx.lineTo(x1, y1)
-    ctx.lineTo(x1, y1 - WALL_H)
-    ctx.lineTo(x0, y0 - WALL_H)
-    ctx.closePath(); ctx.fill()
-    // Top neon edge of the wall
-    ctx.strokeStyle = WALL_COLOR
-    ctx.lineWidth   = 1.5
-    ctx.shadowColor = '#00d4ff'; ctx.shadowBlur = 8
-    ctx.beginPath()
-    ctx.moveTo(x0, y0 - WALL_H); ctx.lineTo(x1, y1 - WALL_H)
-    ctx.stroke()
-    ctx.shadowBlur = 0
-  })
-
-  // Floor perimeter line — glow pass then sharp pass
+  // ── Neon arena perimeter ──────────────────────────────────────────────────
+  // Outer glow
   ctx.strokeStyle = GLOW_COLOR
-  ctx.lineWidth   = 6
-  ctx.shadowColor = '#00d4ff'; ctx.shadowBlur = 14
-  ctx.beginPath()
-  ctx.moveTo(...corners[0])
-  corners.slice(1).forEach(c => ctx.lineTo(...c))
-  ctx.closePath(); ctx.stroke()
+  ctx.lineWidth   = 8
+  ctx.shadowColor = '#00d4ff'; ctx.shadowBlur = 18
+  ctx.strokeRect(fx0, fy0, fw, fh)
   ctx.shadowBlur  = 0
-
+  // Sharp neon line
   ctx.strokeStyle = WALL_COLOR
   ctx.lineWidth   = 1.5
-  ctx.beginPath()
-  ctx.moveTo(...corners[0])
-  corners.slice(1).forEach(c => ctx.lineTo(...c))
-  ctx.closePath(); ctx.stroke()
+  ctx.strokeRect(fx0, fy0, fw, fh)
 
-  // ── Helper: draw a detection box in world space ──────────────────────────
-  // box: { wx, wy, angle, color, label, boxW, boxH }
-  // boxW/boxH are in metres — half-extents. Corners are projected onto the floor.
-  // Draws an axis-aligned detection box centred at world (wx0, wy0).
-  // No orientation — entities are x/y position only.
+  // Corner accent brackets
+  const BKT = Math.min(16, fw * 0.06)
+  const corners2d = [[fx0,fy0],[fx0+fw,fy0],[fx0+fw,fy0+fh],[fx0,fy0+fh]]
+  const dirs      = [[1,0,0,1],[-1,0,0,1],[-1,0,0,-1],[1,0,0,-1]]
+  ctx.strokeStyle = '#00d4ff'; ctx.lineWidth = 2
+  ctx.shadowColor = '#00d4ff'; ctx.shadowBlur = 6
+  corners2d.forEach(([cx,cy], i) => {
+    const [dx1,,, dy2] = dirs[i]
+    ctx.beginPath()
+    ctx.moveTo(cx + dx1*BKT, cy)
+    ctx.lineTo(cx, cy)
+    ctx.lineTo(cx, cy + dy2*BKT)
+    ctx.stroke()
+  })
+  ctx.shadowBlur = 0
+
+  // ── Detection box helper ──────────────────────────────────────────────────
   function drawDetectionBox(wx0, wy0, color, label, boxW, boxH, idx) {
-    const hw = boxW / 2, hh = boxH / 2
-    // Four axis-aligned corners in world space
-    const sCorners = [
-      proj(wx0 - hw, wy0 - hh),
-      proj(wx0 + hw, wy0 - hh),
-      proj(wx0 + hw, wy0 + hh),
-      proj(wx0 - hw, wy0 + hh),
-    ]
+    const hw    = boxW / 2, hh = boxH / 2
+    const bx    = OX + (wx0 - hw) * S
+    const by    = OY + (wy0 - hh) * S
+    const bw    = boxW * S, bh = boxH * S
 
     const pulse    = 0.65 + 0.35 * Math.sin(t * 3.5 + idx * 1.7)
     const colSolid = color.replace('ALPHA', String(pulse))
-    const colFill  = color.replace('ALPHA', String(0.08 * pulse))
-    const colGlow  = color.replace('ALPHA', String(0.12 * pulse))
+    const colFill  = color.replace('ALPHA', String(0.09 * pulse))
+    const colGlow  = color.replace('ALPHA', String(0.18 * pulse))
+    const colShadow= color.replace('ALPHA', '1')
 
-    // Floor fill
+    // Fill
     ctx.fillStyle = colFill
-    ctx.beginPath()
-    ctx.moveTo(...sCorners[0])
-    sCorners.slice(1).forEach(c => ctx.lineTo(...c))
-    ctx.closePath(); ctx.fill()
+    ctx.fillRect(bx, by, bw, bh)
 
     // Glow pass
     ctx.strokeStyle = colGlow
-    ctx.lineWidth   = 5
-    ctx.shadowColor = color.replace('ALPHA', '1')
-    ctx.shadowBlur  = 10
-    ctx.beginPath()
-    ctx.moveTo(...sCorners[0])
-    sCorners.slice(1).forEach(c => ctx.lineTo(...c))
-    ctx.closePath(); ctx.stroke()
-    ctx.shadowBlur = 0
+    ctx.lineWidth   = 6
+    ctx.shadowColor = colShadow; ctx.shadowBlur = 12
+    ctx.strokeRect(bx, by, bw, bh)
+    ctx.shadowBlur  = 0
 
-    // Sharp box outline
+    // Sharp outline
     ctx.strokeStyle = colSolid
     ctx.lineWidth   = 1.2
-    ctx.beginPath()
-    ctx.moveTo(...sCorners[0])
-    sCorners.slice(1).forEach(c => ctx.lineTo(...c))
-    ctx.closePath(); ctx.stroke()
+    ctx.strokeRect(bx, by, bw, bh)
 
-    // Corner brackets (YOLO-style tick marks)
-    const BKT = 5
-    sCorners.forEach(([cx, cy], i) => {
-      const prev = sCorners[(i + 3) % 4]
-      const next = sCorners[(i + 1) % 4]
-      const lenP = Math.hypot(prev[0] - cx, prev[1] - cy) || 1
-      const lenN = Math.hypot(next[0] - cx, next[1] - cy) || 1
-      ctx.strokeStyle = colSolid
-      ctx.lineWidth   = 1.8
+    // YOLO corner brackets
+    const BK = Math.min(8, bw * 0.2)
+    const corners = [[bx,by],[bx+bw,by],[bx+bw,by+bh],[bx,by+bh]]
+    const cdirs   = [[1,0,0,1],[-1,0,0,1],[-1,0,0,-1],[1,0,0,-1]]
+    ctx.strokeStyle = colSolid; ctx.lineWidth = 2
+    ctx.shadowColor = colShadow; ctx.shadowBlur = 4
+    corners.forEach(([cx,cy],i) => {
+      const [dx1,,,dy2] = cdirs[i]
       ctx.beginPath()
-      ctx.moveTo(cx + (prev[0] - cx) / lenP * BKT, cy + (prev[1] - cy) / lenP * BKT)
+      ctx.moveTo(cx + dx1*BK, cy)
       ctx.lineTo(cx, cy)
-      ctx.lineTo(cx + (next[0] - cx) / lenN * BKT, cy + (next[1] - cy) / lenN * BKT)
+      ctx.lineTo(cx, cy + dy2*BK)
       ctx.stroke()
     })
+    ctx.shadowBlur = 0
 
-    // Label tag — centred above the top edge midpoint
-    const topMidX = (sCorners[2][0] + sCorners[3][0]) / 2
-    const topMidY = (sCorners[2][1] + sCorners[3][1]) / 2 - 10
+    // Label above box
     ctx.fillStyle   = colSolid
-    ctx.font        = 'bold 8px Courier New'
+    ctx.font        = `bold ${Math.max(7, Math.min(10, bw * 0.18))}px Courier New`
     ctx.textAlign   = 'center'
-    ctx.shadowColor = color.replace('ALPHA', '1')
-    ctx.shadowBlur  = 4
-    ctx.fillText(label, topMidX, topMidY)
+    ctx.shadowColor = colShadow; ctx.shadowBlur = 4
+    ctx.fillText(label, bx + bw / 2, by - 4)
     ctx.shadowBlur  = 0
   }
 
-  // ── Turkeys ──────────────────────────────────────────────────────────────
+  // ── Turkeys ───────────────────────────────────────────────────────────────
   mapTurkeys.forEach((tk, i) => {
     if (!Array.isArray(tk) || tk.length < 2) return
-    const [tx, ty] = tk   // angle ignored — position only
-    drawDetectionBox(tx, ty, 'rgba(255,120,0,ALPHA)', `TURKEY-${i+1}`, 2.0, 2.0, i)
+    drawDetectionBox(tk[0], tk[1], 'rgba(255,120,0,ALPHA)', `TURKEY-${i+1}`, 2.0, 2.0, i)
   })
 
-  // ── Humans ───────────────────────────────────────────────────────────────
+  // ── Humans ────────────────────────────────────────────────────────────────
   mapHumans.forEach((hm, i) => {
     if (!Array.isArray(hm) || hm.length < 2) return
-    const [hx, hy] = hm   // angle ignored — position only
-    drawDetectionBox(hx, hy, 'rgba(255,30,60,ALPHA)', `HUMAN-${i+1}`, 1.5, 1.5, i + 100)
+    drawDetectionBox(hm[0], hm[1], 'rgba(255,30,60,ALPHA)', `HUMAN-${i+1}`, 1.5, 1.5, i + 100)
   })
 
   // ── Robot ─────────────────────────────────────────────────────────────────
   if (mapRobot) {
-    const rx = mapRobot.x, ry = mapRobot.y, rth = mapRobot.theta ?? 0
+    const rx  = mapRobot.x, ry = mapRobot.y
+    const rth = mapRobot.theta ?? 0   // radians, 0 = right (+x), π/2 = down (+y)
     const [rpx, rpy] = proj(rx, ry)
 
-    // Glow halo
-    const grd = ctx.createRadialGradient(rpx, rpy, 0, rpx, rpy, 28)
-    grd.addColorStop(0, 'rgba(0,212,255,0.28)')
+    // Radial halo
+    const haloR = Math.max(18, S * 1.2)
+    const grd   = ctx.createRadialGradient(rpx, rpy, 0, rpx, rpy, haloR)
+    grd.addColorStop(0, 'rgba(0,212,255,0.22)')
     grd.addColorStop(1, 'rgba(0,212,255,0)')
     ctx.fillStyle = grd
-    ctx.beginPath(); ctx.arc(rpx, rpy, 28, 0, Math.PI * 2); ctx.fill()
+    ctx.beginPath(); ctx.arc(rpx, rpy, haloR, 0, Math.PI * 2); ctx.fill()
 
-    // Direction beam — fan from robot heading
-    const beamLen = MAP_W * S * 0.22
-    const beamAng = rth   // heading in world space
-    // Project beam endpoint: step along world heading direction
-    const beamWX  = rx + Math.cos(beamAng) * 8
-    const beamWY  = ry + Math.sin(beamAng) * 8
-    const [bex, bey] = proj(beamWX, beamWY)
-    const beamGrd = ctx.createLinearGradient(rpx, rpy, bex, bey)
-    beamGrd.addColorStop(0,   'rgba(0,212,255,0.6)')
-    beamGrd.addColorStop(1,   'rgba(0,212,255,0)')
-    ctx.strokeStyle = beamGrd
-    ctx.lineWidth   = 2
-    ctx.beginPath(); ctx.moveTo(rpx, rpy); ctx.lineTo(bex, bey); ctx.stroke()
+    // Direction beam
+    const beamLen = Math.max(30, S * 5)
+    const beamGrd = ctx.createLinearGradient(
+      rpx, rpy,
+      rpx + Math.cos(rth) * beamLen,
+      rpy + Math.sin(rth) * beamLen
+    )
+    beamGrd.addColorStop(0, 'rgba(0,212,255,0.65)')
+    beamGrd.addColorStop(1, 'rgba(0,212,255,0)')
+    ctx.strokeStyle = beamGrd; ctx.lineWidth = 2
+    ctx.beginPath()
+    ctx.moveTo(rpx, rpy)
+    ctx.lineTo(rpx + Math.cos(rth) * beamLen, rpy + Math.sin(rth) * beamLen)
+    ctx.stroke()
 
-    // Robot body — chevron rotated to heading on the projected floor
-    // We approximate heading on screen using the projection of the heading vector
-    const [hx2, hy2] = proj(rx + Math.cos(rth) * 1, ry + Math.sin(rth) * 1)
-    const screenAng  = Math.atan2(hy2 - rpy, hx2 - rpx)
-    const r = 9
+    // Chevron body
+    const r = Math.max(7, Math.min(13, S * 0.7))
     ctx.save()
     ctx.translate(rpx, rpy)
-    ctx.rotate(screenAng)
+    ctx.rotate(rth)
     ctx.strokeStyle = '#00d4ff'
-    ctx.fillStyle   = 'rgba(0,212,255,0.25)'
+    ctx.fillStyle   = 'rgba(0,212,255,0.22)'
     ctx.lineWidth   = 2
-    ctx.shadowColor = '#00d4ff'; ctx.shadowBlur = 8
+    ctx.shadowColor = '#00d4ff'; ctx.shadowBlur = 10
     ctx.beginPath()
-    ctx.moveTo( r,       0)
+    ctx.moveTo( r,        0)
     ctx.lineTo(-r * 0.6,  r * 0.75)
-    ctx.lineTo(-r * 0.2,  0)
+    ctx.lineTo(-r * 0.25, 0)
     ctx.lineTo(-r * 0.6, -r * 0.75)
     ctx.closePath(); ctx.fill(); ctx.stroke()
     ctx.shadowBlur = 0
@@ -779,22 +816,20 @@ function drawMap(canvas) {
     ctx.font        = 'bold 8px Courier New'
     ctx.textAlign   = 'center'
     ctx.shadowColor = '#00d4ff'; ctx.shadowBlur = 4
-    ctx.fillText('ROBOT', rpx, rpy - r - 5)
+    ctx.fillText('ROBOT', rpx, rpy - r - 6)
     ctx.shadowBlur  = 0
   }
 
-  // ── Coordinate labels on floor ────────────────────────────────────────────
+  // ── Axis labels ───────────────────────────────────────────────────────────
   ctx.font      = '7px Courier New'
-  ctx.fillStyle = 'rgba(0,180,220,0.35)'
+  ctx.fillStyle = 'rgba(0,180,220,0.3)'
   ctx.textAlign = 'center'
   for (let gx = 0; gx <= MAP_W; gx += 20) {
-    const [lx, ly] = proj(gx, 0)
-    ctx.fillText(`${gx}`, lx, ly + 10)
+    ctx.fillText(`${gx}`, OX + gx * S, OY + fh + 10)
   }
   ctx.textAlign = 'right'
   for (let gy = 0; gy <= MAP_H; gy += 20) {
-    const [lx, ly] = proj(0, gy)
-    ctx.fillText(`${gy}`, lx - 4, ly + 3)
+    ctx.fillText(`${gy}`, OX - 4, OY + gy * S + 3)
   }
 
   // ── Legend ────────────────────────────────────────────────────────────────
@@ -802,19 +837,26 @@ function drawMap(canvas) {
     ['rgba(255,120,0,0.9)',  '▣', 'Turkey'],
     ['rgba(255,30,60,0.9)',  '▣', 'Human'],
     ['rgba(0,212,255,0.9)',  '▶', 'Robot'],
-    ['rgba(0,212,255,0.45)', '—', 'Arena wall'],
-    ['rgba(0,180,220,0.3)',  '▪', 'Wall tile'],
+    ['rgba(0,212,255,0.45)', '—', 'Arena / wall'],
   ]
   const lx0 = 8, ly0 = 12
   legend.forEach(([col, sym, lbl], i) => {
     const ly = ly0 + i * 13
-    ctx.fillStyle = col;           ctx.font = '9px Courier New'; ctx.textAlign = 'left'
-    ctx.fillText(sym, lx0, ly)
-    ctx.fillStyle = 'rgba(100,140,160,0.7)'; ctx.fillText(` ${lbl}`, lx0 + 11, ly)
+    ctx.font = '9px Courier New'; ctx.textAlign = 'left'
+    ctx.fillStyle = col;                    ctx.fillText(sym,       lx0,      ly)
+    ctx.fillStyle = 'rgba(100,140,160,0.7)';ctx.fillText(` ${lbl}`, lx0 + 11, ly)
   })
+
+  // ── Zoom hint ─────────────────────────────────────────────────────────────
+  const zoomLabel = mapZoom > 1.01
+    ? `${mapZoom.toFixed(1)}×  scroll to zoom · drag to pan`
+    : `scroll to zoom`
+  ctx.font = '8px Courier New'; ctx.textAlign = 'right'
+  ctx.fillStyle = 'rgba(0,180,220,0.4)'
+  ctx.fillText(zoomLabel, cw - 8, ch - 8)
 }
 
-// ── CSV loader ─────────────────────────────────────────────────────────────
+// ── CSV parsing ────────────────────────────────────────────────────────────
 //
 // AUTO-DETECTS one of two formats:
 //
@@ -828,65 +870,68 @@ function drawMap(canvas) {
 //
 // Detection: header row col-1 and col-2 parse as numbers → occupancy grid.
 
+function parseCSVText(text) {
+  const lines      = text.trim().split(/\r?\n/).map(l => l.split(','))
+  if (lines.length < 2) return
+
+  const headerCols  = lines[0].map(c => c.trim())
+  const isOccupancy = headerCols.length > 2 &&
+                      !isNaN(parseFloat(headerCols[1])) &&
+                      !isNaN(parseFloat(headerCols[2]))
+
+  const obs = []
+  let csvW = 0, csvH = 0
+
+  if (isOccupancy) {
+    const colX    = headerCols.slice(1).map(c => parseFloat(c.trim()))
+    const maxColX = Math.max(...colX.filter(v => !isNaN(v)))
+    const maxRowY = lines.length - 2
+
+    csvW = maxColX + 1
+    csvH = maxRowY + 1
+
+    for (let r = 1; r < lines.length; r++) {
+      const cells = lines[r]
+      const rowY  = parseFloat(cells[0])
+      if (isNaN(rowY)) continue
+      for (let c = 1; c < cells.length; c++) {
+        if (cells[c].trim() === '1') {
+          const cellX = colX[c - 1]
+          if (isNaN(cellX)) continue
+          obs.push({ type: 'wall', x: cellX, y: csvH - 1 - rowY })
+        }
+      }
+    }
+  } else {
+    lines.forEach(cols => {
+      const x = parseFloat(cols[0])
+      const y = parseFloat(cols[1])
+      if (!isNaN(x) && !isNaN(y))
+        obs.push({ type: 'point', x, y, label: cols[2]?.trim() ?? 'OBS' })
+    })
+  }
+
+  mapObstacles = obs
+
+  if (isOccupancy && csvW > 0 && csvH > 0) {
+    MAP_W = csvW; MAP_H = csvH
+    const sub = document.getElementById('map-sub')
+    if (sub) sub.textContent = `${csvW} × ${csvH} M · GRID · ${obs.length} WALLS`
+  }
+
+  const btn = document.getElementById('csv-btn')
+  if (btn) {
+    btn.textContent       = `⊕ ${isOccupancy ? obs.length + ' WALLS' : obs.length + ' OBS'}`
+    btn.style.color       = '#00d4ff'
+    btn.style.borderColor = '#00d4ff'
+  }
+}
+
+// File-picker entry point — called by the ⊕ CSV button
 function loadCSV(input) {
   const file = input.files[0]
   if (!file) return
   const reader = new FileReader()
-  reader.onload = e => {
-    const lines      = e.target.result.trim().split(/\r?\n/).map(l => l.split(','))
-    if (lines.length < 2) return
-
-    const headerCols = lines[0].map(c => c.trim())
-    const isOccupancy = headerCols.length > 2 &&
-                        !isNaN(parseFloat(headerCols[1])) &&
-                        !isNaN(parseFloat(headerCols[2]))
-
-    const obs = []
-    let csvW = 0, csvH = 0
-
-    if (isOccupancy) {
-      const colX   = headerCols.slice(1).map(c => parseFloat(c.trim()))
-      const maxColX = Math.max(...colX.filter(v => !isNaN(v)))
-      const maxRowY = lines.length - 2
-
-      csvW = maxColX + 1
-      csvH = maxRowY + 1
-
-      for (let r = 1; r < lines.length; r++) {
-        const cells = lines[r]
-        const rowY  = parseFloat(cells[0])
-        if (isNaN(rowY)) continue
-        for (let c = 1; c < cells.length; c++) {
-          if (cells[c].trim() === '1') {
-            const cellX = colX[c - 1]
-            if (isNaN(cellX)) continue
-            obs.push({ type: 'wall', x: cellX, y: csvH - 1 - rowY })
-          }
-        }
-      }
-    } else {
-      lines.forEach(cols => {
-        const x = parseFloat(cols[0])
-        const y = parseFloat(cols[1])
-        if (!isNaN(x) && !isNaN(y))
-          obs.push({ type: 'point', x, y, label: cols[2]?.trim() ?? 'OBS' })
-      })
-    }
-
-    mapObstacles = obs
-
-    if (isOccupancy && csvW > 0 && csvH > 0) {
-      MAP_W = csvW; MAP_H = csvH
-      const sub = document.getElementById('map-sub')
-      if (sub) sub.textContent = `${csvW} × ${csvH} M · GRID · ${obs.length} WALLS`
-    }
-
-    const btn = document.getElementById('csv-btn')
-    if (btn) {
-      btn.textContent       = `⊕ ${isOccupancy ? obs.length + ' WALLS' : obs.length + ' OBS'}`
-      btn.style.color       = '#00d4ff'
-      btn.style.borderColor = '#00d4ff'
-    }
-  }
+  reader.onload = e => parseCSVText(e.target.result)
   reader.readAsText(file)
 }

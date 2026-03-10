@@ -210,7 +210,6 @@ async def test_canine(canine_publisher: AsyncPublisher):
     """
     print("[TEST] Canine: starting sequence")
 
-
     # Poses 1 → 5
     for pose in ["Pose1", "Pose2", "Pose3", "Pose4", "Pose5"]:
         payload = {"Id": "System", "Type": "Pose", "Data": pose}
@@ -249,7 +248,7 @@ async def test_canine(canine_publisher: AsyncPublisher):
     await asyncio.sleep(0.5)
 
     # Audio clips
-    for sound in ["BARK", "WHISTLE", "HOWL", "ALARM"]:
+    for sound in ["Audio1", "Audio2", "Audio3", "Audio4", "Audio5"]:
         payload = {"Id": "System", "Type": "Audio", "Data": sound}
         await canine_publisher.publish(payload)
         print(f"  [K9] Audio -> {sound}")
@@ -281,6 +280,108 @@ async def test_vision(visionobject_publisher: AsyncPublisher):
         await asyncio.sleep(0.5)
 
     print("[TEST] VisionObject: complete")
+
+
+# ── Chase sequence ────────────────────────────────────────────────────────────
+async def test_chase_sequence(
+    pose_publisher:         AsyncPublisher,
+    stateplanner_publisher: AsyncPublisher,
+    visionobject_publisher: AsyncPublisher,
+    drivetrain_publisher:   AsyncPublisher,
+):
+    """
+    Full chase scenario: robot navigates to a waypoint, spots a turkey,
+    enters Chase mode, closes in, then loses the target and returns to Scan.
+
+    Drives (simultaneously):
+      - Robot pose moving across the map            (map canvas, UKF panel)
+      - Vision detections appearing / moving        (map canvas detection boxes)
+      - Navigation Chase / Scan state transitions   (diagnostics sys-state)
+      - Drivetrain source switching UI→System       (L/R command chips)
+      - Speed ramping up during chase               (speed display)
+    """
+    print("[TEST] Chase sequence: starting")
+
+    # ── Phase 1: Navigating to patrol waypoint (3 s) ─────────────────────────
+    print("  [CHASE] Phase 1 — navigating to patrol point")
+    await stateplanner_publisher.publish({"Id": "SpeedCap", "Cmd": [1.5]})
+    for i in range(15):
+        t     = i / 14.0
+        x     = 10.0 + 20.0 * t
+        y     = 10.0 + 10.0 * t
+        theta = math.pi * 0.25
+        await pose_publisher.publish([round(x, 2), round(y, 2), round(theta, 4)])
+        await stateplanner_publisher.publish({
+            "Id": "Move", "Cmd": [30, 20, 0],
+            "wp_id": "WP 1 / 3", "wp_dist": round(18.0 * (1 - t), 1), "wp_bearing": 45.0,
+        })
+        await asyncio.sleep(0.2)
+
+    # ── Phase 2: Arrived — 360° scan spin (2.5 s) ────────────────────────────
+    print("  [CHASE] Phase 2 — arrived, scanning (360° spin)")
+    await stateplanner_publisher.publish({"Id": "Scan"})
+    await drivetrain_publisher.publish({"Id": "System", "Cmd": [-1.0, 1.0]})
+    for i in range(25):
+        theta = (i / 25) * 2 * math.pi
+        await pose_publisher.publish([30.0, 20.0, round(theta, 4)])
+        await asyncio.sleep(0.1)
+    await drivetrain_publisher.publish({"Id": "System", "Cmd": [0.0, 0.0]})
+    await asyncio.sleep(0.3)
+
+    # ── Phase 3: Target spotted — detection box appears (2 s) ────────────────
+    print("  [CHASE] Phase 3 — target spotted")
+    for i in range(10):
+        t = i / 9.0
+        # Turkey starts near centre of field, drifting toward the far boundary
+        await visionobject_publisher.publish({
+            "Id": "DynamicObjects",
+            "Turkeys": [[round(60.0 + t * 6, 2), round(38.0 + t * 3, 2)]],
+            "Humans":  [],
+        })
+        await asyncio.sleep(0.2)
+
+    # ── Phase 4: Chase engaged — robot closes in, turkey flees past boundary ──
+    print("  [CHASE] Phase 4 — chase engaged")
+    await stateplanner_publisher.publish({"Id": "SpeedCap", "Cmd": [3.0]})
+
+    robot_x, robot_y   = 30.0, 20.0
+    turkey_x, turkey_y = 66.0, 41.0   # turkey position at end of phase 3
+
+    for i in range(25):
+        t = i / 19.0
+        # Compute heading toward turkey BEFORE moving the robot this step
+        prev_rx, prev_ry = robot_x, robot_y
+        theta   = math.atan2(turkey_y - prev_ry, turkey_x - prev_rx)
+
+        # Now move robot toward turkey's current position
+        robot_x = 30.0 + (turkey_x - 30.0) * t * 0.7
+        robot_y = 20.0 + (turkey_y - 20.0) * t * 0.7
+        dist    = round(math.hypot(turkey_x - robot_x, turkey_y - robot_y), 2)
+
+        # Turkey accelerates away — crosses MAP boundary by the last few frames
+        turkey_x = round(turkey_x + 0.7, 2)
+        turkey_y = round(turkey_y + 2, 2)
+
+        await pose_publisher.publish([round(robot_x, 2), round(robot_y, 2), round(theta, 4)])
+        await stateplanner_publisher.publish({"Id": "Chase", "Cmd": [turkey_x, turkey_y, 0]})
+        await visionobject_publisher.publish({
+            "Id": "DynamicObjects",
+            "Turkeys": [[turkey_x, turkey_y]],
+            "Humans":  [],
+        })
+        await drivetrain_publisher.publish({"Id": "System", "Cmd": [1.0, 1.0]})
+        print(f"  [CHASE]   closing  dist={dist:.1f} m  turkey=({turkey_x:.1f},{turkey_y:.1f})")
+        await asyncio.sleep(0.2)
+
+    # ── Phase 5: Turkey exits zone — target lost, return to Scan ─────────────
+    print("  [CHASE] Phase 5 — turkey exited zone, returning to scan")
+    await visionobject_publisher.publish({"Id": "DynamicObjects", "Turkeys": [], "Humans": []})
+    await stateplanner_publisher.publish({"Id": "Scan"})
+    await stateplanner_publisher.publish({"Id": "SpeedCap", "Cmd": [1.5]})
+    await drivetrain_publisher.publish({"Id": "System", "Cmd": [0.0, 0.0]})
+    await asyncio.sleep(5)
+
+    print("[TEST] Chase sequence: complete")
 
 
 # ── Run all testers concurrently ─────────────────────────────────────────────
@@ -379,16 +480,16 @@ async def main():
         ui.serve(),
 
         # ── Run individual testers (comment/uncomment as needed) ──────────────
-        test_all_protocols(
-            pose_publisher,
-            uncertainty_publisher,
-            uwb_publisher,
-            accelerometer_publisher,
-            drivetrain_publisher,
-            stateplanner_publisher,
-            canine_publisher,
-            visionobject_publisher,
-        ),
+        # test_all_protocols(
+        #     pose_publisher,
+        #     uncertainty_publisher,
+        #     uwb_publisher,
+        #     accelerometer_publisher,
+        #     drivetrain_publisher,
+        #     stateplanner_publisher,
+        #     canine_publisher,
+        #     visionobject_publisher,
+        # ),
 
         # Or run just one at a time:
         # test_robot_pose(pose_publisher),
@@ -399,6 +500,7 @@ async def main():
         # test_navigation(stateplanner_publisher),
         # test_canine(canine_publisher),
         # test_vision(visionobject_publisher),
+        test_chase_sequence(pose_publisher, stateplanner_publisher, visionobject_publisher, drivetrain_publisher),
     )
 
 

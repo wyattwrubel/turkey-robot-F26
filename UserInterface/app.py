@@ -438,6 +438,19 @@ class CDSControlServer:
                 return FileResponse(str(f), media_type="application/javascript")
             return HTMLResponse("// script.js not found", status_code=404, media_type="application/javascript")
 
+        @app.get("/map.csv")
+        async def map_csv():
+            """
+            Serves the static occupancy-grid CSV for the Zone Map panel.
+            Drop your CSV file as Website/map.csv and the map will auto-load
+            on page open (controlled by MAP_CSV constant in script.js).
+            Returns 404 silently if no file is present — map just stays empty.
+            """
+            f = STATIC_DIR / "map.csv"
+            if f.exists():
+                return FileResponse(str(f), media_type="text/csv")
+            return HTMLResponse("", status_code=404)
+
         # ── WebSocket endpoint ────────────────────────────────────────────────
         @app.websocket("/ws")
         async def websocket_endpoint(ws: WebSocket):
