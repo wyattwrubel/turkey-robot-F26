@@ -410,6 +410,15 @@ async def test_all_protocols(
         test_accelerometer(accelerometer_publisher),
     )
 
+    await visionobject_publisher.publish({
+    "Id":      "DynamicObjects",
+    "Turkeys": [[world_x, world_y], ...],
+    "Humans":  [[world_x, world_y], ...],
+    "Bboxes":  [
+        {"label": "Turkey", "conf": 0.91, "x1": 120, "y1": 80, "x2": 340, "y2": 290},
+    ]
+})
+
     await asyncio.sleep(0.5)
     await test_drivetrain(drivetrain_publisher)
 

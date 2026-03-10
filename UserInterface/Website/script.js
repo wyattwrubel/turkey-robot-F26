@@ -48,6 +48,17 @@ let mapHumans    = []   // [[x, y], ...] live from VisionObject — position onl
 let mapObstacles = []   // [[x, y, label], ...] loaded from CSV
 let mapRobot     = { x: 0, y: 0, theta: 0 }  // from state broadcast
 
+// ── Camera state ─────────────────────────────────────────────
+// Two canvases: #cam-bg (background, redraws only on new frame)
+//               #cam-hud (HUD overlay, animates at ~15fps)
+// camFrame:    currently displayed image element
+// _camBgDirty: true when a new frame has arrived and bg needs one redraw
+let camBboxes   = []
+let camFrame    = null
+let camFrameW   = 640
+let camFrameH   = 480
+let _camBgDirty = false   // set true when new frame decoded
+
 
 // ═══════════════════════════════════════════════
 // BUILD DYNAMIC UI
@@ -87,8 +98,8 @@ function buildAudio() {
 // ═══════════════════════════════════════════════
 function connect() {
   // ws = new WebSocket('ws://raspberrypi.local:8000/ws')
-  ws = new WebSocket('ws://localhost:8000/ws')
-  // ws = new WebSocket('ws://192.168.4.2:8000/ws')
+  // ws = new WebSocket('ws://localhost:8000/ws')
+  ws = new WebSocket('ws://192.168.4.2:8000/ws')
   ws.onopen    = ()  => { wsReady = true }
   ws.onclose   = ()  => { wsReady = false; setTimeout(connect, 1500) }
   ws.onmessage = (e) => {
@@ -237,21 +248,25 @@ function handle(m) {
     }
   }
 
-  // ── Camera frame (1 Hz) ────────────────────────────────────
+  // ── Camera frame ──────────────────────────────────────────
   if (m.type === 'frame') {
-    const img = document.getElementById('live-img')
-    // Build data URI and load it; on success reveal the img and hide placeholder text
-    const uri = 'data:image/jpeg;base64,' + m.image
+    const w   = m.w || 640
+    const h   = m.h || 480
+    const img = new Image()
     img.onload = () => {
-      img.style.display = 'flex'   // flex child of feed-ph — fills available space
-      document.querySelectorAll('#cam-ph .fi, #cam-ph .fl, #cam-ph .fs, #cam-ph .cr')
-        .forEach(el => el.style.display = 'none')
+      camFrame    = img
+      camFrameW   = w
+      camFrameH   = h
+      _camBgDirty = true   // signal bg canvas to redraw once
+      // Reveal both canvases on first frame
+      const bg  = document.getElementById('cam-bg')
+      const hud = document.getElementById('cam-hud')
+      if (bg  && bg.style.display  === 'none') bg.style.display  = 'block'
+      if (hud && hud.style.display === 'none') hud.style.display = 'block'
+      document.getElementById('cam-ph').style.display = 'none'
+      _startCamLoop()
     }
-    img.onerror = () => {
-      // Keep placeholder visible if image fails to decode
-      img.style.display = 'none'
-    }
-    img.src = uri
+    img.src = 'data:image/jpeg;base64,' + m.image
   }
 
   // ── Servo state (on connect) ───────────────────────────────
@@ -264,12 +279,327 @@ function handle(m) {
     })
   }
 
-  // ── Vision detections (VisionObject_Receiver → browser) ────
+  // ── Vision detections ─────────────────────────────────────
   if (m.type === 'vision') {
     mapTurkeys = m.turkeys ?? []
     mapHumans  = m.humans  ?? []
+    camBboxes  = m.bboxes  ?? []
+    // rAF loop picks up new bboxes on its next tick — no manual redraw needed
   }
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// CAMERA — two-layer canvas rendering
+//
+//  #cam-bg  (background layer)
+//    Draws: raw frame, scanlines, vignette, tint
+//    Redraws: ONLY when _camBgDirty is true (new frame arrived)
+//    This layer never flickers — it just holds the last good image.
+//
+//  #cam-hud (HUD overlay layer)
+//    Draws: bboxes, lock brackets, diagnostic panels, chrome text
+//    Redraws: every tick at ~15fps — transparent background so bg shows through
+//
+// Nothing outside this block calls drawBg or drawHud directly.
+// ═══════════════════════════════════════════════════════════════════
+
+let _camRafId      = null
+let _camFrameCount = 0
+let _camLastDraw   = 0
+const CAM_FPS      = 15
+const CAM_INTERVAL = 1000 / CAM_FPS
+
+// ── Helpers ───────────────────────────────────────────────────────
+function _fitCanvas(canvas) {
+  // Resize canvas backing store to match CSS size.
+  // Returns {ctx, cssW, cssH} or null if not visible.
+  // IMPORTANT: only resizes if dimensions actually changed —
+  // assigning canvas.width even to the same value resets the canvas.
+  const dpr  = window.devicePixelRatio || 1
+  const cssW = canvas.clientWidth
+  const cssH = canvas.clientHeight
+  if (cssW === 0 || cssH === 0) return null
+  const needW = Math.round(cssW * dpr)
+  const needH = Math.round(cssH * dpr)
+  if (canvas.width !== needW || canvas.height !== needH) {
+    canvas.width  = needW
+    canvas.height = needH
+    return { ctx: canvas.getContext('2d'), cssW, cssH, resized: true }
+  }
+  return { ctx: canvas.getContext('2d'), cssW, cssH, resized: false }
+}
+
+// ── Background layer ──────────────────────────────────────────────
+// Draws the camera image, scanlines, vignette.
+// Called once per new frame — never called again until next frame arrives.
+function _drawBg() {
+  const canvas = document.getElementById('cam-bg')
+  if (!canvas || !camFrame) return
+
+  const dpr  = window.devicePixelRatio || 1
+  const fit  = _fitCanvas(canvas)
+  if (!fit) return
+  const { ctx, cssW, cssH } = fit
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+
+  const scale = Math.min(cssW / camFrameW, cssH / camFrameH)
+  const drawW = camFrameW * scale
+  const drawH = camFrameH * scale
+  const offX  = (cssW - drawW) / 2
+  const offY  = (cssH - drawH) / 2
+
+  // Black letterbox
+  ctx.fillStyle = '#000'
+  ctx.fillRect(0, 0, cssW, cssH)
+
+  // Camera frame
+  ctx.drawImage(camFrame, offX, offY, drawW, drawH)
+
+  // Cyan tint
+  ctx.fillStyle = 'rgba(0,180,220,0.06)'
+  ctx.fillRect(offX, offY, drawW, drawH)
+
+  // Scanlines — drawn once, sit on top of image permanently
+  ctx.fillStyle = 'rgba(0,0,0,0.15)'
+  for (let y = offY; y < offY + drawH; y += 3) {
+    ctx.fillRect(offX, y, drawW, 1)
+  }
+
+  // Vignette
+  const vig = ctx.createRadialGradient(cssW/2, cssH/2, cssH*0.25, cssW/2, cssH/2, cssH*0.85)
+  vig.addColorStop(0, 'rgba(0,0,0,0)')
+  vig.addColorStop(1, 'rgba(0,0,0,0.55)')
+  ctx.fillStyle = vig
+  ctx.fillRect(0, 0, cssW, cssH)
+}
+
+// ── HUD overlay layer ─────────────────────────────────────────────
+// Draws bboxes, chrome, text — on a fully transparent canvas.
+// Clears and redraws every tick. Background shows through underneath.
+function _drawHud(t) {
+  const canvas = document.getElementById('cam-hud')
+  if (!canvas || !camFrame) return
+
+  const dpr  = window.devicePixelRatio || 1
+  const fit  = _fitCanvas(canvas)
+  if (!fit) return
+  const { ctx, cssW, cssH, resized } = fit
+
+  // If HUD canvas was resized, bg needs a redraw too
+  if (resized) _camBgDirty = true
+
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+  ctx.clearRect(0, 0, cssW, cssH)   // transparent — bg canvas shows through
+
+  const hasTargets = camBboxes.length > 0
+  const scale = Math.min(cssW / camFrameW, cssH / camFrameH)
+  const drawW = camFrameW * scale
+  const drawH = camFrameH * scale
+  const offX  = (cssW - drawW) / 2
+  const offY  = (cssH - drawH) / 2
+
+  // ── Scrolling scan sweep ───────────────────────────────────────
+  const sweepY = offY + ((t * 0.3) % 1) * drawH
+  const swGrd  = ctx.createLinearGradient(0, sweepY - 12, 0, sweepY + 12)
+  swGrd.addColorStop(0,   'rgba(0,0,0,0)')
+  swGrd.addColorStop(0.5, 'rgba(0,180,220,0.07)')
+  swGrd.addColorStop(1,   'rgba(0,0,0,0)')
+  ctx.fillStyle = swGrd
+  ctx.fillRect(offX, sweepY - 12, drawW, 24)
+
+  // ── Target lock boxes ──────────────────────────────────────────
+  camBboxes.forEach((box, idx) => {
+    const { label = '?', conf = 0, x1=0, y1=0, x2=0, y2=0 } = box
+    const lbl      = String(label).toLowerCase()
+    const isTurkey = lbl.includes('turkey')
+    const isHuman  = lbl.includes('human')
+    const base     = isTurkey ? '0,212,255' : isHuman ? '255,30,60' : '0,212,255'
+
+    const bx1 = offX + x1 * scale, by1 = offY + y1 * scale
+    const bx2 = offX + x2 * scale, by2 = offY + y2 * scale
+    const bw  = bx2 - bx1,         bh  = by2 - by1
+    const bcx = bx1 + bw / 2,      bcy = by1 + bh / 2
+
+    const pulse  = 0.75 + 0.25 * Math.sin(t * 4 + idx * 2.1)
+    const locked = ((t * 0.5) % 1.2) >= 0.95
+
+    // Box fill
+    ctx.fillStyle = `rgba(${base},${locked ? 0.06 : 0.03})`
+    ctx.fillRect(bx1, by1, bw, bh)
+
+    // Glow outline
+    ctx.strokeStyle = `rgba(${base},${0.25 * pulse})`
+    ctx.lineWidth   = 8
+    ctx.shadowColor = `rgba(${base},1)`
+    ctx.shadowBlur  = 16
+    ctx.strokeRect(bx1, by1, bw, bh)
+    ctx.shadowBlur  = 0
+    ctx.strokeStyle = `rgba(${base},${pulse})`
+    ctx.lineWidth   = 1
+    ctx.strokeRect(bx1, by1, bw, bh)
+
+    // Corner brackets
+    const BK    = Math.min(16, bw * 0.18, bh * 0.18)
+    const cDefs = [[bx1,by1,1,1],[bx2,by1,-1,1],[bx2,by2,-1,-1],[bx1,by2,1,-1]]
+    ctx.strokeStyle = `rgba(${base},${pulse})`
+    ctx.lineWidth   = 2
+    ctx.shadowColor = `rgba(${base},1)`
+    ctx.shadowBlur  = 8
+    cDefs.forEach(([cx, cy, dx, dy], i) => {
+      ctx.save()
+      ctx.translate(cx, cy)
+      ctx.rotate(locked ? 0 : Math.sin(t * 2 + i) * 0.18)
+      ctx.beginPath()
+      ctx.moveTo(dx * BK, 0); ctx.lineTo(0, 0); ctx.lineTo(0, dy * BK)
+      ctx.stroke()
+      ctx.restore()
+    })
+    ctx.shadowBlur = 0
+
+    // Centre crosshair (when locked)
+    if (locked) {
+      const crs = Math.min(bw, bh) * 0.12
+      ctx.strokeStyle = `rgba(${base},${0.5 * pulse})`
+      ctx.lineWidth   = 1
+      ctx.setLineDash([2, 4])
+      ctx.beginPath()
+      ctx.moveTo(bcx - crs, bcy); ctx.lineTo(bcx + crs, bcy)
+      ctx.moveTo(bcx, bcy - crs); ctx.lineTo(bcx, bcy + crs)
+      ctx.stroke()
+      ctx.setLineDash([])
+      ctx.fillStyle = `rgba(${base},${pulse})`
+      ctx.shadowColor = `rgba(${base},1)`; ctx.shadowBlur = 6
+      ctx.beginPath(); ctx.arc(bcx, bcy, 2, 0, Math.PI*2); ctx.fill()
+      ctx.shadowBlur = 0
+    }
+
+    // Diagnostic panel (inside top of box)
+    const panW   = bw - 4, panH = 42
+    const panX   = bx1 + 2, panY = by1 + 2, panPad = 7
+    ctx.fillStyle = 'rgba(4,10,18,0.72)'
+    ctx.fillRect(panX, panY, panW, panH)
+    ctx.fillStyle = `rgba(${base},0.8)`
+    ctx.fillRect(panX, panY, panW, 2)
+
+    ctx.textAlign = 'left'; ctx.textBaseline = 'top'
+    const px = panX + panPad
+    let   py = panY + 7
+
+    ctx.font        = 'bold 10px Courier New'
+    ctx.fillStyle   = `rgba(${base},1)`
+    ctx.shadowColor = `rgba(${base},1)`; ctx.shadowBlur = 6
+    ctx.fillText(`TGT-${String(idx+1).padStart(2,'0')}  ${locked ? '◉ LOCKED' : '◎ ACQUIRING'}`, px, py)
+    ctx.shadowBlur  = 0
+    py += 14
+
+    ctx.font      = '8px Courier New'
+    ctx.fillStyle = `rgba(${base},0.75)`
+    ctx.fillText(label.toUpperCase(), px, py)
+
+    const barOffX = px + 52
+    const barW    = panW - panPad - 52 - 26
+    ctx.fillStyle = 'rgba(20,40,60,0.9)'
+    ctx.fillRect(barOffX, py + 1, barW, 6)
+    ctx.fillStyle   = `rgba(${base},0.9)`
+    ctx.shadowColor = `rgba(${base},1)`; ctx.shadowBlur = 4
+    ctx.fillRect(barOffX, py + 1, barW * conf, 6)
+    ctx.shadowBlur  = 0
+    ctx.fillStyle   = `rgba(${base},0.85)`
+    ctx.fillText(`${Math.round(conf*100)}%`, barOffX + barW + 4, py)
+    ctx.textBaseline = 'alphabetic'
+  })
+
+  // ── Global chrome ──────────────────────────────────────────────
+  const stamp  = new Date().toTimeString().slice(0,8)
+  const fCount = (_camFrameCount++).toString().padStart(6,'0')
+
+  // Corner brackets
+  const CL = 18
+  const corners = [[0,0,1,1],[cssW,0,-1,1],[cssW,cssH,-1,-1],[0,cssH,1,-1]]
+  ctx.strokeStyle = 'rgba(0,180,220,0.6)'
+  ctx.lineWidth   = 1.5
+  corners.forEach(([cx,cy,dx,dy]) => {
+    ctx.beginPath()
+    ctx.moveTo(cx+dx*CL, cy); ctx.lineTo(cx,cy); ctx.lineTo(cx,cy+dy*CL)
+    ctx.stroke()
+  })
+
+  // Top-left
+  ctx.font = 'bold 10px Courier New'; ctx.textAlign = 'left'; ctx.textBaseline = 'top'
+  ctx.fillStyle = 'rgba(0,212,255,0.9)'
+  ctx.shadowColor = 'rgba(0,212,255,1)'; ctx.shadowBlur = 8
+  ctx.fillText('CDS · VISION SYS v1.0', 6, 6)
+  ctx.shadowBlur = 0
+  ctx.font = '8px Courier New'
+  ctx.fillStyle = 'rgba(0,212,255,0.6)'
+  ctx.fillText(`CH.01  AUTO  ${stamp}`, 6, 20)
+
+  // Top-right
+  ctx.textAlign = 'right'
+  if (hasTargets) {
+    const wp = 0.7 + 0.3 * Math.sin(t * 6)
+    ctx.font = 'bold 15px Courier New'
+    ctx.fillStyle   = `rgba(255,60,0,${wp})`
+    ctx.shadowColor = 'rgba(255,60,0,1)'; ctx.shadowBlur = 18
+    ctx.fillText('⚠ TARGET ACQUIRED', cssW - 6, 16)
+    ctx.shadowBlur = 0
+    ctx.font = 'bold 9px Courier New'
+    ctx.fillStyle   = `rgba(255,140,0,${0.6 + 0.4 * Math.sin(t * 4)})`
+    ctx.shadowColor = 'rgba(255,140,0,1)'; ctx.shadowBlur = 8
+    ctx.fillText(`${camBboxes.length} AVIAN THREAT${camBboxes.length>1?'S':''} DETECTED`, cssW - 6, 30)
+    ctx.shadowBlur = 0
+  } else {
+    ctx.font = 'bold 10px Courier New'
+    ctx.fillStyle   = 'rgba(0,212,255,0.65)'
+    ctx.shadowColor = 'rgba(0,212,255,0.8)'; ctx.shadowBlur = 6
+    ctx.fillText('SCANNING...', cssW - 6, 16)
+    ctx.shadowBlur = 0
+    ctx.font = '8px Courier New'
+    ctx.fillStyle = 'rgba(0,180,220,0.4)'
+    ctx.fillText('NO TARGETS', cssW - 6, 28)
+  }
+
+  // Bottom bar
+  const barY = cssH - 14
+  ctx.fillStyle = 'rgba(0,0,0,0.45)'
+  ctx.fillRect(0, barY, cssW, 14)
+  ctx.strokeStyle = 'rgba(0,180,220,0.25)'; ctx.lineWidth = 1
+  ctx.beginPath(); ctx.moveTo(0,barY); ctx.lineTo(cssW,barY); ctx.stroke()
+  ctx.font = '8px Courier New'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'
+  ctx.fillStyle = 'rgba(0,212,255,0.7)'
+  ctx.fillText(`FRAME ${fCount}`, 6, barY + 7)
+  ctx.textAlign = 'center'
+  ctx.fillStyle = 'rgba(30,210,250,0.75)'
+  ctx.shadowColor = 'rgba(0,180,220,0.8)'; ctx.shadowBlur = 6
+  ctx.fillText('ME450 · TURKEYSQUAD · CANINE DETERRENT SYS', cssW/2, barY + 7)
+  ctx.shadowBlur = 0
+  ctx.textAlign = 'right'; ctx.textBaseline = 'alphabetic'
+}
+
+// ── rAF loop ──────────────────────────────────────────────────────
+function _startCamLoop() {
+  if (_camRafId) return
+  function loop(ts) {
+    _camRafId = requestAnimationFrame(loop)
+    if (!camFrame) return
+    if (ts - _camLastDraw < CAM_INTERVAL) return
+    _camLastDraw = ts
+    if (_camBgDirty) {
+      _drawBg()
+      _camBgDirty = false
+    }
+    _drawHud(ts / 1000)
+  }
+  _camRafId = requestAnimationFrame(loop)
+}
+
+// Resize observer: just mark bg dirty so it redraws at correct size next tick
+;(function() {
+  const bg = document.getElementById('cam-bg')
+  if (bg) new ResizeObserver(() => { _camBgDirty = true }).observe(bg)
+})()
+
+// rAF loop starts lazily on first frame decode
 
 // ═══════════════════════════════════════════════
 // SERVO CONTROLS
@@ -585,6 +915,9 @@ function drawMap(canvas) {
   function proj(wx, wy) { return [OX + wx * S, OY + wy * S] }
 
   // ── Background ────────────────────────────────────────────────────────────
+  ctx.save()
+  ctx.shadowBlur = 0
+  ctx.setLineDash([])
   ctx.clearRect(0, 0, cw, ch)
   ctx.fillStyle = '#05080c'
   ctx.fillRect(0, 0, cw, ch)
@@ -854,6 +1187,7 @@ function drawMap(canvas) {
   ctx.font = '8px Courier New'; ctx.textAlign = 'right'
   ctx.fillStyle = 'rgba(0,180,220,0.4)'
   ctx.fillText(zoomLabel, cw - 8, ch - 8)
+  ctx.restore()
 }
 
 // ── CSV parsing ────────────────────────────────────────────────────────────

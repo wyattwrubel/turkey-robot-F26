@@ -47,17 +47,21 @@
   <div class="panel">
     <div class="ph">
       <div class="ph-title">Live Camera Feed</div>
-      <div class="ph-sub">CH.01 &nbsp;·&nbsp; 1 FPS &nbsp;·&nbsp; OBJECT DETECTION</div>
+      <div class="ph-sub" id="cam-sub">CH.01 &nbsp;·&nbsp; 10 FPS &nbsp;·&nbsp; OBJECT DETECTION</div>
     </div>
-    <div class="pbody" style="padding:0;">
+    <div class="pbody" style="padding:0; position:relative; overflow:hidden;">
+      <!-- Placeholder shown until first frame arrives -->
       <div class="feed-ph" id="cam-ph">
         <div class="cr tl"></div><div class="cr tr"></div>
         <div class="cr bl"></div><div class="cr br"></div>
         <div class="fi">⬡</div>
         <div class="fl">Camera Feed</div>
         <div class="fs">AWAITING STREAM</div>
-        <img id="live-img" style="display:none;" alt="live"/>
       </div>
+      <!-- Layer 1: background — frame + scanlines. Only redrawn when image changes. -->
+      <canvas id="cam-bg"  style="display:none; position:absolute; inset:0; width:100%; height:100%;"></canvas>
+      <!-- Layer 2: HUD overlay — bboxes, text, chrome. Redraws at ~15fps. -->
+      <canvas id="cam-hud" style="display:none; position:absolute; inset:0; width:100%; height:100%;"></canvas>
     </div>
   </div>
 
