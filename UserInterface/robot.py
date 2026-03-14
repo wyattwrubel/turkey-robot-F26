@@ -6,19 +6,14 @@ Variable → Protocol mapping
   x, y, theta             ← RobotPose Channel (Ch. 4)
                              array [X, Y, theta]
 
-  sigma_x/y/theta         ← UncertaintyPose Channel (new)
-                             array [sigma_x, sigma_y, sigma_theta]
-
   uwb_x, uwb_y            ← UWB_Values Channel (Ch. 8.1)
                              array [UWB_X, UWB_Y]
-  uwb_age                 ← derived: time since last UWB_Values message
 
   imu_theta               ← Acceler_Values Channel (Ch. 8.2)
                              array [theta]
 
   cmd_left, cmd_right     ← DriveTrain Channel (Ch. 3)
                              Cmd [left, right]
-  drive_source            ← DriveTrain Channel Id field ("UI" / "System")
 
   speed_limit             ← Navigation SpeedCap (Ch. 6.3)
                              Cmd [speed_m/s]
@@ -27,14 +22,14 @@ Variable → Protocol mapping
   active_audio            ← Canine Channel, Type "Audio" (Ch. 2.3)
   servo_angles            ← Canine Channel, Type "Servo" (Ch. 2.2)
 
-  destination             ← Navigation Channel (Chase/Scan/Alert only)
   sys_state               ← MacroState Channel: "Chase"|"Scanning"|"Alert"|None
   nav_cmd                 ← Navigation Channel (Move/Orient — target coords/state)
                              Move:   {"type":"Move",   "x":float, "y":float}
                              Orient: {"type":"Orient", "x":float, "y":float, "theta":float}
-  wp_id, wp_dist          ← WaypointInfo Protocol (separate channel)
-────────────────────────────────────────────────────────────────
 
+  wp_id, wp_dist          ← WaypointInfo Protocol
+
+────────────────────────────────────────────────────────────────
 State-change callbacks (register in app.py or main.py)
 ────────────────────────────────────────────────────────────────
   robot.register_motor_callback(cb)       fired on apply_motor_command
@@ -43,7 +38,6 @@ State-change callbacks (register in app.py or main.py)
   robot.register_pose_callback(cb)        fired on apply_pose
   robot.register_audio_callback(cb)       fired on apply_audio
   robot.register_estop_callback(cb)       fired on apply_estop
-  robot.register_mission_callback(cb)     fired on apply_mission_state
 ────────────────────────────────────────────────────────────────
 """
 
@@ -52,15 +46,14 @@ import time
 
 
 # ── Callback helper ───────────────────────────────────────────────────────────
-
 def _fire(callbacks: list, data: dict) -> None:
     """Schedule all callbacks as asyncio tasks (non-blocking, fire-and-forget)."""
     loop = asyncio.get_event_loop()
     for cb in callbacks:
         loop.create_task(cb(data))
 
-
 # ─────────────────────────────────────────────────────────────────────────────
+
 class RobotInterface:
     """
     Abstract interface the server expects.
@@ -74,7 +67,6 @@ class RobotInterface:
         self._pose_callbacks    = []
         self._audio_callbacks   = []
         self._estop_callbacks   = []
-        self._mission_callbacks = []
 
     def register_motor_callback(self, cb)   -> None: self._motor_callbacks.append(cb)
     def register_speed_callback(self, cb)   -> None: self._speed_callbacks.append(cb)
@@ -82,7 +74,6 @@ class RobotInterface:
     def register_pose_callback(self, cb)    -> None: self._pose_callbacks.append(cb)
     def register_audio_callback(self, cb)   -> None: self._audio_callbacks.append(cb)
     def register_estop_callback(self, cb)   -> None: self._estop_callbacks.append(cb)
-    def register_mission_callback(self, cb) -> None: self._mission_callbacks.append(cb)
 
     def tick(self, dt: float)                                    -> None: raise NotImplementedError
     def apply_motor_command(self, left, right, source)           -> None: raise NotImplementedError
@@ -92,13 +83,10 @@ class RobotInterface:
     def apply_audio(self, sound_id: str)                         -> None: raise NotImplementedError
     def apply_estop(self)                                        -> None: raise NotImplementedError
     def apply_robot_pose(self, x, y, theta)                      -> None: raise NotImplementedError
-    def apply_uncertainty(self, sx, sy, stheta)                  -> None: raise NotImplementedError
     def apply_uwb(self, uwb_x, uwb_y)                           -> None: raise NotImplementedError
     def apply_imu(self, imu_theta)                               -> None: raise NotImplementedError
-    def apply_mission_state(self, **kwargs)                      -> None: raise NotImplementedError
     def to_state_msg(self)                                       -> dict: raise NotImplementedError
     def to_servo_state_msg(self)                                 -> dict: raise NotImplementedError
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 class RobotState(RobotInterface):
@@ -116,15 +104,9 @@ class RobotState(RobotInterface):
         self.y     = 0.0
         self.theta = 0.0
 
-        # ── UncertaintyPose Channel (new) ──────────────────────
-        self.sigma_x     = 0.0
-        self.sigma_y     = 0.0
-        self.sigma_theta = 0.0
-
         # ── UWB_Values Channel (Ch. 8.1) ──────────────────────
         self.uwb_x            = 0.0
         self.uwb_y            = 0.0
-        self._uwb_last_update = None   # timestamp of last UWB message
 
         # ── Acceler_Values Channel (Ch. 8.2) ──────────────────
         self.imu_theta = 0.0
@@ -132,7 +114,6 @@ class RobotState(RobotInterface):
         # ── DriveTrain Channel (Ch. 3) ────────────────────────
         self.cmd_left     = 0.0
         self.cmd_right    = 0.0
-        self.drive_source = None     # "UI" or "System" — None until first command
         self._estop_active = False   # when True, apply_motor_command is a no-op
 
         # ── Navigation SpeedCap (Ch. 6.3) ─────────────────────
@@ -140,7 +121,7 @@ class RobotState(RobotInterface):
 
         # ── Navigation / MacroState Channel ──────────────────
         self.destination   = None    # metres to current target (Chase/Scan/Alert only)
-        self.sys_state     = None    # "Chase" | "Scanning" | "Alert" | None
+        self.sys_state     = "Scanning"    # "Chase" | "Scanning" | "Alert" | None
         self.nav_cmd       = None    # Move/Orient target: dict or None
         # ── WaypointInfo Protocol (separate) ──────────────────
         self.wp_id         = "—"    # e.g. 'WP 3 / 7'
@@ -148,11 +129,11 @@ class RobotState(RobotInterface):
 
         # ── Canine Channel (Ch. 2) ────────────────────────────
         self.servo_angles = {
-            "FrontLeft":  90.0,
-            "FrontRight": 90.0,
-            "RearLeft":   135.0,
-            "RearRight":  0.0,
-            "Head":       90.0,
+            "FrontLeft": 0,
+            "FrontRight": 0,
+            "RearLeft":   0,
+            "RearRight":  0,
+            "Head":       0,
         }
         self.active_pose  = None
         self.active_audio = None
@@ -176,33 +157,17 @@ class RobotState(RobotInterface):
             if self._audio_timer <= 0:
                 self.active_audio = None
 
-    # ── uwb_age property — derived from last message timestamp ───────────────
-    @property
-    def uwb_age(self) -> float:
-        """Seconds since the last UWB_Values message. None if never received."""
-        if self._uwb_last_update is None:
-            return None
-        return round(time.monotonic() - self._uwb_last_update, 2)
-
     # ── Protocol receivers (called by app.py subscriber methods) ─────────────
-
     def apply_robot_pose(self, x: float, y: float, theta: float) -> None:
         """RobotPose Channel (Ch. 4): array [X, Y, theta]"""
         self.x     = x
         self.y     = y
         self.theta = theta
 
-    def apply_uncertainty(self, sx: float, sy: float, stheta: float) -> None:
-        """UncertaintyPose Channel: array [sigma_x, sigma_y, sigma_theta]"""
-        self.sigma_x     = sx
-        self.sigma_y     = sy
-        self.sigma_theta = stheta
-
     def apply_uwb(self, uwb_x: float, uwb_y: float) -> None:
         """UWB_Values Channel (Ch. 8.1): array [UWB_X, UWB_Y]"""
         self.uwb_x            = uwb_x
         self.uwb_y            = uwb_y
-        self._uwb_last_update = time.monotonic()
 
     def apply_imu(self, imu_theta: float) -> None:
         """Acceler_Values Channel (Ch. 8.2): array [theta]"""
@@ -224,7 +189,6 @@ class RobotState(RobotInterface):
         _fire(self._motor_callbacks, {
             "cmd_left":     self.cmd_left,
             "cmd_right":    self.cmd_right,
-            "drive_source": self.drive_source,
         })
 
     def apply_speed_limit(self, speed: float) -> None:
@@ -388,9 +352,3 @@ class RobotState(RobotInterface):
                 for k, v in self.servo_angles.items()
             ],
         }
-
-
-# ── Backwards-compatible alias ────────────────────────────────────────────────
-# MockRobotState is kept so existing imports don't break while you migrate.
-# Once app.py is updated to use RobotState directly, this can be removed.
-MockRobotState = RobotState

@@ -2,18 +2,18 @@
 // CONFIG — swap in real values when ready
 // ═══════════════════════════════════════════════
 const SERVO_DEFS = [
-  { id: 'FrontLeft', name: 'Front Left', min: 0,   max: 180, val: 90  },
-  { id: 'FrontRight', name: 'Front Right', min: 0,   max: 180, val: 90  },
-  { id: 'RearLeft', name: 'Rear Left', min: 0,   max: 270, val: 135 },
-  { id: 'RearRight', name: 'Rear Right', min: -90, max: 90,  val: 0   },
-  { id: 'Head', name: 'Head', min: 0,   max: 180, val: 90  },
+  { id: 'FrontLeft', name: 'Front Left', min: -45,   max: 45, val: 0  },
+  { id: 'FrontRight', name: 'Front Right', min: -45,   max: 45, val: 0  },
+  { id: 'RearLeft', name: 'Rear Left', min: -45,   max: 45, val: 0 },
+  { id: 'RearRight', name: 'Rear Right', min: -45, max: 45,  val: 0   },
+  { id: 'Head', name: 'Head', min: -60,   max: 60, val: 0  },
 ]
 
 const AUDIO_DEFS = [
-  { id: 'BARK',    label: '🔊 Bark'    },
-  { id: 'ALARM',   label: '🔊 Alarm'   },
-  { id: 'WHISTLE', label: '🔊 Whistle' },
-  { id: 'HOWL',    label: '🔊 Howl'    },
+  { id: 'BarkShort',    label: '🔊 BarkShort'    },
+  { id: 'BarkBurst',   label: '🔊 BarkBurst'   },
+  { id: 'Growl', label: '🔊 Growl' },
+  { id: 'AggressiveBark',    label: '🔊 AggressiveBark'    },
 ]
 
 const SPEED_MAX = 3.0   // m/s — update when you have real value
@@ -98,8 +98,8 @@ function buildAudio() {
 // ═══════════════════════════════════════════════
 function connect() {
   // ws = new WebSocket('ws://raspberrypi.local:8000/ws')
-  // ws = new WebSocket('ws://localhost:8000/ws')
-  ws = new WebSocket('ws://192.168.4.2:8000/ws')
+  ws = new WebSocket('ws://localhost:8000/ws')
+  // ws = new WebSocket('ws://192.168.4.2:8000/ws')
   ws.onopen    = ()  => { wsReady = true }
   ws.onclose   = ()  => { wsReady = false; setTimeout(connect, 1500) }
   ws.onmessage = (e) => {
@@ -129,7 +129,6 @@ function handle(m) {
     set('uwb-y',   fmt(m.uwb_y, 2))
     set('uwb-age', `last fix: ${fmt(m.uwb_age, 1)}s ago`)
     set('imu-t',   deg(m.imu_theta))
-    set('imu-cal', `cal: sys=${m.cal_sys ?? '—'} gyro=${m.cal_gyro ?? '—'} mag=${m.cal_mag ?? '—'}`)
 
     // UKF
     set('ukf-x', fmt(m.x, 2))

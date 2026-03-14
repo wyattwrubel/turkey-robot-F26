@@ -90,35 +90,23 @@
     <div class="pbody">
       <div class="drow">
         <div class="db">
-          <div class="dl">UWB Raw</div>
-          <div class="dv">X:<span class="v" id="uwb-x"> —</span> &nbsp;Y:<span class="v" id="uwb-y"> —</span></div>
-          <div class="ds" id="uwb-age">last fix: —</div>
+          <div class="dl">Raw Measurements</div>
+          <div class="dv">X:<span class="v" id="uwb-x"> —</span> m &nbsp;&nbsp; Y:<span class="v" id="uwb-y"> —</span> m&nbsp;&nbsp; θ:<span class="v" id="imu-t">—</span>°</div>
         </div>
         <div class="db">
-          <div class="dl">IMU Raw</div>
-          <div class="dv">θ: <span class="v" id="imu-t">—</span>°</div>
-          <div class="ds" id="imu-cal">cal: sys=— gyro=— mag=—</div>
-        </div>
-      </div>
-      <div class="drow">
-        <div class="db full">
           <div class="dl">UKF Fused Estimate</div>
           <div class="dv">
-            X:<span class="v ok" id="ukf-x"> —</span> m &nbsp;·&nbsp;
-            Y:<span class="v ok" id="ukf-y"> —</span> m &nbsp;·&nbsp;
+            X:<span class="v ok" id="ukf-x"> —</span> m &nbsp;&nbsp;
+            Y:<span class="v ok" id="ukf-y"> —</span> m &nbsp;&nbsp;
             θ:<span class="v ok" id="ukf-t"> —</span>°
-          </div>
-          <div class="ds">
-            Confidence: <span class="conf-dot" id="conf-dot"></span><span id="conf-label" style="margin-left:5px">—</span>
-            &nbsp;·&nbsp; σ_pos:<span id="conf-val"> —</span> m
           </div>
         </div>
       </div>
       <div class="drow">
         <div class="db">
-          <div class="dl">Destination</div>
-          <div class="dv"><span class="v w" id="dist-t">— m</span></div>
-          <div class="ds" id="tgt-s">no target acquired</div>
+          <div class="dl">System State</div>
+          <div class="dv"><span class="v w" id="sys-state">—</span></div>
+          <div class="ds" id="sys-dest">destination: —</div>
         </div>
         <div class="db">
           <div class="dl">Current Waypoint</div>
@@ -134,19 +122,6 @@
             <span class="chip">R: <span id="cmd-r">0.00</span></span>
             <span class="chip" id="drv-src-chip">—</span>
           </div>
-          <div class="ds" id="drv-src">source: —</div>
-        </div>
-      </div>
-      <div class="drow">
-        <div class="db">
-          <div class="dl">System State</div>
-          <div class="dv"><span class="v w" id="sys-state">—</span></div>
-          <div class="ds" id="sys-dest">destination: —</div>
-        </div>
-        <div class="db">
-          <div class="dl">Navigation Command</div>
-          <div class="dv"><span class="v" id="nav-cmd-type">—</span></div>
-          <div class="ds" id="nav-cmd-detail">—</div>
         </div>
       </div>
     </div>

@@ -44,11 +44,9 @@ from fastapi.responses import FileResponse, HTMLResponse
 
 from broadcast import broadcast_frames, broadcast_state
 from handlers  import handle_message
-from logger    import log, log_warn, log_err, log_info, C
 from robot     import RobotState, RobotInterface
 
 STATIC_DIR = Path(__file__).parent / "Website"
-
 
 class CDSControlServer:
     """
@@ -173,7 +171,6 @@ class CDSControlServer:
         turkeys = data.get("Turkeys", [])
         humans  = data.get("Humans",  [])
         bboxes  = data.get("Bboxes",  [])
-        log_info("VISION", f"Turkeys={len(turkeys)}  Humans={len(humans)}  Bboxes={len(bboxes)}")
         # Only overwrite bboxes if the message actually contains them.
         # test_vision() sends world positions only (no Bboxes key) — we keep
         # the existing demo/real bboxes so they don't disappear during chase.
@@ -207,21 +204,6 @@ class CDSControlServer:
                 sx     = float(arr[3]),
                 sy     = float(arr[4]),
                 stheta = float(arr[5]),
-            )
-
-    async def UncertaintyPose_Receiver(self, data: dict) -> None:
-        """
-        UncertaintyPose Channel (new)
-        Expected format: array [sigma_x, sigma_y, sigma_theta]
-        Wire up: uncertainty_publisher.subscribe(ui.UncertaintyPose_Receiver)
-        """
-        import numpy as np
-        arr = np.array(data, dtype=np.float64).flatten()
-        if arr.size >= 3:
-            self.robot.apply_uncertainty(
-                sx     = float(arr[0]),
-                sy     = float(arr[1]),
-                stheta = float(arr[2]),
             )
 
     async def UWB_Sensors_Receiver(self, data: dict) -> None:
@@ -313,10 +295,8 @@ class CDSControlServer:
             )
 
         elif msg_id == "UnlockUI":
-            log_info("NAV", "State planner returned to automatic mode")
 
         else:
-            log_warn("NAV", f"Unknown StatePlanner message Id: '{msg_id}'")
 
 
     async def WaypointInfo_Receiver(self, data: dict) -> None:
@@ -331,7 +311,6 @@ class CDSControlServer:
         wp_id   = data.get("wp_id",   "—")
         wp_dist = float(data.get("wp_dist", 0.0))
         self.robot.apply_waypoint_info(wp_id=wp_id, wp_dist=wp_dist)
-        log_info("WP", f"{wp_id}  dist={wp_dist:.1f} m")
 
     async def DriveTrain_Receiver(self, data: dict) -> None:
         """
@@ -365,27 +344,22 @@ class CDSControlServer:
         msg_type = data.get("Type", "")
 
         if msg_id == "UnlockUI":
-            log_info("K9", "Canine control relinquished to software")
             return
 
         if msg_type == "Pose":
             pose = data.get("Data", "")
             self.robot.apply_pose(pose)
-            log_evt("K9", f"Pose -> {pose}")
 
         elif msg_type == "Servo":
             name  = data.get("Name", "")
             angle = float(data.get("Data", 0.0))
             self.robot.apply_servo_angle(name, angle)
-            log_cmd("K9", f"Servo {name} -> {angle:.1f}°")
 
         elif msg_type == "Audio":
             sound = data.get("Data", "")
             self.robot.apply_audio(sound)
-            log_evt("K9", f"Audio -> {sound}")
 
         else:
-            log_warn("K9", f"Unknown Canine message: Id={msg_id!r} Type={msg_type!r}")
 
     # ── Serve coroutine (drop into asyncio.gather) ────────────────────────────
     async def serve(self):
@@ -404,9 +378,9 @@ class CDSControlServer:
 
         @asynccontextmanager
         async def lifespan(app: FastAPI):
-            log_info("SERVER", "CDS Control Server starting")
-            log_info("SERVER", "UI  ->  http://localhost:8000")
-            log_info("SERVER", "WS  ->  ws://localhost:8000/ws")
+            print("SERVER", "CDS Control Server starting")
+            print("SERVER", "UI  ->  http://localhost:8000")
+            print("SERVER", "WS  ->  ws://localhost:8000/ws")
             asyncio.create_task(broadcast_state(self.connections, self.robot))
             asyncio.create_task(broadcast_frames(self.connections, self.robot))
             yield
@@ -452,30 +426,6 @@ class CDSControlServer:
                 return FileResponse(str(f), media_type="text/csv")
             return HTMLResponse("", status_code=404)
 
-        # ── Camera feed upload ────────────────────────────────────────────────
-        # POST /feed/upload  multipart file  ->  broadcasts frame to all clients
-        # Usage:
-        #   curl -X POST http://localhost:8000/feed/upload -F "file=@turkey.jpg"
-        #
-        # Any image PIL can open works (JPEG, PNG ...).
-        # Stored in broadcast._current_frame_msg; clients receive it within 0.1 s.
-
-        @app.post("/feed/upload")
-        async def feed_upload(file: UploadFile):
-            import base64, io
-            from PIL import Image
-            from broadcast import set_frame
-
-            data = await file.read()
-            img  = Image.open(io.BytesIO(data)).convert("RGB")
-            w, h = img.size
-            buf  = io.BytesIO()
-            img.save(buf, format="JPEG", quality=80)
-            b64  = base64.b64encode(buf.getvalue()).decode("ascii")
-            set_frame(b64, w, h)
-            log_info("CAM", f"Frame updated: {w}x{h}  ({len(b64)//1024} KB b64)")
-            return {"ok": True, "w": w, "h": h}
-
         # ── WebSocket endpoint ────────────────────────────────────────────────────
         @app.websocket("/ws")
         async def websocket_endpoint(ws: WebSocket):
@@ -519,202 +469,3 @@ class CDSControlServer:
             finally:
                 if ws in self.connections:
                     self.connections.remove(ws)
-
-        # ── Test broadcast endpoint ───────────────────────────────────────────
-        @app.post("/test/broadcast")
-        async def test_broadcast(request: Request):
-            data = await request.json()
-            msg  = json.dumps(data)
-            dead = []
-            for ws in self.connections:
-                try:
-                    await ws.send_text(msg)
-                except Exception:
-                    dead.append(ws)
-            for ws in dead:
-                self.connections.remove(ws)
-            return {"sent_to": len(self.connections), "msg_type": data.get("type")}
-
-        # ── Test routes ───────────────────────────────────────────────────────
-
-        @app.get("/test/wasd")
-        async def test_wasd():
-            """Cycle W → S → A → D → stop, 1s each. Watch WASD keys light up."""
-            log_info("TEST", "WASD sequence started")
-            moves = [
-                ("Forward  W",  0.8,  0.8),
-                ("Reverse  S", -0.8, -0.8),
-                ("Left     A", -0.8,  0.8),
-                ("Right    D",  0.8, -0.8),
-                ("Stop      ",  0.0,  0.0),
-            ]
-            for label, left, right in moves:
-                self.robot.apply_motor_command(left, right, source="System")
-                log_info("TEST", f"WASD  {label}  L={left:+.1f}  R={right:+.1f}")
-                await asyncio.sleep(1.0)
-            return {"done": True, "sequence": "wasd"}
-
-        @app.get("/test/servos")
-        async def test_servos():
-            """Sweep all servo sliders from min to max and back."""
-            log_info("TEST", "Servo sweep started")
-            ranges = {
-                "FrontLeft":  (0,   180),
-                "FrontRight": (0,   180),
-                "RearLeft":   (0,   270),
-                "RearRight":  (-90,  90),
-                "Head":       (0,   180),
-            }
-            for direction in [range(0, 21), range(20, -1, -1)]:
-                for step in direction:
-                    t = step / 20.0
-                    for sid, (lo, hi) in ranges.items():
-                        self.robot.apply_servo_angle(sid, round(lo + (hi - lo) * t, 1))
-                    log_info("TEST", f"Servo sweep {int(t*100):3d}%")
-                    await asyncio.sleep(0.3)
-
-            self.robot.apply_servo_angle("FrontLeft",  90)
-            self.robot.apply_servo_angle("FrontRight", 90)
-            self.robot.apply_servo_angle("RearLeft",   135)
-            self.robot.apply_servo_angle("RearRight",  0)
-            self.robot.apply_servo_angle("Head",       90)
-            log_info("TEST", "Servo sweep complete — centred")
-            return {"done": True, "sequence": "servos"}
-
-        @app.get("/test/poses")
-        async def test_poses():
-            """Cycle through all 5 poses, 2s each."""
-            log_info("TEST", "Pose sequence started")
-            for pose in ["Pose1", "Pose2", "Pose3", "Pose4", "Pose5"]:
-                self.robot.apply_pose(pose)
-                log_info("TEST", f"Pose -> {pose}")
-                await asyncio.sleep(2.0)
-            self.robot.apply_pose(None)
-            return {"done": True, "sequence": "poses"}
-
-        @app.get("/test/audio")
-        async def test_audio():
-            """Fire each audio clip, 2s apart."""
-            log_info("TEST", "Audio sequence started")
-            for sound in ["Audio1", "Audio2", "Audio3", "Audio4"]:
-                self.robot.apply_audio(sound)
-                log_info("TEST", f"Audio -> {sound}")
-                await asyncio.sleep(2.0)
-            return {"done": True, "sequence": "audio"}
-
-        @app.get("/test/speed")
-        async def test_speed():
-            """Ramp speed display 0.5 -> 3.0 -> 0.5 m/s."""
-            log_info("TEST", "Speed ramp started")
-            for speed in [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 2.5, 2.0, 1.5, 1.0, 0.5]:
-                self.robot.apply_speed_limit(speed)
-                log_info("TEST", f"Speed  {speed:.1f} m/s")
-                await asyncio.sleep(0.3)
-            return {"done": True, "sequence": "speed"}
-
-        @app.get("/test/estop")
-        async def test_estop():
-            """Fire motors, engage estop (blocks commands), release, then stop cleanly."""
-            log_info("TEST", "E-stop test started")
-            self.robot.apply_motor_command(0.8, 0.8, source="System")
-            log_info("TEST", "Motors running at 0.8 — source=System")
-            await asyncio.sleep(1.5)
-            self.robot.apply_estop_engage()
-            log_info("TEST", "ESTOP engaged — motor commands now blocked")
-            await asyncio.sleep(1.0)
-            self.robot.apply_motor_command(0.5, 0.5, source="System")
-            log_info("TEST", "Motor command attempted while ESTOP active — should be no-op")
-            await asyncio.sleep(0.5)
-            self.robot.apply_estop_release()
-            log_info("TEST", "ESTOP released — motors accepted again")
-            self.robot.apply_motor_command(0.0, 0.0, source="System")
-            return {"done": True, "sequence": "estop"}
-
-        @app.get("/test/navigation")
-        async def test_navigation():
-            """Cycle through Move, Orient, Chase, Scan, Alert. Watch sys_state and nav_cmd update."""
-            import math as _math
-            log_info("TEST", "Navigation sequence started")
-
-            self.robot.apply_mission_state(nav_cmd={"type": "Move", "x": 15.0, "y": 8.0})
-            log_info("TEST", "Move -> (15.0, 8.0)")
-            await asyncio.sleep(2.0)
-
-            self.robot.apply_mission_state(nav_cmd={"type": "Orient", "x": 15.0, "y": 8.0, "theta": round(_math.pi / 4, 4)})
-            log_info("TEST", "Orient -> (15.0, 8.0, 45°)")
-            await asyncio.sleep(2.0)
-
-            self.robot.apply_mission_state(sys_state="Chase", destination=6.2, nav_cmd=None)
-            log_info("TEST", "Chase — dest=6.2 m")
-            await asyncio.sleep(2.0)
-
-            self.robot.apply_mission_state(sys_state="Scanning", destination=None, nav_cmd=None)
-            log_info("TEST", "Scanning")
-            await asyncio.sleep(2.0)
-
-            self.robot.apply_mission_state(sys_state="Alert", destination=None, nav_cmd=None)
-            log_info("TEST", "Alert")
-            await asyncio.sleep(2.0)
-
-            self.robot.apply_mission_state(sys_state=None, destination=None, nav_cmd=None)
-            log_info("TEST", "Navigation test complete — state cleared")
-            return {"done": True, "sequence": "navigation"}
-
-        @app.get("/test/vision")
-        async def test_vision():
-            """
-            Simulate 10 frames of VisionObject detections, 0.5s apart.
-            Watch the map canvas animate turkey and human positions.
-            Positions are in metres relative to the field origin (0,0).
-            """
-            import math as _math
-            import random as _rand
-            log_info("TEST", "Vision sequence started")
-
-            for frame in range(10):
-                t = frame * 0.5
-                # Turkeys orbit slowly around (20, 10) — position only
-                turkeys = [
-                    [round(20.0 + 4.0 * _math.cos(t * 0.7 + i * 2.1), 2),
-                     round(10.0 + 4.0 * _math.sin(t * 0.7 + i * 2.1), 2)]
-                    for i in range(3)
-                ]
-                # Human walks in from the left edge — position only
-                humans = [
-                    [round(5.0 + t * 0.8, 2),
-                     round(15.0 + _math.sin(t * 1.2) * 2.0, 2)]
-                ]
-                vision_data = {
-                    "Id":      "DynamicObjects",
-                    "Turkeys": turkeys,
-                    "Humans":  humans,
-                }
-                await self.VisionObject_Receiver(vision_data)
-                log_info("TEST", f"Vision frame {frame+1}/10  turkeys={len(turkeys)} humans={len(humans)}")
-                await asyncio.sleep(0.5)
-
-            return {"done": True, "sequence": "vision"}
-
-        @app.get("/test/full")
-        async def test_full():
-            """Run all sequences back to back (~60s)."""
-            log_info("TEST", "Full sequence started")
-            await test_wasd()
-            await asyncio.sleep(0.5)
-            await test_speed()
-            await asyncio.sleep(0.5)
-            await test_servos()
-            await asyncio.sleep(0.5)
-            await test_poses()
-            await asyncio.sleep(0.5)
-            await test_audio()
-            await asyncio.sleep(0.5)
-            await test_navigation()
-            await asyncio.sleep(0.5)
-            await test_vision()
-            await asyncio.sleep(0.5)
-            await test_estop()
-            log_info("TEST", "Full sequence complete")
-            return {"done": True, "sequence": "full"}
-
-        return app

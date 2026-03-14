@@ -1,4 +1,6 @@
 """
+EVENTUALLY DELETE AND PORT OVER ELSEWHERE
+
 broadcast.py — Background broadcast loops
 
 broadcast_state()   pushes robot state at 10 Hz

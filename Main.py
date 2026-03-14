@@ -509,7 +509,7 @@ async def main():
         # test_navigation(stateplanner_publisher),
         # test_canine(canine_publisher),
         # test_vision(visionobject_publisher),
-        test_chase_sequence(pose_publisher, stateplanner_publisher, visionobject_publisher, drivetrain_publisher),
+        # test_chase_sequence(pose_publisher, stateplanner_publisher, visionobject_publisher, drivetrain_publisher),
     )
 
 
