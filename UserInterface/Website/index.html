@@ -4,21 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>CANINE DETERRENT SYSTEM — CONTROL INTERFACE</title>
-<!-- <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow+Condensed:wght@300;400;600;700;900&display=swap" rel="stylesheet"> -->
 <link rel="stylesheet" href="styles.css">
-<style>
-#csv-label {
-  position:absolute; bottom:8px; right:8px;
-  cursor:pointer; z-index:10;
-}
-#csv-btn {
-  font-family:'Courier New',monospace; font-size:10px;
-  letter-spacing:.1em; padding:3px 8px;
-  border:1px solid #2a4060; background:rgba(13,17,23,.85);
-  color:#4a6070; transition:color .15s, border-color .15s;
-}
-#csv-label:hover #csv-btn { color:#00d4ff; border-color:#00d4ff; }
-</style>
 </head>
 <body>
 
@@ -27,9 +13,6 @@
   <div class="hdr-l">
     <div class="sys-title">ME450<span>—</span>TURKEYSQUAD</div>
     <div class="hdr-tag">Robotic Canine Deterrent Unit v0.1</div>
-    <!-- <div class="ticker">
-      <span>SYS NOMINAL &nbsp;·&nbsp; UKF ACTIVE &nbsp;·&nbsp; ANCHORS 4/4 &nbsp;·&nbsp; IMU CALIBRATED &nbsp;·&nbsp; ZONE LOADED &nbsp;·&nbsp;</span>
-    </div> -->
   </div>
   <div class="hdr-r">
     <div class="spill"><div class="dot"></div>UWB</div>
@@ -47,10 +30,9 @@
   <div class="panel">
     <div class="ph">
       <div class="ph-title">Live Camera Feed</div>
-      <div class="ph-sub" id="cam-sub">CH.01 &nbsp;·&nbsp; 10 FPS &nbsp;·&nbsp; OBJECT DETECTION</div>
+      <div class="ph-sub">LIVE STREAM</div>
     </div>
     <div class="pbody" style="padding:0; position:relative; overflow:hidden;">
-      <!-- Placeholder shown until first frame arrives -->
       <div class="feed-ph" id="cam-ph">
         <div class="cr tl"></div><div class="cr tr"></div>
         <div class="cr bl"></div><div class="cr br"></div>
@@ -58,10 +40,6 @@
         <div class="fl">Camera Feed</div>
         <div class="fs">AWAITING STREAM</div>
       </div>
-      <!-- Layer 1: background — frame + scanlines. Only redrawn when image changes. -->
-      <canvas id="cam-bg"  style="display:none; position:absolute; inset:0; width:100%; height:100%;"></canvas>
-      <!-- Layer 2: HUD overlay — bboxes, text, chrome. Redraws at ~15fps. -->
-      <canvas id="cam-hud" style="display:none; position:absolute; inset:0; width:100%; height:100%;"></canvas>
     </div>
   </div>
 
@@ -69,15 +47,10 @@
   <div class="panel">
     <div class="ph">
       <div class="ph-title">Zone Map</div>
-      <div class="ph-sub" id="map-sub">100 × 100 M &nbsp;·&nbsp; UKF FUSED &nbsp;·&nbsp; 10 HZ &nbsp;·&nbsp; 3D VIEW</div>
+      <div class="ph-sub" id="map-sub">UKF FUSED &nbsp;·&nbsp; 10 HZ</div>
     </div>
     <div class="pbody" style="padding:0; position:relative; overflow:hidden;">
       <canvas id="map-canvas"></canvas>
-      <!-- CSV overlay — drop a file to load static obstacles -->
-      <label id="csv-label" title="Drop a CSV (x,y,type) to load obstacles">
-        <input type="file" id="csv-input" accept=".csv" style="display:none;" onchange="loadCSV(this)">
-        <span id="csv-btn">⊕ CSV</span>
-      </label>
     </div>
   </div>
 
@@ -88,42 +61,68 @@
       <div class="ph-sub">LIVE &nbsp;·&nbsp; 10 HZ</div>
     </div>
     <div class="pbody">
+
       <div class="drow">
         <div class="db">
           <div class="dl">Raw Measurements</div>
-          <div class="dv">X:<span class="v" id="uwb-x"> —</span> m &nbsp;&nbsp; Y:<span class="v" id="uwb-y"> —</span> m&nbsp;&nbsp; θ:<span class="v" id="imu-t">—</span>°</div>
+          <div class="dv">
+            X:<span class="v"    id="uwb-x"> —</span> m &nbsp;
+            Y:<span class="v"    id="uwb-y"> —</span> m &nbsp;
+            θ:<span class="v"    id="imu-t"> —</span>°
+          </div>
         </div>
         <div class="db">
           <div class="dl">UKF Fused Estimate</div>
           <div class="dv">
-            X:<span class="v ok" id="ukf-x"> —</span> m &nbsp;&nbsp;
-            Y:<span class="v ok" id="ukf-y"> —</span> m &nbsp;&nbsp;
+            X:<span class="v ok" id="ukf-x"> —</span> m &nbsp;
+            Y:<span class="v ok" id="ukf-y"> —</span> m &nbsp;
             θ:<span class="v ok" id="ukf-t"> —</span>°
           </div>
         </div>
       </div>
+
       <div class="drow">
         <div class="db">
           <div class="dl">System State</div>
           <div class="dv"><span class="v w" id="sys-state">—</span></div>
-          <div class="ds" id="sys-dest">destination: —</div>
         </div>
         <div class="db">
-          <div class="dl">Current Waypoint</div>
-          <div class="dv"><span class="v" id="wp-id">WP — / —</span></div>
-          <div class="ds" id="wp-i">dist: — m</div>
-        </div>
-      </div>
-      <div class="drow">
-        <div class="db full">
-          <div class="dl">Drivetrain Commands</div>
-          <div class="crow">
-            <span class="chip">L: <span id="cmd-l">0.00</span></span>
-            <span class="chip">R: <span id="cmd-r">0.00</span></span>
-            <span class="chip" id="drv-src-chip">—</span>
+          <div class="dl">Current Destination</div>
+          <div class="dv">
+            X:<span class="v"    id="dest-x"> —</span> m &nbsp;
+            Y:<span class="v"    id="dest-y"> —</span> m &nbsp;
+            θ:<span class="v"    id="dest-t"> —</span>°
           </div>
         </div>
       </div>
+
+      <div class="drow">
+        <div class="db full">
+          <div class="dl">Drivetrain</div>
+          <div class="drive-readout">
+            <div class="drive-val">
+              <span class="drive-lbl">L</span>
+              <span class="drive-num v ok" id="cmd-l">0.00</span>
+            </div>
+            <div class="drive-val">
+              <span class="drive-lbl">R</span>
+              <span class="drive-num v ok" id="cmd-r">0.00</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="drow">
+        <div class="db full">
+          <div class="dl">MacroState Commands</div>
+          <div class="macrostate-g">
+            <button class="btn" data-state="Scanning" onclick="sendMacrostate('Scan',   this)">⟳ Scan</button>
+            <button class="btn" data-state="Chase"    onclick="sendMacrostate('Chase',  this)">⚡ Chase</button>
+            <button class="btn" data-state="Alert"    onclick="sendMacrostate('Alert',  this)">⚠ Alert</button>
+          </div>
+        </div>
+      </div>
+
     </div>
   </div>
 
@@ -151,15 +150,11 @@
 
           <div class="div"></div>
           <div class="clbl">Servo Angles</div>
-          <div class="servo-list" id="servo-list">
-            <!-- generated by JS -->
-          </div>
+          <div class="servo-list" id="servo-list"></div>
 
           <div class="div"></div>
           <div class="clbl">Audio</div>
-          <div class="audio-g" id="audio-grid">
-            <!-- generated by JS -->
-          </div>
+          <div class="audio-g" id="audio-grid"></div>
 
         </div>
 
@@ -169,11 +164,13 @@
           <div class="clbl">Speed Limit</div>
           <div class="speed-wrap">
             <div class="speed-row">
-              <div class="speed-disp"><span id="spd-disp">1.5</span> <span style="font-size:9px;color:var(--text-dim)">m/s</span></div>
+              <div class="speed-disp">
+                <span id="spd-disp">1.5</span>
+                <span style="font-size:9px;color:var(--text-dim)">m/s</span>
+              </div>
               <input type="range" class="srange" id="spd-range"
                 min="0" max="3" step="0.1" value="1.5"
-                style="flex:1;"
-                oninput="onSpeedRange(this)">
+                style="flex:1;" oninput="onSpeedRange(this)">
             </div>
             <div class="speed-btns">
               <button class="btn" onclick="setSpeed(0.5)">0.5</button>
@@ -186,17 +183,13 @@
           <div class="clbl">Drivetrain</div>
           <div class="drive-g">
             <button class="btn" id="drive-fwd"
-              onmousedown="startDrive(1,1)"    onmouseup="stopDrive()"
-              ontouchstart="startDrive(1,1)"   ontouchend="stopDrive()">▲ Fwd</button>
+              onmousedown="startDrive('w','drive-fwd')"   onmouseup="stopDrive('w','drive-fwd')">▲ Fwd</button>
             <button class="btn" id="drive-rev"
-              onmousedown="startDrive(-1,-1)"  onmouseup="stopDrive()"
-              ontouchstart="startDrive(-1,-1)" ontouchend="stopDrive()">▼ Rev</button>
+              onmousedown="startDrive('s','drive-rev')"   onmouseup="stopDrive('s','drive-rev')">▼ Rev</button>
             <button class="btn" id="drive-left"
-              onmousedown="startDrive(-1,1)"   onmouseup="stopDrive()"
-              ontouchstart="startDrive(-1,1)"  ontouchend="stopDrive()">◄ Left</button>
+              onmousedown="startDrive('a','drive-left')"  onmouseup="stopDrive('a','drive-left')">◄ Left</button>
             <button class="btn" id="drive-right"
-              onmousedown="startDrive(1,-1)"   onmouseup="stopDrive()"
-              ontouchstart="startDrive(1,-1)"  ontouchend="stopDrive()">► Right</button>
+              onmousedown="startDrive('d','drive-right')" onmouseup="stopDrive('d','drive-right')">► Right</button>
           </div>
 
           <div class="div"></div>
@@ -205,27 +198,23 @@
             <div class="wasd-g">
               <div class="wbtn empty"></div>
               <div class="wbtn" id="key-w"
-                onmousedown="wasdPress('w')" onmouseup="wasdRelease('w')"
-                ontouchstart="wasdPress('w')" ontouchend="wasdRelease('w')">W</div>
+                onmousedown="wasdPress('w')" onmouseup="wasdRelease('w')">W</div>
               <div class="wbtn empty"></div>
               <div class="wbtn" id="key-a"
-                onmousedown="wasdPress('a')" onmouseup="wasdRelease('a')"
-                ontouchstart="wasdPress('a')" ontouchend="wasdRelease('a')">A</div>
+                onmousedown="wasdPress('a')" onmouseup="wasdRelease('a')">A</div>
               <div class="wbtn" id="key-s"
-                onmousedown="wasdPress('s')" onmouseup="wasdRelease('s')"
-                ontouchstart="wasdPress('s')" ontouchend="wasdRelease('s')">S</div>
+                onmousedown="wasdPress('s')" onmouseup="wasdRelease('s')">S</div>
               <div class="wbtn" id="key-d"
-                onmousedown="wasdPress('d')" onmouseup="wasdRelease('d')"
-                ontouchstart="wasdPress('d')" ontouchend="wasdRelease('d')">D</div>
+                onmousedown="wasdPress('d')" onmouseup="wasdRelease('d')">D</div>
             </div>
           </div>
 
         </div>
-      </div><!-- /ctrl-top -->
+      </div>
 
       <div class="ctrl-bot">
-        <button class="estop" id="estop-btn" onclick="emergencyStop()">⬡ EMERGENCY STOP</button>
-        <button class="modetog" id="mode-btn" onclick="toggleMode()">⇄ SWITCH TO MANUAL</button>
+        <button class="estop"   id="estop-btn" onclick="emergencyStop()">⬡ EMERGENCY STOP</button>
+        <button class="modetog" id="mode-btn"  onclick="toggleMode()">⇄ SWITCH TO MANUAL</button>
       </div>
 
     </div>
