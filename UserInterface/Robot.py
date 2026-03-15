@@ -15,6 +15,7 @@ All fields written by panel receivers. Read by the 10 Hz broadcast loop.
   active_audio      ← controls.Canine_Receiver / handle_ui_message
 """
 
+
 class Robot:
 
     def __init__(self):
@@ -28,11 +29,13 @@ class Robot:
 
         self.cmd_left      = 0.0
         self.cmd_right     = 0.0
-        self.speed_limit   = 3
+        self.speed_limit   = 1.5
         self._estop        = False
 
-        self.sys_state  = "Scanning"
-        self.target     = {"x": 0.0, "y": 0.0, "theta": 0.0}
+        self.sys_state    = "Scanning"
+        self.target       = {"x": 0.0, "y": 0.0, "theta": 0.0}
+        self.nav_cmd_type = None   # "Move" | "Orient" | None
+        self.ui_locked    = False  # True in manual mode — blocks Navigation_Receiver from overwriting target
 
         self.servo_angles = {
             "FrontLeft": 0.0, "FrontRight": 0.0,
@@ -71,8 +74,11 @@ class Robot:
 
     # ── Mission ───────────────────────────────────────────────
     def set_sys_state(self, state):        self.sys_state = state
-    def set_target(self, x, y, theta=0.0):
-        self.target = {"x": round(x, 3), "y": round(y, 3), "theta": round(theta, 4)}
+    def lock_navigation(self):              self.ui_locked = True
+    def unlock_navigation(self):            self.ui_locked = False
+    def set_target(self, x, y, theta=0.0, nav_type=None):
+        self.target       = {"x": round(x, 3), "y": round(y, 3), "theta": round(theta, 4)}
+        self.nav_cmd_type = nav_type
 
     # ── Canine ────────────────────────────────────────────────
     def set_servo(self, servo_id, angle):  self.servo_angles[servo_id] = angle
@@ -90,6 +96,7 @@ class Robot:
             "y":            round(self.y,         3),
             "theta":        round(self.theta,      4),
             "macrostate":   self.sys_state,
+            "nav_cmd_type": self.nav_cmd_type,
             "target":       self.target,
             "cmd_left":     round(self.cmd_left,  3),
             "cmd_right":    round(self.cmd_right, 3),

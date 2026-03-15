@@ -9,9 +9,10 @@ class IMUDriver:
     PUBLISH_RATE_HZ  = 100
     PUBLISH_PERIOD   = 1.0 / PUBLISH_RATE_HZ   # 0.01s
 
-    def __init__(self, AccelPublisher):
-        i2c         = busio.I2C(board.SCL, board.SDA)
-        self.sensor = adafruit_bno055.BNO055_I2C(i2c)
+    def __init__(self, AccelPublisher, Simulation=False):
+        if(Simulation == False):
+            i2c         = busio.I2C(board.SCL, board.SDA)
+            self.sensor = adafruit_bno055.BNO055_I2C(i2c)
         self.AccelPublisher = AccelPublisher
 
     # ------------------------------------------------------------------

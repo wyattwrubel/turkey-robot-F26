@@ -12,9 +12,10 @@ Inbound receiver (subscribe in main.py):
     canine_pub.subscribe(ui.controls.Canine_Receiver)
 
 Outbound publishers are passed in at construction and called here:
-    drivetrain_publisher  → motor commands, speed cap
-    canine_publisher      → pose, servo, audio commands
-    macrostate_publisher  → Chase / Scan / Alert commands
+    drivetrain_publisher   → motor commands, speed cap
+    canine_publisher       → pose, servo, audio commands
+    macrostate_publisher   → Chase / Scan / Alert commands
+    navigation_publisher   → Move, Orient, UnlockUI commands
 
 KEY_DIRECTIONS maps WASD keys to normalised [left, right] motor values.
 Speed limit scaling is applied here before publishing to hardware.
@@ -41,11 +42,13 @@ class PanelControls:
     def __init__(self, robot: Robot,
                  drivetrain_publisher,
                  canine_publisher,
-                 macrostate_publisher):
-        self._robot          = robot
-        self._drivetrain_pub = drivetrain_publisher
-        self._canine_pub     = canine_publisher
-        self._macrostate_pub = macrostate_publisher
+                 macrostate_publisher,
+                 navigation_publisher):
+        self._robot           = robot
+        self._drivetrain_pub  = drivetrain_publisher
+        self._canine_pub      = canine_publisher
+        self._macrostate_pub  = macrostate_publisher
+        self._navigation_pub  = navigation_publisher
 
     # ── Inbound receiver (system → UI state) ─────────────────────────────────
 
@@ -120,10 +123,27 @@ class PanelControls:
         elif msg_type == "estop_reset":
             self._robot.estop_release()
 
+        elif msg_type == "waypoint_move":
+            if not self._robot.ui_locked:
+                print("[WAYPOINT] Blocked — not in manual mode")
+                return
+            x     = float(data.get("x", 0.0))
+            y     = float(data.get("y", 0.0))
+            label = data.get("label", "?")
+            self._robot.set_target(x, y, theta=0.0, nav_type="Move")
+            await self._pub_navigation("Move", [x, y, 0.0])
+            print(f"[WAYPOINT] Move → {label}  ({x}, {y})")
+
+        elif msg_type == "lock_ui":
+            # Operator switched to manual mode — lock navigation target
+            self._robot.lock_navigation()
+
         elif msg_type == "unlock_ui":
+            self._robot.unlock_navigation()
             await self._drivetrain_pub.publish({"Id": "UnlockUI"})
             await self._canine_pub.publish({"Id": "UnlockUI"})
             await self._macrostate_pub.publish({"Id": "UnlockUI"})
+            await self._navigation_pub.publish({"Id": "UnlockUI"})
 
     async def _handle_key_command(self, data: dict) -> None:
         """
@@ -187,6 +207,13 @@ class PanelControls:
             "Id":   "UI",
             "Type": "Audio",
             "Data": audio_id,
+        })
+
+    async def _pub_navigation(self, cmd_type: str, cmd: list) -> None:
+        """Navigation channel — Move or Orient command."""
+        await self._navigation_pub.publish({
+            "Id":  cmd_type,
+            "Cmd": cmd,
         })
 
     # ── On-connect sync ───────────────────────────────────────────────────────

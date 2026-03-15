@@ -182,6 +182,37 @@ async def button_sequence(ui: CDSControlServer):
             result("sys_state", f"{ui.robot.sys_state}")
             await asyncio.sleep(1.5)
 
+        # ── Navigation commands ───────────────────────────────
+        section("Navigation — Move / Orient / SpeedCap")
+
+        targets = [
+            ("Move   to (60, 40)",     {"Id": "Move",     "Cmd": [60.0, 40.0, 0.0]}),
+            ("Move   to (20, 80)",     {"Id": "Move",     "Cmd": [20.0, 80.0, 0.0]}),
+            ("Orient to (50,50) 90°",  {"Id": "Orient",   "Cmd": [50.0, 50.0, 1.5708]}),
+            ("Orient to (10,10) 180°", {"Id": "Orient",   "Cmd": [10.0, 10.0, 3.1416]}),
+            ("SpeedCap 2.0 m/s",       {"Id": "SpeedCap", "Cmd": [2.0]}),
+            ("SpeedCap 1.5 m/s",       {"Id": "SpeedCap", "Cmd": [1.5]}),
+        ]
+
+        for label, msg in targets:
+            send(label, msg)
+            await ui.map.Navigation_Receiver(msg)
+            t = ui.robot.target
+            result(
+                "target + nav_type",
+                f"type={ui.robot.nav_cmd_type}  "
+                f"x={t['x']}  y={t['y']}  θ={t['theta']}  "
+                f"speed={ui.robot.speed_limit} m/s"
+            )
+            await asyncio.sleep(1.5)
+
+        # Verify nav_cmd_type clears correctly on SpeedCap (should stay at last Move/Orient)
+        section("Nav type persistence check")
+        send("SpeedCap only — nav_type should be unchanged", {"Id": "SpeedCap", "Cmd": [1.0]})
+        await ui.map.Navigation_Receiver({"Id": "SpeedCap", "Cmd": [1.0]})
+        result("nav_cmd_type (expect Orient)", f"{ui.robot.nav_cmd_type}")
+        await asyncio.sleep(1.5)
+
         print(f"\n  ✓ Loop {loop_count} complete — restarting in 3s\n")
         await asyncio.sleep(3.0)
 
@@ -218,7 +249,7 @@ async def fake_vision(ui: CDSControlServer):
 
 
 async def fake_navigation(ui: CDSControlServer):
-    """Navigation Move/Orient/SpeedCap cycling every 8s."""
+    """Navigation Move/Orient/SpeedCap cycling every 3s."""
     targets = [
         {"Id": "Move",     "Cmd": [60.0, 60.0, 0.0]},
         {"Id": "Orient",   "Cmd": [60.0, 60.0, 1.57]},
@@ -228,7 +259,7 @@ async def fake_navigation(ui: CDSControlServer):
     ]
     i = 0
     while True:
-        await asyncio.sleep(8.0)
+        await asyncio.sleep(3.0)
         t = targets[i % len(targets)]
         print(f"[FAKE NAV]    Navigation_Receiver → {t}")
         await ui.map.Navigation_Receiver(t)
@@ -305,29 +336,32 @@ def _make_solid_jpeg(r: int, g: int, b: int) -> bytes:
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 async def main():
-    drivetrain_pub = AsyncPublisher()
-    canine_pub     = AsyncPublisher()
-    macrostate_pub = AsyncPublisher()
+    drivetrain_pub  = AsyncPublisher()
+    canine_pub      = AsyncPublisher()
+    macrostate_pub  = AsyncPublisher()
+    navigation_pub  = AsyncPublisher()
 
     async def log_drivetrain(d):  print(f"  [DRIVETRAIN]  {d}")
     async def log_canine(d):      print(f"  [CANINE]      {d}")
     async def log_macrostate(d):  print(f"  [MACROSTATE]  {d}")
+    async def log_navigation(d):  print(f"  [NAVIGATION]  {d}")
 
     drivetrain_pub.subscribe(log_drivetrain)
     canine_pub.subscribe(log_canine)
     macrostate_pub.subscribe(log_macrostate)
+    navigation_pub.subscribe(log_navigation)
 
-    ui = CDSControlServer(drivetrain_pub, canine_pub, macrostate_pub)
+    ui = CDSControlServer(drivetrain_pub, canine_pub, macrostate_pub, navigation_pub)
 
     await asyncio.gather(
         ui.serve(),
-        fake_sensors(ui),
-        fake_vision(ui),
-        fake_navigation(ui),
-        fake_macrostate(ui),
-        fake_canine(ui),
-        fake_video(ui),
-        button_sequence(ui),
+        # fake_sensors(ui),
+        # fake_vision(ui),
+        # fake_navigation(ui),
+        # fake_macrostate(ui),
+        # fake_canine(ui),
+        # fake_video(ui),
+        # button_sequence(ui),
     )
 
 

@@ -48,6 +48,7 @@
     <div class="ph">
       <div class="ph-title">Zone Map</div>
       <div class="ph-sub" id="map-sub">UKF FUSED &nbsp;·&nbsp; 10 HZ</div>
+      <button class="btn" id="goto-btn" onclick="sendWaypointMove()" disabled>Click waypoint</button>
     </div>
     <div class="pbody" style="padding:0; position:relative; overflow:hidden;">
       <canvas id="map-canvas"></canvas>
@@ -83,8 +84,8 @@
 
       <div class="drow">
         <div class="db">
-          <div class="dl">System State</div>
-          <div class="dv"><span class="v w" id="sys-state">—</span></div>
+          <div class="dl">Nav Command</div>
+          <div class="dv"><span class="v w" id="nav-cmd-type">IDLE</span></div>
         </div>
         <div class="db">
           <div class="dl">Current Destination</div>

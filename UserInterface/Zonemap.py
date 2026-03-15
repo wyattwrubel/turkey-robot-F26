@@ -1,24 +1,23 @@
 """
-PanelMap.py — Zone Map
+zonemap.py — Zone Map
 
 Owns everything related to the zone map panel:
-  - Loading the occupancy grid CSV at startup
+  - Loading the occupancy grid from Zone.csv at startup
+  - Loading waypoints from Waypoints.csv at startup
   - Receiving Navigation channel messages (Move/Orient/SpeedCap)
-    and updating robot target + speed limit in shared state
-  - Sending the obstacle list and grid dimensions to newly connected clients
+  - Sending obstacles, waypoints, and grid dimensions to new clients
 
 Inbound receiver (subscribe in main.py):
     navigation_pub.subscribe(ui.map.Navigation_Receiver)
 
-CSV format — occupancy grid:
-    Row 0 (header):  blank, 0, 1, 2, ... N   ← column X indices
-    Rows 1+:         Y, cell, cell, ...       ← row Y index, 1=wall blank=free
+Zone.csv format — occupancy grid:
+    Row 0 (header):  blank, 0, 1, 2, ... N
+    Rows 1+:         Y, cell, ...   (1=wall, blank=free)
 
-    Example (5×3 grid):
-      ,0,1,2,3,4
-      0,1,1,1,1,1
-      1,1,,,1,
-      2,1,1,1,1,1
+Waypoints.csv format — one waypoint per row:
+    label, x, y
+    WP1, 20.0, 15.0
+    WP2, 45.0, 30.0
 """
 
 import csv
@@ -30,16 +29,22 @@ from fastapi import WebSocket
 
 from Robot import Robot
 
+
 class PanelMap:
-    def __init__(self, csv_path: Path, robot: Robot):
-        self._robot         = robot
-        self._csv_path      = csv_path
+
+    def __init__(self, csv_path: Path, waypoints_path: Path, robot: Robot):
+        self._robot             = robot
+        self._csv_path          = csv_path
+        self._waypoints_path    = waypoints_path
         self._obstacles:  list[dict] = []
+        self._waypoints:  list[dict] = []
         self._map_w: int  = 100
         self._map_h: int  = 100
         self._load_csv()
+        self._load_waypoints()
 
     # ── CSV loader ────────────────────────────────────────────────────────────
+
     def _load_csv(self) -> None:
         if not self._csv_path.exists():
             print(f"[MAP] {self._csv_path} not found — map will be empty")
@@ -80,7 +85,30 @@ class PanelMap:
         print(f"[MAP] Loaded {len(walls)} wall cells  "
               f"(grid {self._map_w} × {self._map_h})")
 
+    def _load_waypoints(self) -> None:
+        if not self._waypoints_path.exists():
+            print(f"[MAP] {self._waypoints_path} not found — no waypoints")
+            return
+
+        waypoints = []
+        with open(self._waypoints_path, newline="") as f:
+            for row in csv.reader(f):
+                row = [c.strip() for c in row]
+                if not row or row[0].startswith("#"):
+                    continue
+                try:
+                    label = row[0]
+                    x     = float(row[1])
+                    y     = float(row[2])
+                    waypoints.append({"label": label, "x": x, "y": y})
+                except (ValueError, IndexError):
+                    continue
+
+        self._waypoints = waypoints
+        print(f"[MAP] Loaded {len(waypoints)} waypoints")
+
     # ── Inbound receiver ──────────────────────────────────────────────────────
+
     async def Navigation_Receiver(self, data: dict) -> None:
         """
         Navigation channel — Move, Orient, SpeedCap.
@@ -92,21 +120,26 @@ class PanelMap:
         cmd    = np.asarray(data.get("Cmd", [0, 0, 0]), dtype=float).flatten()
         msg_id = data.get("Id", "")
 
-        if msg_id == "Move" and cmd.size >= 3:
-            self._robot.set_target(cmd[0], cmd[1], cmd[2])
+        # In manual mode the UI owns the target — ignore Move/Orient from system
+        if msg_id == "Move" and cmd.size >= 2:
+            if not self._robot.ui_locked:
+                self._robot.set_target(cmd[0], cmd[1], theta=0.0, nav_type="Move")
 
         elif msg_id == "Orient" and cmd.size >= 3:
-            self._robot.set_target(cmd[0], cmd[1], cmd[2])
+            if not self._robot.ui_locked:
+                self._robot.set_target(cmd[0], cmd[1], cmd[2], nav_type="Orient")
 
         elif msg_id == "SpeedCap" and cmd.size >= 1:
             self._robot.set_speed(float(cmd[0]))
 
     # ── On-connect sync ───────────────────────────────────────────────────────
+
     async def sync_client(self, ws: WebSocket) -> None:
         """Send obstacle list and grid dimensions to a newly connected client."""
         await ws.send_text(json.dumps({
             "type":      "map_obstacles",
             "obstacles": self._obstacles,
+            "waypoints": self._waypoints,
             "map_w":     self._map_w,
             "map_h":     self._map_h,
         }))

@@ -9,7 +9,7 @@ class CanineDriver:
     
     UI_lock = False
 
-    def __init__(self, Verbose):
+    def __init__(self, Verbose=False):
         self.Audio = AudioDriver.AsyncAudioDriver()
         self.PoseDriver = PoseDriver.PoseDriver(Verbose)
 

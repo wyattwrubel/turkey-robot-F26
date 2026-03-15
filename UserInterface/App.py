@@ -65,19 +65,27 @@ from Diagnostics import PanelDiagnostics
 from Controls    import PanelControls
 
 STATIC_DIR = Path(__file__).parent / "Website"
-MAP_CSV    = Path("/home/turkeysquad/ME450/MainDesign/Navigation/Zone.csv")
+MAP_CSV       = Path("/home/turkeysquad/ME450/MainDesign/Navigation/Zone.csv")
+WAYPOINTS_CSV = Path("/home/turkeysquad/ME450/MainDesign/Navigation/Waypoints.csv")
+
 
 class CDSControlServer:
 
-    def __init__(self, drivetrain_publisher, canine_publisher, macrostate_publisher):
+    def __init__(self, drivetrain_publisher, canine_publisher, macrostate_publisher, navigation_publisher):
         # ── Shared state ───────────────────────────────────────────────────────
         self.robot = Robot()
 
         # ── Panel modules ──────────────────────────────────────────────────────
         self.camera      = PanelCamera()
-        self.map         = PanelMap(MAP_CSV, self.robot)
+        self.map         = PanelMap(MAP_CSV, WAYPOINTS_CSV, self.robot)
         self.diagnostics = PanelDiagnostics(self.robot)
-        self.controls    = PanelControls(self.robot, drivetrain_publisher, canine_publisher, macrostate_publisher)
+        self.controls    = PanelControls(
+            self.robot,
+            drivetrain_publisher,
+            canine_publisher,
+            macrostate_publisher,
+            navigation_publisher,
+        )
 
         # ── WebSocket connections ──────────────────────────────────────────────
         self.connections: list[WebSocket] = []
@@ -85,6 +93,7 @@ class CDSControlServer:
         self.app = self._build_app()
 
     # ── Broadcast helper (passed into panels that need to push directly) ──────
+
     async def _broadcast(self, msg: dict) -> None:
         """Serialize and send a dict to every connected browser client."""
         text = json.dumps(msg)
@@ -100,6 +109,7 @@ class CDSControlServer:
     # ── Receiver shims ────────────────────────────────────────────────────────
     # Panels that need to broadcast require _broadcast passed in.
     # These thin wrappers keep the subscribe() calls in main.py clean.
+
     async def VisionObject_Receiver(self, data: dict) -> None:
         await self.diagnostics.VisionObject_Receiver(data, self._broadcast)
 
@@ -107,6 +117,7 @@ class CDSControlServer:
         await self.camera.VideoFeed_Receiver(data, self._broadcast)
 
     # ── 10 Hz state broadcast ─────────────────────────────────────────────────
+
     async def _broadcast_state(self) -> None:
         while True:
             await asyncio.sleep(0.1)
@@ -115,6 +126,7 @@ class CDSControlServer:
                 await self._broadcast(self.robot.to_state_msg())
 
     # ── Serve ─────────────────────────────────────────────────────────────────
+
     async def serve(self) -> None:
         """Drop into asyncio.gather() to start the server."""
         config = uvicorn.Config(self.app, host="0.0.0.0", port=8000,
@@ -122,6 +134,7 @@ class CDSControlServer:
         await uvicorn.Server(config).serve()
 
     # ── App builder ───────────────────────────────────────────────────────────
+
     def _build_app(self) -> FastAPI:
 
         @asynccontextmanager
@@ -157,6 +170,11 @@ class CDSControlServer:
             await self.controls.sync_client(ws)
             await self.map.sync_client(ws)
             await self.camera.sync_client(ws)
+            # Send manual mode state so browser restores correctly after refresh
+            await ws.send_text(json.dumps({
+                "type":      "mode_state",
+                "is_manual": self.robot.ui_locked,
+            }))
 
             try:
                 while True:

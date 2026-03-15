@@ -15,7 +15,8 @@ class TrajectoryTracker:
     Map = MapUpdater.Map()
     MPC = MovementExecutor.MPC_loop()
 
-    def __init__(self, Verbose=False):
+    def __init__(self, DriveTrainPub, Verbose=False):
+        self.DriveTrainPub = DriveTrainPub
         self.Verbose = Verbose
 
     # From vision: dynamic objects in field of view
@@ -80,16 +81,16 @@ class TrajectoryTracker:
            print(f"Bad Trajectory Command ID Received: 'Id' key missing in {data}")
 
         if(input_id == "Orient"):
-            self.Orient_CMD_Receiver(data)
+            self._Orient_CMD_Receiver(data)
         elif(input_id == "Move"):
-            self.Move_CMD_Receiver(data)
+            self._Move_CMD_Receiver(data)
         elif(input_id == "SpeedCap"):
-            self.SpeedCap_CMD_Receiver(data)
+            self._SpeedCap_CMD_Receiver(data)
         else:
             print(f"Bad Trajectory Command ID Received: {input_id}")
 
     # Used to Traverse Zone For Chase Routines
-    def Move_CMD_Receiver(self, data):
+    def _Move_CMD_Receiver(self, data):
         try: 
             input_cmd = data["Cmd"]
         except KeyError:
@@ -116,7 +117,7 @@ class TrajectoryTracker:
             print(trajectory)
 
     # Used to Max Fine Adjustments For Rotation and Alert Routines
-    def Orient_CMD_Receiver(self, data):    
+    def _Orient_CMD_Receiver(self, data):    
         try: 
             input_cmd = data["Cmd"]
         except KeyError:
@@ -125,7 +126,7 @@ class TrajectoryTracker:
         self.MPC.Orient_CMD_Receiver(input_cmd)
 
     # Regulates Maximum Speed Traversed By The Robot
-    def SpeedCap_CMD_Receiver(self, data):
+    def _SpeedCap_CMD_Receiver(self, data):
         try: 
             input_cmd = data["Cmd"]
         except KeyError:

@@ -23,7 +23,7 @@ class PoseDriver():
         self.servos["FrontRight"] = SC.ServoController("FrontRight", "Leg", self.Front_Right_Pin, True)
         self.servos["RearLeft"] = SC.ServoController("RearLeft", "Leg", self.Rear_Left_Pin, True)
         self.servos["RearRight"] = SC.ServoController("RearRight", "Leg", self.Rear_Right_Pin, True)
-        self.servos["Head"] = SC.ServoController("Head", "Head", self.Front_Left_Pin, True)
+        self.servos["Head"] = SC.ServoController("Head", "Head", self.Head_Pin, True)
 
     async def CanineMotor_Receiver(self, data):
         if data["Type"] == "Servo":

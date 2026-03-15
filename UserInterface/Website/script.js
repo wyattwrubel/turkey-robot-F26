@@ -21,13 +21,15 @@ const AUDIO_DEFS = [
 // ═══════════════════════════════════════════════
 let ws       = null
 let wsReady  = false
-let isManual = false
+let isManual = localStorage.getItem('isManual') === 'true'
 let isStopped= false
 
 // Map state
 let mapTurkeys   = []  // [[x, y], ...]  extracted from T×3 vision array
 let mapHumans    = []  // [[x, y], ...]  extracted from P×3 vision array
 let mapObstacles = []  // [{x, y, type}, ...] from server on connect
+let mapWaypoints      = []   // [{label, x, y}, ...] from server on connect
+let selectedWaypoint  = null  // {label, x, y} — clicked on map, pending Go To
 let mapRobot     = { x: 0, y: 0, theta: 0 }
 
 // Camera state — single <img> element, updated on each frame message
@@ -71,6 +73,8 @@ function buildAudio() {
 // ═══════════════════════════════════════════════
 function connect() {
   ws = new WebSocket('ws://localhost:8000/ws')
+  // ws = new WebSocket('ws://192.168.4.2:8000/ws')
+  
   ws.onopen    = ()  => { wsReady = true }
   ws.onclose   = ()  => { wsReady = false; setTimeout(connect, 1500) }
   ws.onmessage = (e) => {
@@ -101,9 +105,26 @@ function handle(m) {
     set('ukf-x', fmt(m.x, 2))
     set('ukf-y', fmt(m.y, 2))
     set('ukf-t', deg(m.theta))
-    if (m.x != null) mapRobot = { x: m.x, y: m.y, theta: m.theta ?? 0 }
+    if (m.x != null) mapRobot = { x: m.x, y: m.y, theta: m.theta ?? 0, targetX: m.target?.x, targetY: m.target?.y }
 
     // ── Always update — read-only sensor displays ──────────────
+
+    // Nav command type
+    {
+      const nc  = m.nav_cmd_type ?? null
+      const el  = document.getElementById('nav-cmd-type')
+      const det = document.getElementById('nav-cmd-detail')
+      if (el) {
+        if      (nc === 'Move')   { el.textContent = 'MOVE';   el.className = 'v ok' }
+        else if (nc === 'Orient') { el.textContent = 'ORIENT'; el.className = 'v w'  }
+        else                      { el.textContent = 'IDLE';   el.className = 'v'    }
+      }
+      if (det && m.target != null) {
+        if      (nc === 'Move')   det.textContent = `→ (${fmt(m.target.x,2)}, ${fmt(m.target.y,2)}) m`
+        else if (nc === 'Orient') det.textContent = `→ (${fmt(m.target.x,2)}, ${fmt(m.target.y,2)}) m  θ=${deg(m.target.theta)}°`
+        else                      det.textContent = '—'
+      }
+    }
 
     // Current destination
     if (m.target != null) {
@@ -119,15 +140,8 @@ function handle(m) {
     // ── Blocked in manual mode — server must not override user inputs ──
     if (!isManual) {
 
-      // MacroState
-      const ss   = m.macrostate ?? null
-      const ssEl = document.getElementById('sys-state')
-      if (ssEl) {
-        if      (ss === 'Chase')    { ssEl.textContent = 'CHASE';    ssEl.className = 'v d' }
-        else if (ss === 'Alert')    { ssEl.textContent = 'ALERT';    ssEl.className = 'v d' }
-        else if (ss === 'Scanning') { ssEl.textContent = 'SCANNING'; ssEl.className = 'v w' }
-        else                        { ssEl.textContent = '—';        ssEl.className = 'v'   }
-      }
+      // MacroState button highlights
+      const ss = m.macrostate ?? null
       document.querySelectorAll('.macrostate-g .btn').forEach(b => {
         b.classList.toggle('lit', b.dataset.state === ss)
       })
@@ -178,11 +192,20 @@ function handle(m) {
   // ── Map obstacles (sent once on connect) ──────────────────
   if (m.type === 'map_obstacles') {
     mapObstacles = m.obstacles ?? []
-    // Resize map canvas to match actual grid dimensions from server
+    mapWaypoints = m.waypoints ?? []
     if (m.map_w) MAP_W = m.map_w
     if (m.map_h) MAP_H = m.map_h
     const sub = document.getElementById('map-sub')
     if (sub) sub.textContent = `${MAP_W} × ${MAP_H} M · 10 HZ`
+  }
+
+  // ── Mode state (synced on connect after page refresh) ───────
+  if (m.type === 'mode_state') {
+    // Only apply if it differs — avoids stomping a mid-session toggle
+    if (m.is_manual !== isManual) {
+      isManual = m.is_manual
+      _applyModeUI()
+    }
   }
 
   // ── Vision detections ─────────────────────────────────────
@@ -340,24 +363,31 @@ function resetEStop() {
 // ═══════════════════════════════════════════════
 function toggleMode() {
   isManual = !isManual
-  document.getElementById('mode-badge').textContent = isManual ? 'MANUAL' : 'AUTO'
-  document.getElementById('mode-badge').className   = isManual ? 'mode-badge manual' : 'mode-badge'
-  document.getElementById('mode-btn').textContent   = isManual ? '⇄ SWITCH TO AUTO' : '⇄ SWITCH TO MANUAL'
-  document.getElementById('mode-btn').className     = isManual ? 'modetog m' : 'modetog'
-  document.getElementById('ctrl-tag').textContent   = isManual ? 'MODE: MANUAL — INPUTS ACTIVE' : 'MODE: AUTO — INPUTS LOCKED'
-  applyModeToControls()
+  localStorage.setItem('isManual', isManual)
+  _applyModeUI()
   if (!isManual) {
     // Release all drive keys visually
     Object.keys(WASD_DRIVE_BTNS).forEach(k => {
       document.getElementById('key-' + k)?.classList.remove('pressed')
       document.getElementById(WASD_DRIVE_BTNS[k])?.classList.remove('lit')
     })
-    // Send UnlockUI to all three protocol channels
     send({ type: 'unlock_ui' })
+  } else {
+    send({ type: 'lock_ui' })
   }
 }
 
+function _applyModeUI() {
+  document.getElementById('mode-badge').textContent = isManual ? 'MANUAL' : 'AUTO'
+  document.getElementById('mode-badge').className   = isManual ? 'mode-badge manual' : 'mode-badge'
+  document.getElementById('mode-btn').textContent   = isManual ? '⇄ SWITCH TO AUTO' : '⇄ SWITCH TO MANUAL'
+  document.getElementById('mode-btn').className     = isManual ? 'modetog m' : 'modetog'
+  document.getElementById('ctrl-tag').textContent   = isManual ? 'MODE: MANUAL — INPUTS ACTIVE' : 'MODE: AUTO — INPUTS LOCKED'
+  applyModeToControls()
+}
+
 function applyModeToControls() {
+  _updateGoToBtn()
   const locked = !isManual
 
   // Visual lock — dims sections and blocks pointer events via CSS class
@@ -394,7 +424,7 @@ function flash(el, duration=1200)  {
 buildServos()
 buildAudio()
 updateSliderBg(document.getElementById('spd-range'))
-applyModeToControls()   // start locked in auto mode
+_applyModeUI()   // restore mode from localStorage on page load
 connect()
 requestAnimationFrame(initMap)
 
@@ -434,10 +464,13 @@ function initMap() {
     _clampPan()
   }, { passive: false })
 
-  // ── Pan — mouse ──────────────────────────────────────────────
+  // ── Pan + waypoint click ────────────────────────────────────
+  let _mouseDownPos = { x: 0, y: 0 }
+
   canvas.addEventListener('mousedown', e => {
-    _dragActive = true
-    _dragLast   = { x: e.clientX, y: e.clientY }
+    _dragActive   = true
+    _dragLast     = { x: e.clientX, y: e.clientY }
+    _mouseDownPos = { x: e.clientX, y: e.clientY }
     canvas.style.cursor = 'grabbing'
   })
   window.addEventListener('mousemove', e => {
@@ -447,12 +480,62 @@ function initMap() {
     _dragLast = { x: e.clientX, y: e.clientY }
     _clampPan()
   })
-  window.addEventListener('mouseup', () => {
+  window.addEventListener('mouseup', e => {
     _dragActive = false
     canvas.style.cursor = 'crosshair'
+
+    // Only treat as a click if the mouse barely moved (not a pan)
+    const dx = e.clientX - _mouseDownPos.x
+    const dy = e.clientY - _mouseDownPos.y
+    if (Math.sqrt(dx*dx + dy*dy) > 5) return
+
+    // Convert screen coords to world coords
+    const rect = canvas.getBoundingClientRect()
+    const cx   = e.clientX - rect.left
+    const cy   = e.clientY - rect.top
+    const wx   = (cx - (rect.width  / 2 - MAP_W * _lastS / 2) + mapPanX * _lastS) / _lastS
+    const wy   = (cy - (rect.height / 2 - MAP_H * _lastS / 2) + mapPanY * _lastS) / _lastS
+
+    // Hit-test waypoints — pick closest within 4 world units
+    const HIT_R = 2.5
+    let best = null, bestDist = HIT_R
+    mapWaypoints.forEach(wp => {
+      const d = Math.sqrt((wp.x - wx)**2 + (wp.y - wy)**2)
+      if (d < bestDist) { bestDist = d; best = wp }
+    })
+
+    if (best && isManual) {
+      selectedWaypoint = (selectedWaypoint?.label === best.label) ? null : best
+      _updateGoToBtn()
+    }
   })
 
   ;(function loop() { drawMap(canvas); requestAnimationFrame(loop) })()
+}
+
+function _updateGoToBtn() {
+  const btn = document.getElementById('goto-btn')
+  if (!btn) return
+  if (selectedWaypoint && isManual) {
+    btn.textContent  = `⊕ Go To ${selectedWaypoint.label}`
+    btn.disabled     = false
+    btn.className    = 'btn ac'
+  } else if (selectedWaypoint) {
+    btn.textContent  = `${selectedWaypoint.label} selected`
+    btn.disabled     = true
+    btn.className    = 'btn'
+  } else {
+    btn.textContent  = 'Click waypoint'
+    btn.disabled     = true
+    btn.className    = 'btn'
+  }
+}
+
+function sendWaypointMove() {
+  if (!selectedWaypoint || !isManual) return
+  send({ type: 'waypoint_move', x: selectedWaypoint.x, y: selectedWaypoint.y, label: selectedWaypoint.label })
+  selectedWaypoint = null
+  _updateGoToBtn()
 }
 
 function _clampPan() {
@@ -583,6 +666,49 @@ function drawMap(canvas) {
   mapHumans.forEach((hm, i) =>
     drawDetectionBox(hm[0], hm[1], 'rgba(255,30,60,ALPHA)', `HUMAN-${i+1}`, 1.5, 1.5, i + 100))
 
+  // ── Waypoints ─────────────────────────────────────────────
+  mapWaypoints.forEach(wp => {
+    const [px, py]   = proj(wp.x, wp.y)
+    const isActive   = mapRobot && Math.abs(wp.x - (mapRobot.targetX ?? -999)) < 0.5
+                                 && Math.abs(wp.y - (mapRobot.targetY ?? -999)) < 0.5
+    const isSelected = selectedWaypoint?.label === wp.label
+    const col  = isActive   ? 'rgba(255,200,0,0.95)'
+               : isSelected ? 'rgba(0,212,255,0.95)'
+               :               'rgba(255,200,0,0.55)'
+    const glow = (isActive || isSelected) ? 10 : 4
+    const r    = (isActive || isSelected) ? 7  : 5
+
+    // Selection ring
+    if (isSelected) {
+      ctx.strokeStyle = 'rgba(0,212,255,0.6)'
+      ctx.lineWidth   = 1
+      ctx.shadowColor = 'rgba(0,212,255,1)'; ctx.shadowBlur = 12
+      ctx.beginPath(); ctx.arc(px, py, r + 6, 0, Math.PI * 2); ctx.stroke()
+      ctx.shadowBlur  = 0
+    }
+
+    // Diamond
+    ctx.save()
+    ctx.translate(px, py)
+    ctx.rotate(Math.PI / 4)
+    ctx.fillStyle   = isActive ? 'rgba(255,200,0,0.25)' : 'rgba(255,200,0,0.1)'
+    ctx.strokeStyle = col
+    ctx.lineWidth   = isActive ? 2 : 1.5
+    ctx.shadowColor = 'rgba(255,200,0,1)'; ctx.shadowBlur = glow
+    ctx.beginPath(); ctx.rect(-r, -r, r * 2, r * 2)
+    ctx.fill(); ctx.stroke()
+    ctx.shadowBlur = 0
+    ctx.restore()
+
+    // Label
+    ctx.fillStyle   = col
+    ctx.font        = `${isActive ? 'bold ' : ''}8px Courier New`
+    ctx.textAlign   = 'center'
+    ctx.shadowColor = 'rgba(255,200,0,1)'; ctx.shadowBlur = glow
+    ctx.fillText(wp.label, px, py - r - 5)
+    ctx.shadowBlur  = 0
+  })
+
   // ── Robot ─────────────────────────────────────────────────
   const [rpx, rpy] = proj(mapRobot.x, mapRobot.y)
   const rth        = mapRobot.theta ?? 0
@@ -633,6 +759,7 @@ function drawMap(canvas) {
     ['rgba(255,120,0,0.9)', '▣', 'Turkey'],
     ['rgba(255,30,60,0.9)', '▣', 'Human'],
     ['rgba(0,212,255,0.9)', '▶', 'Robot'],
+    ['rgba(255,200,0,0.8)', '◆', 'Waypoint'],
     ['rgba(0,212,255,0.45)','—', 'Wall'],
   ]
   legend.forEach(([col, sym, lbl], i) => {
