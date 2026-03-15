@@ -35,7 +35,7 @@ import io
 import math
 import random
 
-from app import CDSControlServer
+from App import CDSControlServer
 
 
 # ── AsyncPublisher ────────────────────────────────────────────────────────────
@@ -93,7 +93,7 @@ async def button_sequence(ui: CDSControlServer):
         for spd in [0.5, 1.5, 3.0, 1.5]:
             msg = {"type": "speed_limit", "speed": spd}
             send(f"speed={spd}", msg)
-            await ui._handle_ui_message(msg)
+            await ui.controls.handle_ui_message(msg)
             result(f"speed_limit", f"{ui.robot.speed_limit} m/s")
             await asyncio.sleep(1.5)
 
@@ -105,12 +105,12 @@ async def button_sequence(ui: CDSControlServer):
             msg_release = {"type": "key_command", "key": key, "state": "release"}
 
             send(f"{label} PRESS  (key={key})", msg_press)
-            await ui._handle_ui_message(msg_press)
+            await ui.controls.handle_ui_message(msg_press)
             result("motors", f"L={ui.robot.cmd_left:.3f}  R={ui.robot.cmd_right:.3f}")
             await asyncio.sleep(1.5)
 
             send(f"{label} RELEASE (key={key})", msg_release)
-            await ui._handle_ui_message(msg_release)
+            await ui.controls.handle_ui_message(msg_release)
             result("motors", f"L={ui.robot.cmd_left:.3f}  R={ui.robot.cmd_right:.3f}")
             await asyncio.sleep(1.0)
 
@@ -118,30 +118,30 @@ async def button_sequence(ui: CDSControlServer):
         section("E-Stop")
         msg = {"type": "key_command", "key": "w", "state": "press"}
         send("drive forward first", msg)
-        await ui._handle_ui_message(msg)
+        await ui.controls.handle_ui_message(msg)
         result("motors before estop", f"L={ui.robot.cmd_left:.3f}  R={ui.robot.cmd_right:.3f}")
         await asyncio.sleep(1.0)
 
         msg = {"type": "estop"}
         send("ESTOP ENGAGE", msg)
-        await ui._handle_ui_message(msg)
-        result("motors after estop", f"L={ui.robot.cmd_left:.3f}  R={ui.robot.cmd_right:.3f}  estop={ui.robot._estop_active}")
+        await ui.controls.handle_ui_message(msg)
+        result("motors after estop", f"L={ui.robot.cmd_left:.3f}  R={ui.robot.cmd_right:.3f}  estop={ui.robot._estop}")
         await asyncio.sleep(1.5)
 
         msg = {"type": "estop_reset"}
         send("ESTOP RESET", msg)
-        await ui._handle_ui_message(msg)
-        result("estop released", f"estop={ui.robot._estop_active}")
+        await ui.controls.handle_ui_message(msg)
+        result("estop released", f"estop={ui.robot._estop}")
         await asyncio.sleep(1.5)
 
         # ── Drive blocked by estop sanity check ───────────────
         section("Drive blocked by E-Stop (sanity check)")
-        await ui._handle_ui_message({"type": "estop"})
+        await ui.controls.handle_ui_message({"type": "estop"})
         msg = {"type": "key_command", "key": "w", "state": "press"}
         send("drive while estopped", msg)
-        await ui._handle_ui_message(msg)
+        await ui.controls.handle_ui_message(msg)
         result("motors (should be 0)", f"L={ui.robot.cmd_left:.3f}  R={ui.robot.cmd_right:.3f}")
-        await ui._handle_ui_message({"type": "estop_reset"})
+        await ui.controls.handle_ui_message({"type": "estop_reset"})
         await asyncio.sleep(1.5)
 
         # ── Robot Poses ───────────────────────────────────────
@@ -149,7 +149,7 @@ async def button_sequence(ui: CDSControlServer):
         for pose in ["Pose1", "Pose2", "Pose3", "Pose4", "Pose5"]:
             msg = {"type": "pose_command", "pose": pose}
             send(f"pose={pose}", msg)
-            await ui._handle_ui_message(msg)
+            await ui.controls.handle_ui_message(msg)
             result("active_pose", f"{ui.robot.active_pose}")
             await asyncio.sleep(1.5)
 
@@ -160,7 +160,7 @@ async def button_sequence(ui: CDSControlServer):
                               ("Head", 45.0),      ("Head", 0.0)]:
             msg = {"type": "servo_angle", "servo": servo, "angle": angle}
             send(f"{servo}={angle}°", msg)
-            await ui._handle_ui_message(msg)
+            await ui.controls.handle_ui_message(msg)
             result(f"servo[{servo}]", f"{ui.robot.servo_angles[servo]}°")
             await asyncio.sleep(1.5)
 
@@ -169,7 +169,7 @@ async def button_sequence(ui: CDSControlServer):
         for sound in ["BarkShort", "BarkBurst", "Growl", "AggressiveBark"]:
             msg = {"type": "audio_play", "sound": sound}
             send(f"sound={sound}", msg)
-            await ui._handle_ui_message(msg)
+            await ui.controls.handle_ui_message(msg)
             result("active_audio", f"{ui.robot.active_audio}")
             await asyncio.sleep(1.5)
 
@@ -178,7 +178,7 @@ async def button_sequence(ui: CDSControlServer):
         for state in ["Chase", "Alert", "Scan"]:
             msg = {"type": "macrostate_command", "state": state}
             send(f"state={state}", msg)
-            await ui._handle_ui_message(msg)
+            await ui.controls.handle_ui_message(msg)
             result("sys_state", f"{ui.robot.sys_state}")
             await asyncio.sleep(1.5)
 
@@ -198,10 +198,10 @@ async def fake_sensors(ui: CDSControlServer):
         x     = cx + r * math.cos(w * t)
         y     = cy + r * math.sin(w * t)
         theta = w * t + math.pi / 2
-        await ui.RobotPose_Receiver([x, y, theta])
-        await ui.UWB_Sensors_Receiver([x + random.gauss(0, 0.05),
+        await ui.diagnostics.RobotPose_Receiver([x, y, theta])
+        await ui.diagnostics.UWB_Sensors_Receiver([x + random.gauss(0, 0.05),
                                         y + random.gauss(0, 0.05)])
-        await ui.Accelerometer_Receiver([theta + random.gauss(0, 0.01)])
+        await ui.diagnostics.Accelerometer_Receiver([theta + random.gauss(0, 0.01)])
 
 
 async def fake_vision(ui: CDSControlServer):
@@ -231,7 +231,7 @@ async def fake_navigation(ui: CDSControlServer):
         await asyncio.sleep(8.0)
         t = targets[i % len(targets)]
         print(f"[FAKE NAV]    Navigation_Receiver → {t}")
-        await ui.Navigation_Receiver(t)
+        await ui.map.Navigation_Receiver(t)
         i += 1
 
 
@@ -243,7 +243,7 @@ async def fake_macrostate(ui: CDSControlServer):
         await asyncio.sleep(12.0)
         s = states[i % len(states)]
         print(f"[FAKE STATE]  MacroState_Receiver → {s}")
-        await ui.MacroState_Receiver(s)
+        await ui.diagnostics.MacroState_Receiver(s)
         i += 1
 
 
@@ -255,16 +255,16 @@ async def fake_canine(ui: CDSControlServer):
         if choice == 0:
             pose = random.choice(["Pose1", "Pose2", "Pose3", "Pose4", "Pose5"])
             print(f"[FAKE CANINE] Canine_Receiver → Pose={pose}")
-            await ui.Canine_Receiver({"Id": "System", "Type": "Pose", "Data": pose})
+            await ui.controls.Canine_Receiver({"Id": "System", "Type": "Pose", "Data": pose})
         elif choice == 1:
             servo = random.choice(["FrontLeft", "FrontRight", "RearLeft", "RearRight", "Head"])
             angle = round(random.uniform(-30, 30), 1)
             print(f"[FAKE CANINE] Canine_Receiver → Servo {servo}={angle}°")
-            await ui.Canine_Receiver({"Id": "System", "Type": "Servo", "Name": servo, "Data": angle})
+            await ui.controls.Canine_Receiver({"Id": "System", "Type": "Servo", "Name": servo, "Data": angle})
         else:
             audio = random.choice(["BarkShort", "BarkBurst", "Growl", "AggressiveBark"])
             print(f"[FAKE CANINE] Canine_Receiver → Audio={audio}")
-            await ui.Canine_Receiver({"Id": "System", "Type": "Audio", "Data": audio})
+            await ui.controls.Canine_Receiver({"Id": "System", "Type": "Audio", "Data": audio})
 
 
 async def fake_video(ui: CDSControlServer):
