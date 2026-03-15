@@ -27,7 +27,6 @@ class PanelDiagnostics:
         self._robot = robot
 
     # ── Inbound receivers ─────────────────────────────────────────────────────
-
     async def RobotPose_Receiver(self, data) -> None:
         """
         Fused pose estimate.
@@ -62,13 +61,11 @@ class PanelDiagnostics:
           Id="Scan"     → sys_state = "Scanning"
           Id="Chase"    → sys_state = "Chase"
           Id="Alert"    → sys_state = "Alert"
-          Id="UnlockUI" → sys_state = "Scanning"  (auto mode restored)
         """
         mapping = {
             "Scan":     "Scanning",
             "Chase":    "Chase",
             "Alert":    "Alert",
-            "UnlockUI": "Scanning",
         }
         state = mapping.get(data.get("Id", ""))
         if state:

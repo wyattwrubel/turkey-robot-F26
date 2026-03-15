@@ -17,14 +17,12 @@ import json
 
 from fastapi import WebSocket
 
-
 class PanelCamera:
 
     def __init__(self):
         self._current_frame: str | None = None   # latest base64 JPEG
 
     # ── Inbound receiver ──────────────────────────────────────────────────────
-
     async def VideoFeed_Receiver(self, data, broadcast_fn) -> None:
         """
         Accepts either raw JPEG bytes or an already-base64-encoded string.
@@ -41,7 +39,6 @@ class PanelCamera:
         await broadcast_fn({"type": "frame", "image": b64})
 
     # ── On-connect sync ───────────────────────────────────────────────────────
-
     async def sync_client(self, ws: WebSocket) -> None:
         """Send the latest frame to a newly connected client, if one exists."""
         if self._current_frame:

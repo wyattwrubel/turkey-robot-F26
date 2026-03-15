@@ -120,6 +120,11 @@ class PanelControls:
         elif msg_type == "estop_reset":
             self._robot.estop_release()
 
+        elif msg_type == "unlock_ui":
+            await self._drivetrain_pub.publish({"Id": "UnlockUI"})
+            await self._canine_pub.publish({"Id": "UnlockUI"})
+            await self._macrostate_pub.publish({"Id": "UnlockUI"})
+
     async def _handle_key_command(self, data: dict) -> None:
         """
         Drive key press/release from the browser.

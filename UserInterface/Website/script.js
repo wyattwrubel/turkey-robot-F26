@@ -347,12 +347,13 @@ function toggleMode() {
   document.getElementById('ctrl-tag').textContent   = isManual ? 'MODE: MANUAL — INPUTS ACTIVE' : 'MODE: AUTO — INPUTS LOCKED'
   applyModeToControls()
   if (!isManual) {
-    // Release all drive keys when switching to auto
+    // Release all drive keys visually
     Object.keys(WASD_DRIVE_BTNS).forEach(k => {
       document.getElementById('key-' + k)?.classList.remove('pressed')
       document.getElementById(WASD_DRIVE_BTNS[k])?.classList.remove('lit')
     })
-    send({ type: 'key_command', key: 'all', state: 'release' })
+    // Send UnlockUI to all three protocol channels
+    send({ type: 'unlock_ui' })
   }
 }
 

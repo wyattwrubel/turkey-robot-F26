@@ -15,7 +15,6 @@ All fields written by panel receivers. Read by the 10 Hz broadcast loop.
   active_audio      ← controls.Canine_Receiver / handle_ui_message
 """
 
-
 class Robot:
 
     def __init__(self):
@@ -29,7 +28,7 @@ class Robot:
 
         self.cmd_left      = 0.0
         self.cmd_right     = 0.0
-        self.speed_limit   = 1.5
+        self.speed_limit   = 3
         self._estop        = False
 
         self.sys_state  = "Scanning"

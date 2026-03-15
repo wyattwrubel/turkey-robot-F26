@@ -30,9 +30,7 @@ from fastapi import WebSocket
 
 from Robot import Robot
 
-
 class PanelMap:
-
     def __init__(self, csv_path: Path, robot: Robot):
         self._robot         = robot
         self._csv_path      = csv_path
@@ -42,7 +40,6 @@ class PanelMap:
         self._load_csv()
 
     # ── CSV loader ────────────────────────────────────────────────────────────
-
     def _load_csv(self) -> None:
         if not self._csv_path.exists():
             print(f"[MAP] {self._csv_path} not found — map will be empty")
@@ -84,7 +81,6 @@ class PanelMap:
               f"(grid {self._map_w} × {self._map_h})")
 
     # ── Inbound receiver ──────────────────────────────────────────────────────
-
     async def Navigation_Receiver(self, data: dict) -> None:
         """
         Navigation channel — Move, Orient, SpeedCap.
@@ -96,8 +92,8 @@ class PanelMap:
         cmd    = np.asarray(data.get("Cmd", [0, 0, 0]), dtype=float).flatten()
         msg_id = data.get("Id", "")
 
-        if msg_id == "Move" and cmd.size >= 2:
-            self._robot.set_target(cmd[0], cmd[1], theta=0.0)
+        if msg_id == "Move" and cmd.size >= 3:
+            self._robot.set_target(cmd[0], cmd[1], cmd[2])
 
         elif msg_id == "Orient" and cmd.size >= 3:
             self._robot.set_target(cmd[0], cmd[1], cmd[2])
@@ -106,7 +102,6 @@ class PanelMap:
             self._robot.set_speed(float(cmd[0]))
 
     # ── On-connect sync ───────────────────────────────────────────────────────
-
     async def sync_client(self, ws: WebSocket) -> None:
         """Send obstacle list and grid dimensions to a newly connected client."""
         await ws.send_text(json.dumps({
