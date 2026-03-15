@@ -189,13 +189,13 @@
   .drow { display:grid; grid-template-columns:1fr 1fr; gap:5px; margin-bottom:5px; flex-shrink:0; }
   .db {
     background:var(--bg-raised); border:1px solid var(--border);
-    padding:6px 9px; position:relative; height: 100px
+    padding:6px 9px; position:relative
   }
   .db::before { content:''; position:absolute; top:0; left:0; width:2px; height:100%; background:var(--accent); opacity:.5; }
   .db.wb::before { background:var(--warn); }
   .db.full { grid-column:1/-1; }
-  .dl { font-size:20px; letter-spacing:.14em; color:var(--text-dim); text-transform:uppercase; margin-bottom:3px; }
-  .dv { font-size:18px; color:var(--text-hi); letter-spacing:.05em; margin-top: 15px;}
+  .dl { font-size:18px; letter-spacing:.14em; color:var(--text-dim); text-transform:uppercase; margin-bottom:3px; }
+  .dv { font-size:16px; color:var(--text-hi); letter-spacing:.05em; margin-top: 15px;}
   .dv .v    { color:var(--accent); }
   .dv .v.ok { color:var(--success); }
   .dv .v.w  { color:var(--warn); }
