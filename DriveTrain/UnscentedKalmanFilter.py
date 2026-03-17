@@ -100,8 +100,8 @@ class UKF:
         sp_pred = np.empty_like(sp)
         for i, s in enumerate(sp):
             sp_pred[i, 0] = s[0] + v * np.cos(s[2]) * dt
-            sp_pred[i, 1] = s[1] + v * np.sin(s[2]) * dt
-            sp_pred[i, 2] = self._wrap_angle(s[2] + w * dt)
+            sp_pred[i, 1] = s[1] - v * np.sin(s[2]) * dt
+            sp_pred[i, 2] = self._wrap_angle(s[2] - w * dt)
 
         # Predicted mean (use circular mean for the angle component)
         x_pred = np.dot(self._wm, sp_pred)

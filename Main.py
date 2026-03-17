@@ -40,6 +40,9 @@ from DriveTrain.DriveTrainDriver import MotorDriver
 from Sensors.AccelPublisher import IMUDriver
 from Sensors.UWBPublisher import UWB
 
+
+# TODO REPLACE WITH REAL VISION
+from Vision.SimpleVision import Vision
 # STATE PLANNER IMPORT TODO
 # VISION IMPORT NEEDED TODO
 
@@ -87,11 +90,21 @@ async def main():
     # VISION 
     # STATE PLANNER
 
+    # TODO FAKE VISION
+    vision_pub = AsyncPublisher("Video")
+    vision = Vision(vision_pub)
+
+    # TODO Replace With New Module
+
     # ── Instantiate UI server ──────────────────────────────────────────────────
     UserInterface = CDSControlServer(UI_drivetrain_pub, UI_canine_pub, UI_macrostate_pub, UI_navigation_pub)
 
     # ─────────────────────────────────────────────────────────────────────────
     """Vision Object"""
+    
+    # FAKE VISION TODO
+    vision_pub.subscribe(UserInterface.VideoFeed_Receiver)
+   
     # <VISION>.subscribe(Navigation.VisionObject_Receiver)
     # <VISION>.subscribe(UserInterface.VisionObject_Receiver)
     # <VISION>.subscribe(<STATE PLANNER>)
@@ -134,6 +147,12 @@ async def main():
 
     await asyncio.gather(
         UserInterface.serve(),
+
+        # TODO FAKE VISION
+        vision.run(),
+
+        # SIMULATED MODULES
+        Drivetrain.DriveTrainDriver_Runner(),
 
         # ── FILL IN: add your real module coroutines here ──────────────────
         #
