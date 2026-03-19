@@ -70,7 +70,8 @@ async def main():
     Sensor_uwb_pub        = AsyncPublisher("UWB")       # ── FILL IN: owned by your UWB sensor module
     Sensor_imu_pub        = AsyncPublisher("IMU")       # ── FILL IN: owned by your IMU module
     Navigation_drivetrain_pub     = AsyncPublisher("NavDrivetrain")    # ── FILL IN: owned by your trajectory tracker
-    # Stateplanner_canine_pub  = AsyncPublisher("Canine") # ── FILL IN: owned by your canine driver
+
+    Stateplanner_canine_pub  = AsyncPublisher("Canine") # ── FILL IN: owned by your canine driver
     # Stateplanner_macrostate_pub = AsyncPublisher("MacroState") # ── FILL IN: owned by your state planner
     # VISION 
     # STATE PLANNER

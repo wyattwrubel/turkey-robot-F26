@@ -277,7 +277,6 @@ function sendMacrostate(state, el) {
   el.classList.add('lit')
 }
 
-
 // ═══════════════════════════════════════════════
 // DRIVE CONTROLS
 // Sends key name only — backend decides speed.
