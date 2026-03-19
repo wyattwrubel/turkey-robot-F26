@@ -37,6 +37,15 @@ class PanelDiagnostics:
         if arr.size >= 3:
             self._robot.set_robot_pose(arr[0], arr[1], arr[2])
 
+    async def CanineAngle_Receiver(self, data) -> None:
+        """
+        Reported servo angles from canine driver
+        Name: "FrontLeft", "FrontRight", "RearLeft", "RearRight", "Head"
+        Angle: float (theta)
+        """
+
+        self._robot.set_servo(data["id"], data["angle"])
+
     async def UWB_Sensors_Receiver(self, data) -> None:
         """
         Raw UWB position.

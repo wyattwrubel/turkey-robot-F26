@@ -8,22 +8,23 @@ import asyncio
 
 class PoseDriver():
     # TODO Revise With RPi Wiring
-    Front_Left_Pin = 4
-    Front_Right_Pin = 5
-    Rear_Left_Pin = 6
-    Rear_Right_Pin = 7
-    Head_Pin = 8
+    Front_Left_Pin = 12
+    Front_Right_Pin = 13
+    Rear_Left_Pin = 18
+    Rear_Right_Pin = 19
+    Head_Pin = 24
 
     Default_Angle_Delay = 0.5 # Seconds
  
-    def __init__(self, Verbose):
+    def __init__(self, ServoAnglePublisher, Verbose):
         self.servos = {}
         self.Verbose = Verbose
-        self.servos["FrontLeft"] = SC.ServoController("FrontLeft", "Leg", self.Front_Left_Pin, True)
-        self.servos["FrontRight"] = SC.ServoController("FrontRight", "Leg", self.Front_Right_Pin, True)
-        self.servos["RearLeft"] = SC.ServoController("RearLeft", "Leg", self.Rear_Left_Pin, True)
-        self.servos["RearRight"] = SC.ServoController("RearRight", "Leg", self.Rear_Right_Pin, True)
-        self.servos["Head"] = SC.ServoController("Head", "Head", self.Head_Pin, True)
+        self.servos["FrontLeft"] = SC.ServoController("FrontLeft", "Leg", self.Front_Left_Pin, 0, True)
+        self.servos["FrontRight"] = SC.ServoController("FrontRight", "Leg", self.Front_Right_Pin, 0, True)
+        self.servos["RearLeft"] = SC.ServoController("RearLeft", "Leg", self.Rear_Left_Pin, 0, True)
+        self.servos["RearRight"] = SC.ServoController("RearRight", "Leg", self.Rear_Right_Pin, 0, True)
+        self.servos["Head"] = SC.ServoController("Head", "Head", self.Head_Pin, 0, True)
+        self.ServoAnglePublisher = ServoAnglePublisher
 
     async def CanineMotor_Receiver(self, data):
         if data["Type"] == "Servo":
@@ -32,6 +33,23 @@ class PoseDriver():
             await self._Process_PoseCommands(data)
         else:
             print(f"PoseDriver: Invalid 'Type' in {data}") 
+
+    async def MotorPositions_Runner(self):
+
+        while True:
+            # Broadcasts Angle Positions at 10 HZ
+            for name, servo in self.servos.items():
+                await self.ServoAnglePublisher.publish({
+                    "id": name,
+                    "angle": servo.servo.Current_Angle,
+                })            
+            await asyncio.sleep(0.1)
+
+        # """
+        # Reported servo angles from canine driver
+        # Name: "FrontLeft", "FrontRight", "RearLeft", "RearRight", "Head"
+        # Angle: float (theta)
+        # """
 
     async def _Process_ServoCommands(self, data):
         try:

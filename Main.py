@@ -72,6 +72,9 @@ async def main():
     Navigation_drivetrain_pub     = AsyncPublisher("NavDrivetrain")    # ── FILL IN: owned by your trajectory tracker
 
     Stateplanner_canine_pub  = AsyncPublisher("Canine") # ── FILL IN: owned by your canine driver
+
+    Servoangle_canine_pub = AsyncPublisher("CanineAngles")
+
     # Stateplanner_macrostate_pub = AsyncPublisher("MacroState") # ── FILL IN: owned by your state planner
     # VISION 
     # STATE PLANNER
@@ -87,7 +90,7 @@ async def main():
     UWB_Anchors = UWB(Sensor_uwb_pub)
     Drivetrain = MotorDriver(Drivetrain_robotpose_pub, Simulated=True)
     Navigation = TrajectoryTracker(Navigation_drivetrain_pub)
-    Canine = CanineDriver(Verbose=True)
+    Canine = CanineDriver(Servoangle_canine_pub, Verbose=True)
     # VISION 
     # STATE PLANNER
 
@@ -113,6 +116,9 @@ async def main():
     """Canine """
     UI_canine_pub.subscribe(Canine.CanineDriver_Receiver)
     # <STATEPLANNER>.subscribe(Canine.CanineDriver_Receiver)
+
+    """Servo Angles"""
+    Servoangle_canine_pub.subscribe(UserInterface.diagnostics.CanineAngle_Receiver)
 
     """Drivetrain """
     Navigation_drivetrain_pub.subscribe(Drivetrain.MotorCommandReceiver)
@@ -154,6 +160,7 @@ async def main():
 
         # SIMULATED MODULES
         Drivetrain.DriveTrainDriver_Runner(),
+        Canine.PoseDriver.MotorPositions_Runner(),
 
         # ── FILL IN: add your real module coroutines here ──────────────────
         #

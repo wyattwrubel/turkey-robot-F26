@@ -9,9 +9,9 @@ class CanineDriver:
     
     UI_lock = False
 
-    def __init__(self, Verbose=False):
+    def __init__(self, ServoAnglePublisher, Verbose=False):
         self.Audio = AudioDriver.AsyncAudioDriver(Verbose)
-        self.PoseDriver = PoseDriver.PoseDriver(Verbose)
+        self.PoseDriver = PoseDriver.PoseDriver(ServoAnglePublisher, Verbose)
 
     async def CanineDriver_Receiver(self, data):
         """ Receiver For All Canine Related Commands. See Protocol #2 For More Details """

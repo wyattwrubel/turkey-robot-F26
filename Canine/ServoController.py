@@ -6,9 +6,9 @@ import asyncio
 import random
 
 class ServoController:
-    def __init__(self, Name, ServoType, GPIO_PIN, Verbose=False):
+    def __init__(self, Name, ServoType, GPIO_PIN, Current_Angle, Verbose=False):
         if(ServoType == "Leg" or ServoType == "Head"):
-            self.servo = SD.Servo(Name, ServoType, GPIO_PIN, Verbose)
+            self.servo = SD.Servo(Name, ServoType, GPIO_PIN, Current_Angle, Verbose)
         else:
             print("ServoController: Invalid 'ServoType' Received ", ServoType)
         

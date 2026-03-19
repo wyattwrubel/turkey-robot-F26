@@ -135,6 +135,9 @@ function handle(m) {
     set('cmd-l', fmt(m.cmd_left,  2))
     set('cmd-r', fmt(m.cmd_right, 2))
 
+    // Servo sliders — always sync so pose commands reflect in UI even in manual mode
+    if (Array.isArray(m.servos)) syncServos(m.servos)
+
     // ── Blocked in manual mode — server must not override user inputs ──
     if (!isManual) {
 
@@ -150,9 +153,6 @@ function handle(m) {
         if (sl) { sl.value = m.speed_ms; updateSliderBg(sl) }
         set('spd-disp', m.speed_ms.toFixed(1))
       }
-
-      // Servo sliders
-      if (Array.isArray(m.servos)) syncServos(m.servos)
 
       // Pose button highlight
       if (m.active_pose !== undefined) {
@@ -276,6 +276,7 @@ function sendMacrostate(state, el) {
   document.querySelectorAll('.macrostate-g .btn').forEach(b => b.classList.remove('lit'))
   el.classList.add('lit')
 }
+
 
 // ═══════════════════════════════════════════════
 // DRIVE CONTROLS
