@@ -66,7 +66,8 @@ class Servo:
             print("ServoDriver: Invalid 'ServoType' Received ", ServoType)
 
     def SetAngle(self, Angle):
-        # TODO Flip orientation of some motors maybe?
+        # TODO Flip orientation of Left or Right motors
+        
         motor_angle = max(self.Min_Command_Angle, min(self.Max_Command_Angle, Angle))
         self.Current_Angle = motor_angle
         t = (motor_angle - self.Motor_Min_Angle) / (self.Motor_Max_Angle - self.Motor_Min_Angle)

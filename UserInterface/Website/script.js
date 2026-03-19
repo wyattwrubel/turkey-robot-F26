@@ -14,6 +14,7 @@ const AUDIO_DEFS = [
   { id: 'BarkBurst',     label: '🔊 BarkBurst'     },
   { id: 'Growl',         label: '🔊 Growl'         },
   { id: 'AggressiveBark',label: '🔊 AggressiveBark'},
+  { id: 'Stop',label: 'Stop Audio'},
 ]
 
 // ═══════════════════════════════════════════════
@@ -73,6 +74,7 @@ function buildAudio() {
 // ═══════════════════════════════════════════════
 function connect() {
   ws = new WebSocket('ws://localhost:8000/ws')
+  // ws = new WebSocket('ws://192.168.4.2:8000/ws')
   ws.onopen    = ()  => { wsReady = true }
   ws.onclose   = ()  => { wsReady = false; setTimeout(connect, 1500) }
   ws.onmessage = (e) => {

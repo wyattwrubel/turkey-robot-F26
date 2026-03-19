@@ -40,8 +40,7 @@ class CanineDriver:
             cmd_data = data["Data"]
         except KeyError:
            print(f"CanineDriver: 'Type' or 'Data' key missing in {data}") 
-
-        if(cmd_type == "Audio" and cmd_data in self.Audio.sounds):
+        if(cmd_type == "Audio" and (cmd_data in self.Audio.sounds) or (cmd_data == "Stop")):
             self.Audio.play(cmd_data)
         elif(cmd_type == "Servo" or cmd_type == "Pose"):
             await self.PoseDriver.CanineMotor_Receiver(data)

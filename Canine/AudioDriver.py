@@ -13,25 +13,31 @@ class AsyncAudioDriver:
         self.Verbose = Verbose
 
         self.sounds = {
-            "BarkShort": pygame.mixer.Sound(f"{base}/BarkShort.mp3"),
-            "BarkBurst":   pygame.mixer.Sound(f"{base}/BarkBurst.mp3"),
-            "Growl":    pygame.mixer.Sound(f"{base}/Growl.mp3"),
-            "AggressiveBark":    pygame.mixer.Sound(f"{base}/AggressiveBark.mp3"),
+            "BarkShort":     pygame.mixer.Sound(f"{base}/BarkShort.mp3"),
+            "BarkBurst":     pygame.mixer.Sound(f"{base}/BarkBurst.mp3"),
+            "Growl":         pygame.mixer.Sound(f"{base}/Growl.mp3"),
+            "AggressiveBark":pygame.mixer.Sound(f"{base}/AggressiveBark.mp3"),
         }
     
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
     
-    def play(self, name, volume=1.0):    
+    def play(self, name, volume=1.0):
+        if name == "Stop":
+            pygame.mixer.stop()
+            if self.Verbose: print("AudioDriver: Stop audio received")
+            return
         sound = self.sounds.get(name)
         if sound:
+            pygame.mixer.stop()   # stop any currently playing audio first
             sound.set_volume(volume)
             sound.play()
-            if(self.Verbose): print("AudioDriver: Playing ", name)
+            if self.Verbose: print("AudioDriver: Playing", name)
 
     def stop_all(self):
         pygame.mixer.stop()
+        if self.Verbose: print("AudioDriver: Stopped all audio")
 
     def shutdown(self):
         pygame.mixer.stop()
