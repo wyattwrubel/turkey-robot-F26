@@ -27,15 +27,6 @@ class UKF:
     _lambda = ALPHA**2 * (L + KAPPA) - L
     
     def __init__(self, initial_state: np.ndarray, P0: np.ndarray, Q: np.ndarray, R_uwb: np.ndarray, R_accel: np.ndarray):
-        """
-        Parameters
-        ----------
-        initial_state : (3,) array  [x0, y0, theta0]
-        P0            : (3,3) initial state covariance
-        Q             : (3,3) process noise covariance  (encoder / slip noise)
-        R_uwb         : (2,2) UWB measurement noise covariance
-        R_accel       : (1,1) Accelerometer measurement noise covariance
-        """
         self.x = initial_state.copy().astype(np.float64)
         self.P = P0.copy().astype(np.float64)
         self.Q = Q.copy().astype(np.float64)
@@ -66,12 +57,11 @@ class UKF:
 
     def _sigma_points(self) -> np.ndarray:
         """Generate 2L+1 sigma points from current mean and covariance."""
-        # Cholesky of scaled covariance; clip for numerical safety
         A = np.linalg.cholesky((self.L + self._lambda) * self.P)
         sp = np.empty((2 * self.L + 1, self.L))
         sp[0] = self.x
         for i in range(self.L):
-            sp[i + 1]     = self.x + A[:, i]
+            sp[i + 1]          = self.x + A[:, i]
             sp[i + 1 + self.L] = self.x - A[:, i]
         return sp
     
@@ -81,64 +71,45 @@ class UKF:
     def predict(self, v_l: float, v_r: float, wheel_base: float, dt: float):
         """
         Prediction step — driven by left/right wheel speeds from encoders.
-
-        Parameters
-        ----------
-        v_l        : left  wheel linear speed  (m/s)
-        v_r        : right wheel linear speed  (m/s)
-        wheel_base : track width               (m)
-        dt         : time elapsed since last call (s)
+        Y-down world convention:
+          - y uses -sin(theta) so +Y moves downward on screen
+          - w = (v_l - v_r) / wheelbase so left turn is CCW on screen
         """
-        
-        # Robot-level velocity commands from differential kinematics
         v = (v_r + v_l) / 2.0
-        w = (v_r - v_l) / wheel_base
+        w = (v_r - v_l) / wheel_base   # standard: CCW positive
 
-        sp = self._sigma_points()  
+        sp = self._sigma_points()
 
-        # Propagate each sigma point through the nonlinear motion model
         sp_pred = np.empty_like(sp)
         for i, s in enumerate(sp):
             sp_pred[i, 0] = s[0] + v * np.cos(s[2]) * dt
-            sp_pred[i, 1] = s[1] - v * np.sin(s[2]) * dt
-            sp_pred[i, 2] = self._wrap_angle(s[2] - w * dt)
+            sp_pred[i, 1] = s[1] - v * np.sin(s[2]) * dt   # Y-down
+            sp_pred[i, 2] = self._wrap_angle(s[2] + w * dt)
 
-        # Predicted mean (use circular mean for the angle component)
         x_pred = np.dot(self._wm, sp_pred)
         x_pred[2] = self._mean_angle(sp_pred[:, 2], self._wm)
 
-        # Predicted covariance + process noise
         P_pred = self.Q.copy()
         for i in range(2 * self.L + 1):
             d = sp_pred[i] - x_pred
-            d[2] = self._wrap_angle(d[2])          # angle residual must be wrapped
+            d[2] = self._wrap_angle(d[2])
             P_pred += self._wc[i] * np.outer(d, d)
 
         self.x = x_pred
         self.P = P_pred
 
     def update_uwb(self, uwb_x: float, uwb_y: float):
-        """
-        UWB Update Step — driven by x,y,theta estimated values from UWB Anchors.
-
-        Parameters
-        ----------
-        uwb_x        : Estimated X position of UWB anchors (m)
-        uwb_y        : Estimated Y position of UWB anchors (m)
-        """     
-    
+        """UWB Update Step — x,y position fix."""
         z = np.array([uwb_x, uwb_y])
         sp = self._sigma_points()
 
-        # Predicted measurement mean
         z_sigma = sp[:, :2]
         z_pred = np.dot(self._wm, z_sigma)
 
-        # Innovation covariance Pyy and cross-covariance Pxy
         Pyy = self.R_uwb.copy()
         Pxy = np.zeros((self.L, 2))
 
-        for i in range (2 * self.L + 1):
+        for i in range(2 * self.L + 1):
             dz = z_sigma[i] - z_pred
             dx = sp[i] - self.x
             dx[2] = self._wrap_angle(dx[2])
@@ -146,32 +117,22 @@ class UKF:
             Pxy += self._wc[i] * np.outer(dx, dz)
 
         K = Pxy @ np.linalg.inv(Pyy)
-        innovation = z - z_pred
-        self.x = self.x + K @ innovation
+        self.x = self.x + K @ (z - z_pred)
         self.x[2] = self._wrap_angle(self.x[2])
         self.P = self.P - K @ Pyy @ K.T
 
     def update_accel(self, accel_theta: float):
-        """
-        Accelerometer Update Step — driven by theta estimated values from Accelerometer.
-
-        Parameters
-        ----------
-        accel_theta    : Estimate theta from accelerometer (rad)
-        """     
-
+        """Accelerometer Update Step — heading fix."""
         z = np.array([accel_theta])
         sp = self._sigma_points()
 
-        # Predicted measurement mean
         z_sigma = sp[:, 2]
-        z_pred = self._mean_angle(z_sigma, self._wm)  # circular mean for θ
+        z_pred = self._mean_angle(z_sigma, self._wm)
 
-        # Innovation covariance Pyy and cross-covariance Pxy
         Pyy = self.R_accel.copy()
         Pxy = np.zeros((self.L, 1))
 
-        for i in range (2 * self.L + 1):
+        for i in range(2 * self.L + 1):
             dz = self._wrap_angle(z_sigma[i] - z_pred)
             dx = sp[i] - self.x
             dx[2] = self._wrap_angle(dx[2])

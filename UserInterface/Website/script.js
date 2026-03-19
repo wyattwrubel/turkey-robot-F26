@@ -72,8 +72,7 @@ function buildAudio() {
 // WEBSOCKET
 // ═══════════════════════════════════════════════
 function connect() {
-  // ws = new WebSocket('ws://localhost:8000/ws')
-  ws = new WebSocket('ws://192.168.4.2:8000/ws')
+  ws = new WebSocket('ws://localhost:8000/ws')
   ws.onopen    = ()  => { wsReady = true }
   ws.onclose   = ()  => { wsReady = false; setTimeout(connect, 1500) }
   ws.onmessage = (e) => {
@@ -713,9 +712,9 @@ function drawMap(canvas) {
   const rth        = mapRobot.theta ?? 0
   // Canvas Y increases downward, world Y increases upward.
   // Negate theta so CCW world rotation appears CCW on screen.
-  const rthDraw    = -rth  // UKF CCW-positive, canvas CW-positive
-  const beamTipX = rpx + Math.cos(rthDraw) * Math.max(30, S * 5)
-  const beamTipY = rpy + Math.sin(rthDraw) * Math.max(30, S * 5)
+  const rthDraw    = rth   // Y-down world: CCW theta matches canvas rotation
+  const beamTipX   = rpx + Math.cos(rthDraw) * Math.max(30, S * 5)
+  const beamTipY   = rpy + Math.sin(rthDraw) * Math.max(30, S * 5)
   const r          = Math.max(7, Math.min(13, S * 0.7))
 
   // Halo
@@ -734,7 +733,7 @@ function drawMap(canvas) {
 
   // Chevron — rotate by rthDraw so tip points in direction of travel
   ctx.save()
-  ctx.translate(rpx, rpy); ctx.rotate(-rthDraw)
+  ctx.translate(rpx, rpy); ctx.rotate(rthDraw)
   ctx.strokeStyle = '#00d4ff'; ctx.fillStyle = 'rgba(0,212,255,0.22)'
   ctx.lineWidth   = 2; ctx.shadowColor = '#00d4ff'; ctx.shadowBlur = 10
   ctx.beginPath()
