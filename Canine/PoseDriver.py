@@ -45,12 +45,6 @@ class PoseDriver():
                 })            
             await asyncio.sleep(0.1)
 
-        # """
-        # Reported servo angles from canine driver
-        # Name: "FrontLeft", "FrontRight", "RearLeft", "RearRight", "Head"
-        # Angle: float (theta)
-        # """
-
     async def _Process_ServoCommands(self, data):
         try:
             name = data["Name"]
