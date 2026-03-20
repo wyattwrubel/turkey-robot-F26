@@ -101,6 +101,8 @@ class DC_Driver:
         return linear_speed
 
     def ReadMotorCurrent(self, address):
+        # TODO: This is new interface, make helper function to read. Returns all 4 currents in Amps
+
 
         """ Returns measured motor currents """
 

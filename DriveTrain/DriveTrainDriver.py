@@ -34,6 +34,26 @@ class MotorDriver:
         self.UWBSamplePeriod      = 0.5   # s | 2 Hz
         self.ReadMotorDataPeriod  = 0.05  # s | 20 Hz
         self.UpdateMotorPeriod    = 0.2   # s | 5 Hz
+        self.ReadCurrentPeriod    = 0.1   # s | 10 Hz
+
+        self._MaxSpeedAllowed        = 3.0  # m/s
+        self._AntiSlipSpeedModifier  = 0.5
+
+        self._Max_Current_Threshold = 40    # A
+        self._StallDebounceLimit    = 5     # Overcurrent Counts Needed
+
+        # Slip detection — thresholds from Li & Wang (2014), optimal traction band 0.1–0.4
+        self._SlipWarnThreshold   = 0.3
+        self._SlipStopThreshold   = 0.5
+        self._SlipDeadband        = 0.05  # m/s — skip ratio computation below this speed
+
+        # Slip state — applied in UpdateMotorSpeeds at send time
+        self._SlipModifier        = 1.0   # 1.0 = normal, 0.5 = degrade, 0.0 = stop
+
+        # Accumulator for encoder speed between UWB updates
+        self._enc_speed_accum     = []
+        self._prev_uwb_pos        = initial_state[:2].copy()
+        self._prev_uwb_time       = time.time()
 
         self.running  = True
         self.UI_lock  = False
@@ -78,6 +98,7 @@ class MotorDriver:
             self.RobotPosePublisher(),
             self.ReadMotorPosition(),
             self.UpdateMotorSpeeds(),
+            self.CheckStall(),
         )
 
     # ------------------------------------------------------------------
@@ -97,10 +118,41 @@ class MotorDriver:
         """
         Receives UWB Data From UWB Publisher.
         Data: 2 x 1 Numpy Array (X [m], Y [m])
+
+        Also serves as the slip detection trigger — compares UWB-derived
+        ground truth speed against the average encoder speed accumulated
+        since the last UWB update. Sets _SlipModifier which is applied
+        at send time in UpdateMotorSpeeds.
         """
         UWB_positions = data.copy().astype(np.float64)
         async with self._state_lock:
             self.UKF.update_uwb(UWB_positions[0], UWB_positions[1])
+
+        # --- Slip detection ---
+        now   = time.time()
+        dt    = now - self._prev_uwb_time
+        v_uwb = np.hypot(UWB_positions[0] - self._prev_uwb_pos[0],
+                         UWB_positions[1] - self._prev_uwb_pos[1]) / dt
+
+        if self._enc_speed_accum:
+            v_enc = float(np.mean(self._enc_speed_accum))
+
+            if abs(v_enc) > self._SlipDeadband:
+                slip = (v_enc - v_uwb) / v_enc
+
+                if slip >= self._SlipStopThreshold:
+                    print(f"[SLIP] HARD STOP — ratio {slip:.2f}")
+                    self._SlipModifier = 0.0
+                elif slip >= self._SlipWarnThreshold:
+                    print(f"[SLIP] SOFT DEGRADE — ratio {slip:.2f}")
+                    self._SlipModifier = self._AntiSlipSpeedModifier
+                else:
+                    self._SlipModifier = 1.0
+
+        # Reset accumulator for next UWB window
+        self._enc_speed_accum = []
+        self._prev_uwb_pos    = UWB_positions
+        self._prev_uwb_time   = now
 
     async def Drivetrain_AccelReceiver(self, data):
         """
@@ -109,7 +161,7 @@ class MotorDriver:
         """
         theta = data.copy().astype(np.float64)
         async with self._state_lock:
-            self.UKF.update_accel(theta)   # fixed: was update_uwb
+            self.UKF.update_accel(theta)
 
     async def ReadMotorPosition(self):
         """
@@ -127,8 +179,15 @@ class MotorDriver:
 
             v_l, v_r = self.DCDriver.AverageLinearSpeed()
 
+            if v_l is None or v_r is None:
+                await asyncio.sleep(self.ReadMotorDataPeriod)
+                continue
+
             async with self._state_lock:
                 self.UKF.predict(v_l, v_r, self.WheelBase, dt)
+
+            # Accumulate scalar encoder speed for slip check in UWBReceiver
+            self._enc_speed_accum.append((abs(v_l) + abs(v_r)) / 2.0)
 
             if self.Verbose:
                 print(f"[ENC ] v_l={v_l:.3f}  v_r={v_r:.3f}  dt={dt*1e3:.1f}ms  "
@@ -155,6 +214,35 @@ class MotorDriver:
                 async with self._state_lock:
                     self.UKF.x = x_next
             else:
-                self.DCDriver.UpdateMotorSpeeds(self.MotorSpeeds)
+                safe_speeds = np.clip(self.MotorSpeeds * self._SlipModifier, -self._MaxSpeedAllowed, self._MaxSpeedAllowed)
+                self.DCDriver.UpdateMotorSpeeds(safe_speeds)
 
             await asyncio.sleep(self.UpdateMotorPeriod)
+    
+    # ------------------------------------------------------------------
+    # Motor Speed Updates
+    # ------------------------------------------------------------------
+    async def CheckStall(self):
+        """
+        Polls all four motor currents at ReadCurrentPeriod.
+        If any motor exceeds _StallCurrentThreshold for _StallDebounceLimit
+        consecutive scans (0.5 s at 20 Hz), sets _SlipModifier to 0.0
+        to hard-stop all motors via UpdateMotorSpeeds.
+        """
+        if self.SimulatedData:
+            return
+ 
+        while self.running:
+            currents = self.DCDriver.ReadMotorCurrent()
+ 
+            if currents is not None and np.max(currents) > self._Max_Current_Threshold:
+                self._stall_debounce += 1
+                if self._stall_debounce >= self._StallDebounceLimit:
+                    print(f"[STALL] HARD STOP — current {np.max(currents):.1f} A "
+                          f"exceeded {self._Max_Current_Threshold} A for "
+                          f"{self._StallDebounceLimit} scans")
+                    self._SlipModifier = 0.0
+            else:
+                self._stall_debounce = 0
+ 
+            await asyncio.sleep(self.ReadCurrentPeriod)
