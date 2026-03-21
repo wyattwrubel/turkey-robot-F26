@@ -131,12 +131,11 @@ async def main():
     
     """VisionObject"""
     VisionObject_Vision_pub.subscribe(UserInterface.VisionObject_Receiver)
-
+    VisionObject_Vision_pub.subscribe(Navigation.VisionObject_Receiver)
+    # VisionObject_Vision_pub.subscribe(<STATE PLANNER>)
 
     """VideoFeed"""
     VideoFeed_Vision_pub.subscribe(UserInterface.VideoFeed_Receiver)   
-    VideoFeed_Vision_pub.subscribe(Navigation.VisionObject_Receiver)
-    # VideoFeed_Vision_pub.subscribe(<STATE PLANNER>)
 
     """Canine"""
     Canine_UI_pub.subscribe(Canine.CanineDriver_Receiver)
@@ -164,21 +163,17 @@ async def main():
 
     """MotionCommand"""
     MotionCommand_UI_pub.subscribe(Navigation.TrajectoryCMD_Receiver)
-    # MotionCommand_Navigation_pub.subscribe(UserInterface.diagnostics. <?>)
+    MotionCommand_Navigation_pub.subscribe(UserInterface.diagnostics.MotionCommand_Receiver)
     MotionCommand_StatePlanner_pub.subscribe(Navigation.TrajectoryCMD_Receiver)
      
-    """Accelerometer Theta Values"""
-    Sensor_imu_pub.subscribe(Drivetrain.Drivetrain_AccelReceiver)
-    Sensor_imu_pub.subscribe(UserInterface.diagnostics.Accelerometer_Receiver)
-    # Sensor_imu_pub.subscribe("VISION")
-
     """UWB X,Y Values"""
-    Sensor_uwb_pub.subscribe(Drivetrain.Drivetrain_UWBReceiver)
-    Sensor_uwb_pub.subscribe(UserInterface.diagnostics.UWB_Sensors_Receiver)
-    # Sensor_uwb_pub.subscribe("VISION")
-    # ─────────────────────────────────────────────────────────────────────────
+    UWB_UWBPublisher_pub.subscribe(Drivetrain.Drivetrain_UWBReceiver)
+    UWB_UWBPublisher_pub.subscribe(UserInterface.diagnostics.UWB_Sensors_Receiver)
 
-
+    """Accelerometer Theta Values"""
+    Accelerometer_AccelPublisher_pub.subscribe(Drivetrain.Drivetrain_AccelReceiver)
+    Accelerometer_AccelPublisher_pub.subscribe(UserInterface.diagnostics.Accelerometer_Receiver)
+    
     print("[MAIN] CDS Control Server starting")
     print("[MAIN] UI → http://localhost:8000")
 

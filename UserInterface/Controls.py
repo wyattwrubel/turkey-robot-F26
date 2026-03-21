@@ -117,7 +117,6 @@ class PanelControls:
 
         elif msg_type == "macrostate_sub_command":
             state = data.get("state", "")
-            print("SUBSTATE ", state)            
             await self._macrostate_pub.publish({"Id": state})
 
         elif msg_type == "estop":
@@ -181,13 +180,6 @@ class PanelControls:
             "Cmd": [left, right],
         })
 
-    async def _pub_speed(self, speed: float) -> None:
-        """Drivetrain channel — speed cap."""
-        await self._drivetrain_pub.publish({
-            "Id":  "SpeedCap",
-            "Cmd": [speed],
-        })
-
     async def _pub_pose(self, pose_id: str) -> None:
         """Canine channel — pose command."""
         await self._canine_pub.publish({
@@ -219,6 +211,14 @@ class PanelControls:
             "Id":  cmd_type,
             "Cmd": cmd,
         })
+
+    async def _pub_speed(self, speed: float) -> None:
+        """Drivetrain channel — speed cap."""
+        await self._navigation_pub.publish({
+            "Id":  "SpeedCap",
+            "Cmd": speed,
+        })
+
 
     # ── On-connect sync ───────────────────────────────────────────────────────
 

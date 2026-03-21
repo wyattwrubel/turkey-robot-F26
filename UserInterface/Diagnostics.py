@@ -48,7 +48,7 @@ class PanelDiagnostics:
         Name = data.get("Name", "")
         Angle = data.get("Angle", "")
 
-        if Name and Angle: 
+        if Name is not None and Angle is not None: 
             self._robot.set_servo(Name, Angle)
         else:
             print(f"[UI CanineAngle_Receiver] Invalid Data '{data}'")   
