@@ -762,7 +762,7 @@ function drawMap(canvas) {
 
   const [rpx, rpy] = proj(mapRobot.x, mapRobot.y)
   const rth        = mapRobot.theta ?? 0
-  const rthDraw    = rth
+  const rthDraw    = - rth
   const beamTipX   = rpx + Math.cos(rthDraw) * Math.max(30, S * 5)
   const beamTipY   = rpy + Math.sin(rthDraw) * Math.max(30, S * 5)
   const r          = Math.max(7, Math.min(13, S * 0.7))

@@ -19,7 +19,7 @@ import cv2
 
 class Vision:
 
-    CAPTURE_RATE_HZ = 5 #0.01                       # slow enough to see each image
+    CAPTURE_RATE_HZ = 0.02 #0.01                       # slow enough to see each image
     CAPTURE_PERIOD  = 1.0 / CAPTURE_RATE_HZ
 
     JPEG_QUALITY    = 80
