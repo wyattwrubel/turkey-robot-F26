@@ -66,80 +66,106 @@ async def main():
     # ── Inbound publishers (system → UI) ──────────────────────────────────────
     # These are owned by your hardware/algorithm modules and published into.
     # Subscribe the UI receivers below so the UI stays in sync.
-    Drivetrain_robotpose_pub = AsyncPublisher("RobotPose")      # ── FILL IN: owned by your UKF / odometry module
-    Drivetrain_slip_pub       = AsyncPublisher("Slip")
-    Sensor_uwb_pub        = AsyncPublisher("UWB")       # ── FILL IN: owned by your UWB sensor module
-    Sensor_imu_pub        = AsyncPublisher("IMU")       # ── FILL IN: owned by your IMU module
-    Navigation_drivetrain_pub     = AsyncPublisher("NavDrivetrain")    # ── FILL IN: owned by your trajectory tracker
-
-    Stateplanner_canine_pub  = AsyncPublisher("Canine") # ── FILL IN: owned by your canine driver
-
-    Servoangle_canine_pub = AsyncPublisher("CanineAngles")
-
-    # Stateplanner_macrostate_pub = AsyncPublisher("MacroState") # ── FILL IN: owned by your state planner
-    # VISION 
-    # STATE PLANNER
-    # ── Instantiate Modules ───────────────
     
-    # ── Outbound publishers (UI → system) ─────────────────────────────────────
-    UI_drivetrain_pub  = AsyncPublisher("UI_Drivetrain")
-    UI_canine_pub  = AsyncPublisher("UI_Canine")
-    UI_macrostate_pub  = AsyncPublisher("UI_MacroState")
-    UI_navigation_pub  = AsyncPublisher("UI_Navigation")
+    # VisionObject Protocol
+    VisionObject_Vision_pub = AsyncPublisher("VideoObject") # Not passed into module TODO
 
-    Accelerometer = IMUDriver(Sensor_imu_pub, Simulation=True)
-    UWB_Anchors = UWB(Sensor_uwb_pub)
-    Drivetrain = MotorDriver(Drivetrain_robotpose_pub, Drivetrain_slip_pub, Simulated=True)
-    Navigation = TrajectoryTracker(Navigation_drivetrain_pub)
-    Canine = CanineDriver(Servoangle_canine_pub, Verbose=True)
-    # VISION 
-    # STATE PLANNER
+    # VideoFeed Protocol
+    VideoFeed_Vision_pub = AsyncPublisher("VideoFeed")
 
-    # TODO FAKE VISION
-    vision_pub = AsyncPublisher("Video")
-    vision = Vision(vision_pub)
+    # Canine Protocol
+    Canine_UI_pub = AsyncPublisher("UI_Canine")
+    Canine_StatePlanner_pub = AsyncPublisher("StatePlanner_Canine") # Not passed into module TODO
+    
+    # ServoFeedback Protocol
+    ServoFeedback_Canine_pub = AsyncPublisher("CanineServoAngles")
 
-    # TODO Replace With New Module
+    # DriveCommand Protocol
+    DriveCommand_Navigation_pub = AsyncPublisher("Nav_DriveCommand")
+    DriveCommand_UI_pub  = AsyncPublisher("UI_DriveCommand")
 
-    # ── Instantiate UI server ──────────────────────────────────────────────────
-    UserInterface = CDSControlServer(UI_drivetrain_pub, UI_canine_pub, UI_macrostate_pub, UI_navigation_pub)
+    # SlipFeedback Protocol
+    SlipFeedback_Drivetrain_pub = AsyncPublisher("DrivetrainSlip")
+
+    # RobotPose Protocol
+    RobotPose_Drivetrain_pub = AsyncPublisher("RobotPose")
+
+    # MacroState
+    MacroState_StatePlanner = AsyncPublisher("StatePlanner_MacroState") # Not passed into module TODO
+    MacroState_UI_pub = AsyncPublisher("UI_MacroState")
+
+    # MotionCommand
+    MotionCommand_Navigation_pub = AsyncPublisher("Nav_MotionCommand")
+    MotionCommand_StatePlanner_pub = AsyncPublisher("StatePlanner_MotionCommand") # Not passed into module TODO
+    MotionCommand_UI_pub = AsyncPublisher("UI_MotionCommand")
+
+    # UWB
+    UWB_UWBPublisher_pub = AsyncPublisher("UWB")
+    
+    # Accelerometer
+    Accelerometer_AccelPublisher_pub = AsyncPublisher("IMU")
+    
+    # ── Instantiate Modules ───────────────
+    # VISION OBJECT TODO ADD HERE
+
+    # REPLACE WITH REAL VIDEOFEED TODO
+    vision = Vision(VideoFeed_Vision_pub)
+    
+    # REAL MODULES TODO REPLACE THIS HEADER
+    Canine = CanineDriver(ServoFeedback_Canine_pub, Verbose=True)
+    Drivetrain = MotorDriver(RobotPose_Drivetrain_pub, SlipFeedback_Drivetrain_pub, Simulated=True)
+
+    Navigation = TrajectoryTracker(DriveCommand_Navigation_pub, MotionCommand_Navigation_pub, Verbose=False)
+
+    # STATE PLANNER TODO
+
+    # SENSORS
+    UWB_Anchors = UWB(UWB_UWBPublisher_pub)
+    Accelerometer = IMUDriver(Accelerometer_AccelPublisher_pub, Simulation=True)
+
+    # User Interface
+    UserInterface = CDSControlServer(DriveCommand_UI_pub, Canine_UI_pub, MacroState_UI_pub, MotionCommand_UI_pub)
+
 
     # ─────────────────────────────────────────────────────────────────────────
-    """Vision Object"""
     
-    # FAKE VISION TODO
-    vision_pub.subscribe(UserInterface.VideoFeed_Receiver)
-   
-    # <VISION>.subscribe(Navigation.VisionObject_Receiver)
-    # <VISION>.subscribe(UserInterface.VisionObject_Receiver)
-    # <VISION>.subscribe(<STATE PLANNER>)
+    """VisionObject"""
+    VisionObject_Vision_pub.subscribe(UserInterface.VisionObject_Receiver)
 
-    """Canine """
-    UI_canine_pub.subscribe(Canine.CanineDriver_Receiver)
-    # <STATEPLANNER>.subscribe(Canine.CanineDriver_Receiver)
 
-    """Servo Angles"""
-    Servoangle_canine_pub.subscribe(UserInterface.diagnostics.CanineAngle_Receiver)
+    """VideoFeed"""
+    VideoFeed_Vision_pub.subscribe(UserInterface.VideoFeed_Receiver)   
+    VideoFeed_Vision_pub.subscribe(Navigation.VisionObject_Receiver)
+    # VideoFeed_Vision_pub.subscribe(<STATE PLANNER>)
 
-    """Drivetrain """
-    Navigation_drivetrain_pub.subscribe(Drivetrain.MotorCommandReceiver)
-    UI_drivetrain_pub.subscribe(Drivetrain.MotorCommandReceiver)
+    """Canine"""
+    Canine_UI_pub.subscribe(Canine.CanineDriver_Receiver)
+    Canine_StatePlanner_pub.subscribe(Canine.CanineDriver_Receiver)
+
+    """ServoFeedback"""
+    ServoFeedback_Canine_pub.subscribe(UserInterface.diagnostics.CanineAngle_Receiver)
+
+    """DriveCommand"""
+    DriveCommand_Navigation_pub.subscribe(Drivetrain.MotorCommandReceiver)
+    DriveCommand_UI_pub.subscribe(Drivetrain.MotorCommandReceiver)
  
-    """Robot Pose"""
-    Drivetrain_robotpose_pub.subscribe(Navigation.RobotPose_Receiver)
-    Drivetrain_robotpose_pub.subscribe(UserInterface.diagnostics.RobotPose_Receiver)
+    """SlipFeedback"""
+    SlipFeedback_Drivetrain_pub.subscribe(UserInterface.diagnostics.Slip_Receiver)
+
+    """RobotPose"""
+    RobotPose_Drivetrain_pub.subscribe(Navigation.RobotPose_Receiver)
+    RobotPose_Drivetrain_pub.subscribe(UserInterface.diagnostics.RobotPose_Receiver)
     # Drivetrain_robotpose_pub.subscribe("VISION")
     # Drivetrain_robotpose_pub.subscribe(STATE PLANNER)
 
-    """ Slip """
-    Drivetrain_slip_pub.subscribe(UserInterface.diagnostics.Slip_Receiver)
+    """MacroState"""
+    MacroState_StatePlanner.subscribe(UserInterface.diagnostics.MacroState_Receiver)
+    # MacroState_UI_pub.subscribe(<STATE PLANNER>)
 
-    """Macro State"""
-    # UI_macrostate_pub.subscribe(<STATE PLANNER>)
- 
-    """Navigation"""
-    # STATE PLANNER
-    UI_navigation_pub.subscribe(Navigation.TrajectoryCMD_Receiver)
+    """MotionCommand"""
+    MotionCommand_UI_pub.subscribe(Navigation.TrajectoryCMD_Receiver)
+    # MotionCommand_Navigation_pub.subscribe(UserInterface.diagnostics. <?>)
+    MotionCommand_StatePlanner_pub.subscribe(Navigation.TrajectoryCMD_Receiver)
      
     """Accelerometer Theta Values"""
     Sensor_imu_pub.subscribe(Drivetrain.Drivetrain_AccelReceiver)

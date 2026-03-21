@@ -36,6 +36,8 @@ class PanelDiagnostics:
         arr = np.asarray(data, dtype=float).flatten()
         if arr.size >= 3:
             self._robot.set_robot_pose(arr[0], arr[1], arr[2])
+        else:
+            print(f"[UI RobotPose_Receiver] Invalid Data '{data}'")   
 
     async def CanineAngle_Receiver(self, data) -> None:
         """
@@ -43,9 +45,14 @@ class PanelDiagnostics:
         Name: "FrontLeft", "FrontRight", "RearLeft", "RearRight", "Head"
         Angle: float (theta)
         """
+        Name = data.get("Name", "")
+        Angle = data.get("Angle", "")
 
-        self._robot.set_servo(data["id"], data["angle"])
-
+        if Name and Angle: 
+            self._robot.set_servo(Name, Angle)
+        else:
+            print(f"[UI CanineAngle_Receiver] Invalid Data '{data}'")   
+            
     async def UWB_Sensors_Receiver(self, data) -> None:
         """
         Raw UWB position.
@@ -54,6 +61,8 @@ class PanelDiagnostics:
         arr = np.asarray(data, dtype=float).flatten()
         if arr.size >= 2:
             self._robot.set_uwb(arr[0], arr[1])
+        else:
+            print(f"[UI UWB_Sensors_Receiver] Invalid Data '{data}'")   
 
     async def Accelerometer_Receiver(self, data) -> None:
         """
@@ -63,6 +72,8 @@ class PanelDiagnostics:
         arr = np.asarray(data, dtype=float).flatten()
         if arr.size >= 1:
             self._robot.set_imu(arr[0])
+        else:
+            print(f"[UI Accelerometer_Receiver] Invalid Data '{data}'")    
 
     async def MacroState_Receiver(self, data: dict) -> None:
         """
@@ -82,6 +93,8 @@ class PanelDiagnostics:
         state = mapping.get(data.get("Id", ""))
         if state:
             self._robot.set_sys_state(state)
+        else:
+            print(f"[UI MacroState_Receiver] Invalid Data '{data}'")    
 
     async def VisionObject_Receiver(self, data: dict, broadcast_fn) -> None:
         """
@@ -110,3 +123,28 @@ class PanelDiagnostics:
         arr = np.asarray(data, dtype=float).flatten()
         if arr.size >= 1:
             self._robot.set_drivetrain_status(arr[0])
+        else:
+            print(f"[UI Slip_Receiver] Invalid Data '{data}'")
+
+    async def MotionCommand_Receiver(self, data: dict) -> None:
+        """
+        Id: "Orient", "Move"
+        Cmd: 1 x 3 numpy: [X, Y, theta]
+
+        Id: "SpeedCap"
+        Cmd: 1 x 1 numpy: [motor speed (m/s)]
+        """
+        id  = data.get("Id",  "")
+        cmd = data.get("Cmd", "")
+
+        if id == "Move":
+            target = np.asarray(cmd, dtype=float).flatten()
+            self._robot.set_target(target[0], target[1], target[2], nav_type="Move")
+        elif id == "Orient":
+            target = np.asarray(cmd, dtype=float).flatten()
+            self._robot.set_target(target[0], target[1], target[2], nav_type="Orient")
+        elif id == "SpeedCap":
+            speed = float(np.asarray(cmd, dtype=float).flatten()[0])
+            self._robot.set_speed(speed)
+        else:
+            print(f"[UI MotionCommand_Receiver] Unknown Id '{id}'")

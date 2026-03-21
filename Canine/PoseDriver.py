@@ -40,8 +40,8 @@ class PoseDriver():
             # Broadcasts Angle Positions at 10 HZ
             for name, servo in self.servos.items():
                 await self.ServoAnglePublisher.publish({
-                    "id": name,
-                    "angle": servo.servo.Current_Angle,
+                    "Name": name,
+                    "Angle": servo.servo.Current_Angle,
                 })            
             await asyncio.sleep(0.1)
 

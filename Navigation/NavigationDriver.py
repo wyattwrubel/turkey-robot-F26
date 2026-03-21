@@ -15,8 +15,9 @@ class TrajectoryTracker:
     Map = MapUpdater.Map()
     MPC = MovementExecutor.MPC_loop()
 
-    def __init__(self, DriveTrainPub, Verbose=False):
+    def __init__(self, DriveTrainPub, MotionCommandPub, Verbose=False):
         self.DriveTrainPub = DriveTrainPub
+        self.MotionCommandPub = MotionCommandPub
         self.Verbose = Verbose
 
     # From vision: dynamic objects in field of view
