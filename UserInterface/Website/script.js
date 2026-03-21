@@ -330,7 +330,7 @@ function sendMacrostate(state, el) {
  */
 function sendMacrostateSub(cmdId, btn) {
   if (!isManual) return
-  send({ type: 'macrostate_sub_command', Id: 'UI', Cmd: cmdId })
+  send({ type: 'macrostate_sub_command', state: cmdId })
   _activeSubCmd = cmdId
   _syncSubCmdButtons(_activeSubCmd)
 }

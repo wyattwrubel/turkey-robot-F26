@@ -36,6 +36,7 @@ class Robot:
         self._estop        = False
 
         self.sys_state    = "Scanning"
+        self.sub_state    = "Idle"
         self.target       = {"x": 0.0, "y": 0.0, "theta": 0.0}
         self.nav_cmd_type = None   # "Move" | "Orient" | None
         self.ui_locked    = False  # True in manual mode — blocks Navigation_Receiver from overwriting target

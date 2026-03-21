@@ -115,6 +115,11 @@ class PanelControls:
             self._robot.set_sys_state(state)
             await self._macrostate_pub.publish({"Id": state})
 
+        elif msg_type == "macrostate_sub_command":
+            state = data.get("state", "")
+            print("SUBSTATE ", state)            
+            await self._macrostate_pub.publish({"Id": state})
+
         elif msg_type == "estop":
             self._robot.estop_engage()
             await self._pub_drivetrain("UI", 0.0, 0.0)

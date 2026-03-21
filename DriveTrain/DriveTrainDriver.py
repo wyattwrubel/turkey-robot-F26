@@ -26,7 +26,6 @@ class MotorDriver:
         if not Simulated:
             self.DCDriver = DCMotorDriver.DC_Driver()
 
-        # FIX: enforce ndarray on initialisation so MotorSpeeds * scalar always works
         self.MotorSpeeds = np.array([0.0, 0.0], dtype=np.float64)
 
         # Timing constants
@@ -42,7 +41,6 @@ class MotorDriver:
 
         self._Max_Current_Threshold = 40   # A
         self._StallDebounceLimit    = 5    # consecutive overcurrent scans before hard stop
-        # FIX: initialise debounce counter so first overcurrent event doesn't AttributeError
         self._stall_debounce        = 0
 
         # Slip detection thresholds (Li & Wang 2014, optimal traction band 0.1-0.4)
@@ -90,12 +88,9 @@ class MotorDriver:
 
         if cmd_id == "UI":
             self.UI_lock = True
-            # FIX: always cast to ndarray so MotorSpeeds * scalar works correctly
-            # regardless of whether the caller sends a list or an array
             self.MotorSpeeds = np.array(cmd_data, dtype=np.float64)
         elif cmd_id == "System":
             if not self.UI_lock:
-                # FIX: same cast for system commands
                 self.MotorSpeeds = np.array(cmd_data, dtype=np.float64)
         else:
             print(f"DriveTrainDriver: Invalid cmd_id '{cmd_id}' in {data}")
@@ -134,8 +129,6 @@ class MotorDriver:
 
     async def SlipPublisherBroadcast(self):
         while self.running:
-            # FIX: compare against sentinel identities rather than float equality
-            # to avoid fragility if _SlipModifier is ever set to an arbitrary value
             if self._SlipModifier == self._SlipStop:
                 await self.SlipPublisher.publish(2)
             elif self._SlipModifier == self._SlipWarn:
@@ -171,8 +164,6 @@ class MotorDriver:
             v_enc = float(np.mean(self._enc_speed_accum))
 
             if abs(v_enc) > self._SlipDeadband:
-                # FIX: use abs(slip) so negative slip (UWB faster than encoder,
-                # e.g. from a UWB noise spike) also triggers the thresholds
                 slip = abs((v_enc - v_uwb) / v_enc)
 
                 if slip >= self._SlipStopThreshold:
@@ -184,10 +175,6 @@ class MotorDriver:
                 else:
                     self._SlipModifier = self._SlipNormal
             else:
-                # FIX: robot is stationary (v_enc below deadband) -- slip ratio is
-                # meaningless at near-zero speed. Reset to normal so the robot is
-                # not permanently stuck in a stop state after coming to rest
-                # following a slip event.
                 self._SlipModifier = self._SlipNormal
 
         # Reset accumulator for next UWB window
@@ -224,8 +211,12 @@ class MotorDriver:
                 await asyncio.sleep(self.ReadMotorDataPeriod)
                 continue
 
-            async with self._state_lock:
-                self.UKF.predict(v_l, v_r, self.WheelBase, dt)
+            v_avg = (abs(v_l) + abs(v_r)) / 2.0
+            if v_avg > self._SlipDeadband:
+                async with self._state_lock:
+                    self.UKF.predict(v_l, v_r, self.WheelBase, dt)
+
+            self._enc_speed_accum.append(v_avg)
 
             # Accumulate scalar encoder speed for slip check in UWBReceiver
             self._enc_speed_accum.append((abs(v_l) + abs(v_r)) / 2.0)
@@ -243,13 +234,11 @@ class MotorDriver:
         """Send commanded speeds to the motor driver (or simulate)."""
         while self.running:
             if self.SimulatedData:
-                # FIX: drive the UKF through its proper predict() path so the
-                # covariance evolves and heading stays wrapped in (-pi, pi].
-                # Use commanded speeds directly as the encoder input.
                 v_l = float(self.MotorSpeeds[0])
                 v_r = float(self.MotorSpeeds[1])
-                async with self._state_lock:
-                    self.UKF.predict(v_l, v_r, self.WheelBase, self.UpdateMotorPeriod)
+                if (abs(v_l) + abs(v_r)) / 2.0 > self._SlipDeadband:
+                    async with self._state_lock:
+                        self.UKF.predict(v_l, v_r, self.WheelBase, self.UpdateMotorPeriod)
             else:
                 safe_speeds = np.clip(
                     self.MotorSpeeds * self._SlipModifier,
@@ -276,9 +265,6 @@ class MotorDriver:
         while self.running:
             currents = self.DCDriver.ReadMotorCurrent()
 
-            # FIX: ReadMotorCurrent() always returns a list, never None.
-            # Individual elements can be None if a read failed -- filter them
-            # out before calling max() to avoid a TypeError.
             valid_currents = [c for c in currents if c is not None]
 
             if valid_currents and max(valid_currents) > self._Max_Current_Threshold:

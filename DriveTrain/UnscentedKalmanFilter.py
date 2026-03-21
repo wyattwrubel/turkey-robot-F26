@@ -29,7 +29,7 @@ class UKF:
 
     # Small nugget added to P before Cholesky to guard against numerical drift
     # making the covariance matrix non-positive-definite during UWB dropouts.
-    _P_NUGGET = 1e-6
+    _P_NUGGET = 1e-4
 
     def __init__(self, initial_state: np.ndarray, P0: np.ndarray, Q: np.ndarray,
                  R_uwb: np.ndarray, R_accel: np.ndarray):
@@ -77,7 +77,14 @@ class UKF:
         P_safe = (self.P + self.P.T) / 2.0
         P_safe += self._P_NUGGET * np.eye(self.L)
 
-        A  = np.linalg.cholesky((self.L + self._lambda) * P_safe)
+        try:
+            A = np.linalg.cholesky((self.L + self._lambda) * P_safe)
+        except np.linalg.LinAlgError:
+            print("[UKF] WARNING: P not positive definite after nugget -- resetting covariance")
+            self.P = np.diag([0.5, 0.5, 0.1])
+            P_safe = (self.P + self.P.T) / 2.0 + self._P_NUGGET * np.eye(self.L)
+            A = np.linalg.cholesky((self.L + self._lambda) * P_safe)
+
         sp = np.empty((2 * self.L + 1, self.L))
         sp[0] = self.x
         for i in range(self.L):
