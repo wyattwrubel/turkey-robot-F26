@@ -18,7 +18,15 @@
     <div class="spill"><div class="dot"></div>UWB</div>
     <div class="spill"><div class="dot"></div>IMU</div>
     <div class="spill"><div class="dot warn"></div>CAM</div>
-    <div class="spill"><div class="dot off"></div>TARGET</div>
+    <!--
+      DRIVETRAIN STATUS DOT
+      id="dt-dot" is updated by applyDrivetrainStatus() in script.js.
+      Protocol (from robot.py to_state_msg → drivetrain_status field):
+        0  → class="dot"       → green blinking  (nominal)
+        1  → class="dot warn"  → amber blinking  (warning)
+        2  → class="dot err"   → red solid       (error)
+    -->
+    <div class="spill"><div class="dot off" id="dt-dot"></div>DRIVETRAIN</div>
     <div class="mode-badge" id="mode-badge">AUTO</div>
   </div>
 </header>
@@ -117,9 +125,32 @@
         <div class="db full">
           <div class="dl">MacroState Commands</div>
           <div class="macrostate-g">
-            <button class="btn" data-state="Scanning" onclick="sendMacrostate('Scan',   this)">⟳ Scan</button>
-            <button class="btn" data-state="Chase"    onclick="sendMacrostate('Chase',  this)">⚡ Chase</button>
-            <button class="btn" data-state="Alert"    onclick="sendMacrostate('Alert',  this)">⚠ Alert</button>
+
+            <!-- Top-level macrostate buttons + Stop -->
+            <div class="macrostate-top-row">
+              <button class="btn" data-state="Scanning" onclick="sendMacrostate('Scan',  this)">⟳ Scan</button>
+              <button class="btn" data-state="Chase"    onclick="sendMacrostate('Chase', this)">⚡ Chase</button>
+              <button class="btn" data-state="Alert"    onclick="sendMacrostate('Alert', this)">⚠ Alert</button>
+              <button class="btn stop-cmd" id="macro-stop-btn" onclick="stopMacrostate()">✕ Stop</button>
+            </div>
+
+            <!-- Sub-commands: always visible, locked in auto mode -->
+            <div class="macrostate-sub-row">
+              <button class="btn sub-cmd" data-sub-cmd="TravelWaypoint"   data-sub-for="Scan"  onclick="sendMacrostateSub('TravelWaypoint',   this)">Travel Waypoint</button>
+              <button class="btn sub-cmd" data-sub-cmd="AggressivePursuit" data-sub-for="Chase" onclick="sendMacrostateSub('AggressivePursuit', this)">Aggressive Pursuit</button>
+              <button class="btn sub-cmd" data-sub-cmd="WatchfulDog"       data-sub-for="Alert" onclick="sendMacrostateSub('WatchfulDog',       this)">Watchful Dog</button>
+            </div>
+            <div class="macrostate-sub-row">
+              <button class="btn sub-cmd" data-sub-cmd="StationaryScan"    data-sub-for="Scan"  onclick="sendMacrostateSub('StationaryScan',    this)">Stationary Scan</button>
+              <button class="btn sub-cmd" data-sub-cmd="BurstAttack"        data-sub-for="Chase" onclick="sendMacrostateSub('BurstAttack',        this)">Burst Attack</button>
+              <button class="btn sub-cmd" data-sub-cmd="TerritorialWarning" data-sub-for="Alert" onclick="sendMacrostateSub('TerritorialWarning', this)">Territorial Warning</button>
+            </div>
+            <div class="macrostate-sub-row">
+              <button class="btn sub-cmd" data-sub-cmd="StationaryCrouch"  data-sub-for="Scan"  onclick="sendMacrostateSub('StationaryCrouch',  this)">Stationary Crouch</button>
+              <button class="btn sub-cmd" data-sub-cmd="GrowlAndChase"      data-sub-for="Chase" onclick="sendMacrostateSub('GrowlAndChase',      this)">Growl &amp; Chase</button>
+              <button class="btn sub-cmd" data-sub-cmd="ShortWarningBurst"  data-sub-for="Alert" onclick="sendMacrostateSub('ShortWarningBurst',  this)">Short Warning Burst</button>
+            </div>
+
           </div>
         </div>
       </div>
@@ -142,16 +173,16 @@
 
           <div class="clbl">Robot Poses</div>
           <div class="pose-g">
-            <button class="btn" data-pose-id="IdlePose" onclick="sendPose('IdlePose',this)">Idle Pose</button>
-            <button class="btn" data-pose-id="AlertPose" onclick="sendPose('AlertPose',this)">Alert Pose</button>
-            <button class="btn" data-pose-id="AggressivePose" onclick="sendPose('AggressivePose',this)">Aggressive Pose</button>
-            <button class="btn" data-pose-id="WalkGait" onclick="sendPose('WalkGait',this)">Walk Gait</button>
-            <button class="btn" data-pose-id="ExcitedGait" onclick="sendPose('ExcitedGait',this)">Excited Gait</button>
-            <button class="btn" data-pose-id="AlertStep" onclick="sendPose('AlertStep',this)">Alert Step</button>
-            <button class="btn" data-pose-id="HeadScan" onclick="sendPose('HeadScan',this)">Head Scan</button>
+            <button class="btn" data-pose-id="IdlePose"        onclick="sendPose('IdlePose',this)">Idle Pose</button>
+            <button class="btn" data-pose-id="AlertPose"       onclick="sendPose('AlertPose',this)">Alert Pose</button>
+            <button class="btn" data-pose-id="AggressivePose"  onclick="sendPose('AggressivePose',this)">Aggressive Pose</button>
+            <button class="btn" data-pose-id="WalkGait"        onclick="sendPose('WalkGait',this)">Walk Gait</button>
+            <button class="btn" data-pose-id="ExcitedGait"     onclick="sendPose('ExcitedGait',this)">Excited Gait</button>
+            <button class="btn" data-pose-id="AlertStep"       onclick="sendPose('AlertStep',this)">Alert Step</button>
+            <button class="btn" data-pose-id="HeadScan"        onclick="sendPose('HeadScan',this)">Head Scan</button>
           </div>
 
-          <div class="div"></div> 
+          <div class="div"></div>
           <div class="clbl">Servo Angles</div>
           <div class="servo-list" id="servo-list"></div>
 

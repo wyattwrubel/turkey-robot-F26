@@ -14,7 +14,7 @@ const AUDIO_DEFS = [
   { id: 'BarkBurst',     label: '🔊 BarkBurst'     },
   { id: 'Growl',         label: '🔊 Growl'         },
   { id: 'AggressiveBark',label: '🔊 AggressiveBark'},
-  { id: 'Stop',label: 'Stop Audio'},
+  { id: 'Stop',          label: 'Stop Audio'        },
 ]
 
 // ═══════════════════════════════════════════════
@@ -26,15 +26,22 @@ let isManual = localStorage.getItem('isManual') === 'true'
 let isStopped= false
 
 // Map state
-let mapTurkeys   = []  // [[x, y], ...]  extracted from T×3 vision array
-let mapHumans    = []  // [[x, y], ...]  extracted from P×3 vision array
-let mapObstacles = []  // [{x, y, type}, ...] from server on connect
-let mapWaypoints      = []   // [{label, x, y}, ...] from server on connect
-let selectedWaypoint  = null  // {label, x, y} — clicked on map, pending Go To
+let mapTurkeys   = []
+let mapHumans    = []
+let mapObstacles = []
+let mapWaypoints      = []
+let selectedWaypoint  = null
 let mapRobot     = { x: 0, y: 0, theta: 0 }
 
-// Camera state — single <img> element, updated on each frame message
+// Camera state
 let camImg = null
+
+// Persistent active pose (state machine — no timeout)
+let _activePose = null
+
+// Persistent macrostate + sub-command (state machines — persist until next command)
+let _activeMacrostate = null
+let _activeSubCmd     = null
 
 // ═══════════════════════════════════════════════
 // BUILD DYNAMIC UI
@@ -69,12 +76,13 @@ function buildAudio() {
   })
 }
 
+
 // ═══════════════════════════════════════════════
 // WEBSOCKET
 // ═══════════════════════════════════════════════
 function connect() {
-  // ws = new WebSocket('ws://localhost:8000/ws')
-  ws = new WebSocket('ws://192.168.4.2:8000/ws')
+  ws = new WebSocket('ws://localhost:8000/ws')
+  // ws = new WebSocket('ws://192.168.4.2:8000/ws')
   ws.onopen    = ()  => { wsReady = true }
   ws.onclose   = ()  => { wsReady = false; setTimeout(connect, 1500) }
   ws.onmessage = (e) => {
@@ -107,7 +115,11 @@ function handle(m) {
     set('ukf-t', deg(m.theta))
     if (m.x != null) mapRobot = { x: m.x, y: m.y, theta: m.theta ?? 0, targetX: m.target?.x, targetY: m.target?.y }
 
-    // ── Always update — read-only sensor displays ──────────────
+    // ── Drivetrain status dot ────────────────────────────────
+    // Protocol: drivetrain_status  0 = ok (green), 1 = warn (amber), 2 = error (red)
+    if (m.drivetrain_status != null) {
+      applyDrivetrainStatus(m.drivetrain_status)
+    }
 
     // Nav command type
     {
@@ -137,17 +149,17 @@ function handle(m) {
     set('cmd-l', fmt(m.cmd_left,  2))
     set('cmd-r', fmt(m.cmd_right, 2))
 
-    // Servo sliders — always sync so pose commands reflect in UI even in manual mode
+    // Servo sliders — always sync
     if (Array.isArray(m.servos)) syncServos(m.servos)
 
-    // ── Blocked in manual mode — server must not override user inputs ──
+    // ── Blocked in manual mode ─────────────────────────────
     if (!isManual) {
 
-      // MacroState button highlights
-      const ss = m.macrostate ?? null
-      document.querySelectorAll('.macrostate-g .btn').forEach(b => {
-        b.classList.toggle('lit', b.dataset.state === ss)
-      })
+      // MacroState button highlights — state machine, authoritative from server in auto
+      if (m.macrostate !== undefined) {
+        _activeMacrostate = m.macrostate
+        _syncMacrostateButtons(_activeMacrostate)
+      }
 
       // Speed slider
       if (m.speed_ms != null) {
@@ -156,11 +168,11 @@ function handle(m) {
         set('spd-disp', m.speed_ms.toFixed(1))
       }
 
-      // Pose button highlight
+      // Pose button highlight — persistent state machine
+      // active_pose from server is authoritative in auto mode
       if (m.active_pose !== undefined) {
-        document.querySelectorAll('.pose-g .btn').forEach(b => {
-          b.classList.toggle('lit', b.dataset.poseId === m.active_pose)
-        })
+        _activePose = m.active_pose
+        _syncPoseButtons(_activePose)
       }
 
       // Audio button highlight
@@ -173,11 +185,10 @@ function handle(m) {
     } // end !isManual
   }
 
-  // ── Camera frame — raw passthrough ────────────────────────
+  // ── Camera frame ───────────────────────────────────────────
   if (m.type === 'frame') {
     const ph = document.getElementById('cam-ph')
     if (!camImg) {
-      // Create the img element once and insert it into the camera panel
       camImg = document.createElement('img')
       camImg.style.cssText = 'width:100%;height:100%;object-fit:contain;display:block;'
       ph.parentElement.appendChild(camImg)
@@ -186,10 +197,10 @@ function handle(m) {
     camImg.src = 'data:image/jpeg;base64,' + m.image
   }
 
-  // ── Servo state (synced on connect) ───────────────────────
+  // ── Servo state ─────────────────────────────────────────────
   if (m.type === 'servo_state') syncServos(m.servos)
 
-  // ── Map obstacles (sent once on connect) ──────────────────
+  // ── Map obstacles ───────────────────────────────────────────
   if (m.type === 'map_obstacles') {
     mapObstacles = m.obstacles ?? []
     mapWaypoints = m.waypoints ?? []
@@ -199,25 +210,59 @@ function handle(m) {
     if (sub) sub.textContent = `${MAP_W} × ${MAP_H} M · 10 HZ`
   }
 
-  // ── Mode state (synced on connect after page refresh) ───────
+  // ── Mode state ──────────────────────────────────────────────
   if (m.type === 'mode_state') {
-    // Only apply if it differs — avoids stomping a mid-session toggle
     if (m.is_manual !== isManual) {
       isManual = m.is_manual
       _applyModeUI()
     }
   }
 
-  // ── Vision detections ─────────────────────────────────────
-  // Turkeys and Humans arrive as T×3 / P×3 arrays [x, y, angle].
-  // Map only needs [x, y] — grab the first two columns.
+  // ── Vision detections ────────────────────────────────────────
   if (m.type === 'vision') {
     mapTurkeys = (m.turkeys ?? []).map(t => [t[0], t[1]])
     mapHumans  = (m.humans  ?? []).map(h => [h[0], h[1]])
   }
 }
 
-// ── Shared servo sync helper ──────────────────────────────
+// ── Drivetrain status dot ─────────────────────────────────────
+/**
+ * Protocol:
+ *   0 — nominal  → green blinking dot   (class: default .dot)
+ *   1 — warning  → amber blinking dot   (class: .dot.warn)
+ *   2 — error    → red solid dot        (class: .dot.err)
+ */
+function applyDrivetrainStatus(status) {
+  const dot = document.getElementById('dt-dot')
+  if (!dot) return
+  dot.className = 'dot'
+  if      (status === 1) dot.classList.add('warn')
+  else if (status === 2) dot.classList.add('err')
+  // status 0 → plain .dot (green blinking, no extra class)
+}
+
+// ── Pose state machine ────────────────────────────────────────
+function _syncPoseButtons(activePoseId) {
+  document.querySelectorAll('.pose-g .btn').forEach(b => {
+    b.classList.toggle('lit', b.dataset.poseId === activePoseId)
+  })
+}
+
+// ── Macrostate state machine ───────────────────────────────────
+function _syncMacrostateButtons(activeState) {
+  document.querySelectorAll('.macrostate-g .btn[data-state]').forEach(b => {
+    b.classList.toggle('lit', b.dataset.state === activeState)
+  })
+}
+
+// ── Sub-command state machine ─────────────────────────────────
+function _syncSubCmdButtons(activeCmdId) {
+  document.querySelectorAll('.btn.sub-cmd').forEach(b => {
+    b.classList.toggle('lit', b.dataset.subCmd === activeCmdId)
+  })
+}
+
+// ── Shared servo sync helper ──────────────────────────────────
 function syncServos(servos) {
   servos?.forEach(sv => {
     const sl = document.getElementById(`sr-${sv.id}`)
@@ -274,18 +319,37 @@ function setSpeed(v) {
 // ═══════════════════════════════════════════════
 function sendMacrostate(state, el) {
   send({ type: 'macrostate_command', state })
-  // Highlight the active button, clear the others
-  document.querySelectorAll('.macrostate-g .btn').forEach(b => b.classList.remove('lit'))
-  el.classList.add('lit')
+  _activeMacrostate = el.dataset.state   // use dataset.state (e.g. "Scanning") not the cmd string
+  _syncMacrostateButtons(_activeMacrostate)
 }
 
+/**
+ * Send a macrostate sub-command.
+ * Payload: { type: 'macrostate_sub_command', Id: 'UI', Cmd: <id> }
+ * Only active in manual mode — buttons are disabled in auto mode.
+ */
+function sendMacrostateSub(cmdId, btn) {
+  if (!isManual) return
+  send({ type: 'macrostate_sub_command', Id: 'UI', Cmd: cmdId })
+  _activeSubCmd = cmdId
+  _syncSubCmdButtons(_activeSubCmd)
+}
+
+/**
+ * Clear all macrostate and sub-command lit states and send a Stop command.
+ * Sends: { type: 'macrostate_command', state: 'Stop' }
+ */
+function stopMacrostate() {
+  send({ type: 'macrostate_command', state: 'Stop' })
+  _activeMacrostate = null
+  _activeSubCmd     = null
+  _syncMacrostateButtons(null)
+  _syncSubCmdButtons(null)
+}
 
 // ═══════════════════════════════════════════════
 // DRIVE CONTROLS
-// Sends key name only — backend decides speed.
 // ═══════════════════════════════════════════════
-
-// Maps drive keys → drive button ids for visual feedback
 const WASD_DRIVE_BTNS = {
   w: 'drive-fwd',
   s: 'drive-rev',
@@ -304,13 +368,19 @@ function stopDrive(key, btnId) {
   send({ type: 'key_command', key, state: 'release' })
 }
 
+/**
+ * Pose command — persistent state machine.
+ * Lights up the button immediately and keeps it lit until another pose is sent.
+ */
 function sendPose(p, el) {
   if (!isManual) return
   send({ type: 'pose_command', pose: p })
-  flash(el)
+  // Update local pose state and sync all pose buttons
+  _activePose = p
+  _syncPoseButtons(_activePose)
 }
 
-// ── WASD ──────────────────────────────────────────────────
+// ── WASD ──────────────────────────────────────────────────────
 function wasdPress(k) {
   if (!isManual || isStopped) return
   const keyEl = document.getElementById('key-' + k)
@@ -366,7 +436,6 @@ function toggleMode() {
   localStorage.setItem('isManual', isManual)
   _applyModeUI()
   if (!isManual) {
-    // Release all drive keys visually
     Object.keys(WASD_DRIVE_BTNS).forEach(k => {
       document.getElementById('key-' + k)?.classList.remove('pressed')
       document.getElementById(WASD_DRIVE_BTNS[k])?.classList.remove('lit')
@@ -390,12 +459,10 @@ function applyModeToControls() {
   _updateGoToBtn()
   const locked = !isManual
 
-  // Visual lock — dims sections and blocks pointer events via CSS class
   document.querySelector('.ctrl-top')    ?.classList.toggle('locked', locked)
   document.querySelector('.macrostate-g')?.classList.toggle('locked', locked)
   document.querySelector('.speed-wrap')  ?.classList.toggle('locked', locked)
 
-  // Also disable all interactive elements so tab/keyboard can't reach them
   const selectors = [
     '#pctrl button:not(#estop-btn):not(#mode-btn)',
     '#pctrl input[type=range]',
@@ -404,6 +471,8 @@ function applyModeToControls() {
   document.querySelectorAll(selectors.join(',')).forEach(el => {
     el.disabled = locked
   })
+
+
 }
 
 // ═══════════════════════════════════════════════
@@ -424,7 +493,7 @@ function flash(el, duration=1200)  {
 buildServos()
 buildAudio()
 updateSliderBg(document.getElementById('spd-range'))
-_applyModeUI()   // restore mode from localStorage on page load
+_applyModeUI()
 connect()
 requestAnimationFrame(initMap)
 
@@ -457,14 +526,12 @@ function initMap() {
   resize()
   new ResizeObserver(resize).observe(canvas)
 
-  // ── Zoom ────────────────────────────────────────────────────
   canvas.addEventListener('wheel', e => {
     e.preventDefault()
     mapZoom = Math.min(6.0, Math.max(1.0, mapZoom * (e.deltaY < 0 ? 1.12 : 1 / 1.12)))
     _clampPan()
   }, { passive: false })
 
-  // ── Pan + waypoint click ────────────────────────────────────
   let _mouseDownPos = { x: 0, y: 0 }
 
   canvas.addEventListener('mousedown', e => {
@@ -484,19 +551,16 @@ function initMap() {
     _dragActive = false
     canvas.style.cursor = 'crosshair'
 
-    // Only treat as a click if the mouse barely moved (not a pan)
     const dx = e.clientX - _mouseDownPos.x
     const dy = e.clientY - _mouseDownPos.y
     if (Math.sqrt(dx*dx + dy*dy) > 5) return
 
-    // Convert screen coords to world coords
     const rect = canvas.getBoundingClientRect()
     const cx   = e.clientX - rect.left
     const cy   = e.clientY - rect.top
     const wx   = (cx - (rect.width  / 2 - MAP_W * _lastS / 2) + mapPanX * _lastS) / _lastS
     const wy   = (cy - (rect.height / 2 - MAP_H * _lastS / 2) + mapPanY * _lastS) / _lastS
 
-    // Hit-test waypoints — pick closest within 4 world units
     const HIT_R = 2.5
     let best = null, bestDist = HIT_R
     mapWaypoints.forEach(wp => {
@@ -558,7 +622,6 @@ function drawMap(canvas) {
 
   function proj(wx, wy) { return [OX + wx * S, OY + wy * S] }
 
-  // ── Background ────────────────────────────────────────────
   ctx.save()
   ctx.shadowBlur = 0
   ctx.setLineDash([])
@@ -571,7 +634,6 @@ function drawMap(canvas) {
   ctx.fillStyle = '#080e17'
   ctx.fillRect(fx0, fy0, fw, fh)
 
-  // ── Grid ──────────────────────────────────────────────────
   ctx.lineWidth   = 0.5
   ctx.strokeStyle = 'rgba(0,180,220,0.13)'
   for (let gx = 0; gx <= MAP_W; gx += 10) {
@@ -583,7 +645,6 @@ function drawMap(canvas) {
     ctx.beginPath(); ctx.moveTo(OX, y); ctx.lineTo(OX + fw, y); ctx.stroke()
   }
 
-  // ── Scan sweep ────────────────────────────────────────────
   const sweepY   = OY + ((t * 0.18) % 1.0) * fh
   const sweepGrd = ctx.createLinearGradient(OX, sweepY, OX + fw, sweepY)
   const fade     = Math.sin(t * 0.57 * Math.PI) * 0.5 + 0.5
@@ -594,10 +655,8 @@ function drawMap(canvas) {
   ctx.strokeStyle = sweepGrd; ctx.lineWidth = 1.5
   ctx.beginPath(); ctx.moveTo(OX, sweepY); ctx.lineTo(OX + fw, sweepY); ctx.stroke()
 
-  // ── Obstacles ─────────────────────────────────────────────
   const wallPulse = 0.75 + 0.25 * Math.sin(t * 1.4)
 
-  // Boundary lines
   mapObstacles.filter(o => o.type === 'line').forEach(ob => {
     const [ax, ay] = proj(ob.x1, ob.y1)
     const [bx, by] = proj(ob.x2, ob.y2)
@@ -608,7 +667,6 @@ function drawMap(canvas) {
     ctx.shadowBlur  = 0
   })
 
-  // Wall tiles (legacy 1×1 grid cells)
   mapObstacles.filter(o => o.type === 'wall').forEach(ob => {
     const tx = OX + ob.x * S, ty = OY + ob.y * S
     ctx.fillStyle   = `rgba(0,70,110,${0.45 * wallPulse})`
@@ -618,7 +676,6 @@ function drawMap(canvas) {
     ctx.strokeRect(tx, ty, S, S)
   })
 
-  // Named point obstacles
   mapObstacles.filter(o => o.type === 'point').forEach(ob => {
     const [px, py] = proj(ob.x, ob.y)
     ctx.fillStyle   = '#0d1520'
@@ -633,7 +690,6 @@ function drawMap(canvas) {
     ctx.fillText(String(ob.label ?? 'OBS'), px, py - 8)
   })
 
-  // ── Arena perimeter ───────────────────────────────────────
   ctx.strokeStyle = `rgba(0,212,255,${0.18 * wallPulse})`
   ctx.lineWidth   = 8
   ctx.shadowColor = '#00d4ff'; ctx.shadowBlur = 18
@@ -643,7 +699,6 @@ function drawMap(canvas) {
   ctx.lineWidth   = 1.5
   ctx.strokeRect(fx0, fy0, fw, fh)
 
-  // ── Detection box helper ──────────────────────────────────
   function drawDetectionBox(wx, wy, color, label, boxW, boxH, idx) {
     const bx  = OX + (wx - boxW / 2) * S
     const by  = OY + (wy - boxH / 2) * S
@@ -666,7 +721,6 @@ function drawMap(canvas) {
   mapHumans.forEach((hm, i) =>
     drawDetectionBox(hm[0], hm[1], 'rgba(255,30,60,ALPHA)', `HUMAN-${i+1}`, 1.5, 1.5, i + 100))
 
-  // ── Waypoints ─────────────────────────────────────────────
   mapWaypoints.forEach(wp => {
     const [px, py]   = proj(wp.x, wp.y)
     const isActive   = mapRobot && Math.abs(wp.x - (mapRobot.targetX ?? -999)) < 0.5
@@ -678,7 +732,6 @@ function drawMap(canvas) {
     const glow = (isActive || isSelected) ? 10 : 4
     const r    = (isActive || isSelected) ? 7  : 5
 
-    // Selection ring
     if (isSelected) {
       ctx.strokeStyle = 'rgba(0,212,255,0.6)'
       ctx.lineWidth   = 1
@@ -687,7 +740,6 @@ function drawMap(canvas) {
       ctx.shadowBlur  = 0
     }
 
-    // Diamond
     ctx.save()
     ctx.translate(px, py)
     ctx.rotate(Math.PI / 4)
@@ -700,7 +752,6 @@ function drawMap(canvas) {
     ctx.shadowBlur = 0
     ctx.restore()
 
-    // Label
     ctx.fillStyle   = col
     ctx.font        = `${isActive ? 'bold ' : ''}8px Courier New`
     ctx.textAlign   = 'center'
@@ -709,31 +760,25 @@ function drawMap(canvas) {
     ctx.shadowBlur  = 0
   })
 
-  // ── Robot ─────────────────────────────────────────────────
   const [rpx, rpy] = proj(mapRobot.x, mapRobot.y)
   const rth        = mapRobot.theta ?? 0
-  // Canvas Y increases downward, world Y increases upward.
-  // Negate theta so CCW world rotation appears CCW on screen.
-  const rthDraw    = rth   // Y-down world: CCW theta matches canvas rotation
+  const rthDraw    = rth
   const beamTipX   = rpx + Math.cos(rthDraw) * Math.max(30, S * 5)
   const beamTipY   = rpy + Math.sin(rthDraw) * Math.max(30, S * 5)
   const r          = Math.max(7, Math.min(13, S * 0.7))
 
-  // Halo
   const haloGrd = ctx.createRadialGradient(rpx, rpy, 0, rpx, rpy, Math.max(18, S * 1.2))
   haloGrd.addColorStop(0, 'rgba(0,212,255,0.22)')
   haloGrd.addColorStop(1, 'rgba(0,212,255,0)')
   ctx.fillStyle = haloGrd
   ctx.beginPath(); ctx.arc(rpx, rpy, Math.max(18, S * 1.2), 0, Math.PI * 2); ctx.fill()
 
-  // Direction beam — gradient and line use identical tip coordinates
   const beamGrd = ctx.createLinearGradient(rpx, rpy, beamTipX, beamTipY)
   beamGrd.addColorStop(0, 'rgba(0,212,255,0.65)')
   beamGrd.addColorStop(1, 'rgba(0,212,255,0)')
   ctx.strokeStyle = beamGrd; ctx.lineWidth = 2
   ctx.beginPath(); ctx.moveTo(rpx, rpy); ctx.lineTo(beamTipX, beamTipY); ctx.stroke()
 
-  // Chevron — rotate by rthDraw so tip points in direction of travel
   ctx.save()
   ctx.translate(rpx, rpy); ctx.rotate(rthDraw)
   ctx.strokeStyle = '#00d4ff'; ctx.fillStyle = 'rgba(0,212,255,0.22)'
@@ -747,7 +792,6 @@ function drawMap(canvas) {
   ctx.fillStyle = '#00d4ff'; ctx.font = 'bold 8px Courier New'; ctx.textAlign = 'center'
   ctx.fillText('ROBOT', rpx, rpy - r - 6)
 
-  // ── Axis labels ───────────────────────────────────────────
   ctx.font = '7px Courier New'; ctx.fillStyle = 'rgba(0,180,220,0.3)'
   ctx.textAlign = 'center'
   for (let gx = 0; gx <= MAP_W; gx += 20)
@@ -756,7 +800,6 @@ function drawMap(canvas) {
   for (let gy = 0; gy <= MAP_H; gy += 20)
     ctx.fillText(`${gy}`, OX - 4, OY + gy * S + 3)
 
-  // ── Legend ────────────────────────────────────────────────
   const legend = [
     ['rgba(255,120,0,0.9)', '▣', 'Turkey'],
     ['rgba(255,30,60,0.9)', '▣', 'Human'],
@@ -771,7 +814,6 @@ function drawMap(canvas) {
     ctx.fillStyle = 'rgba(100,140,160,0.7)'; ctx.fillText(` ${lbl}`, 19, ly)
   })
 
-  // ── Zoom hint ─────────────────────────────────────────────
   ctx.font = '8px Courier New'; ctx.textAlign = 'right'
   ctx.fillStyle = 'rgba(0,180,220,0.4)'
   ctx.fillText(mapZoom > 1.01
