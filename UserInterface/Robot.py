@@ -19,7 +19,6 @@ All fields written by panel receivers. Read by the 10 Hz broadcast loop.
                           2 = error   (red dot)
 """
 
-
 class Robot:
 
     def __init__(self):

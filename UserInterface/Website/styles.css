@@ -77,7 +77,7 @@
   }
 
   .spill { display:flex; align-items:center; gap:5px; font-size:14px; letter-spacing:0.1em; text-transform:uppercase; color:var(--text-dim); }
-  .dot { width:6px; height:6px; border-radius:50%; background:var(--success); box-shadow:0 0 6px var(--success); animation:blink 2s infinite; }
+  .dot { width:6px; height:6px; border-radius:50%; background:var(--success); box-shadow:0 0 6px var(--success); }
   .dot.warn { background:var(--warn); box-shadow:0 0 6px var(--warn); }
   .dot.off  { background:var(--text-dim); box-shadow:none; animation:none; }
 

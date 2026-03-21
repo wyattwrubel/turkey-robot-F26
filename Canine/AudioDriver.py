@@ -22,7 +22,7 @@ class AsyncAudioDriver:
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
-    
+
     def play(self, name, volume=1.0):
         if name == "Stop":
             pygame.mixer.stop()

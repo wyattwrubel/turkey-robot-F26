@@ -99,3 +99,14 @@ class PanelDiagnostics:
             "turkeys": turkeys.tolist() if turkeys.size > 0 else [],
             "humans":  humans.tolist()  if humans.size  > 0 else [],
         })
+
+    async def Slip_Receiver(self, data: dict) -> None: 
+        """
+        Slipping Reporting From Drivetrain: 
+        0: No slip
+        1: Warning of Slip
+        2: Heavy slip, requires manual inspection
+        """
+        arr = np.asarray(data, dtype=float).flatten()
+        if arr.size >= 1:
+            self._robot.set_drivetrain_status(arr[0])

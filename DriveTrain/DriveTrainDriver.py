@@ -8,8 +8,9 @@ import time
 import UnscentedKalmanFilter as UKF
 
 class MotorDriver:
-    def __init__(self, PosePublisher, Simulated=False, Verbose=False):
+    def __init__(self, PosePublisher, SlipPublisher, Simulated=False, Verbose=False):
         self.PosePublisher  = PosePublisher
+        self.SlipPublisher = SlipPublisher
         self.SimulatedData  = Simulated
         self.Verbose        = Verbose
 
@@ -35,9 +36,10 @@ class MotorDriver:
         self.ReadMotorDataPeriod  = 0.05  # s | 20 Hz
         self.UpdateMotorPeriod    = 0.2   # s | 5 Hz
         self.ReadCurrentPeriod    = 0.1   # s | 10 Hz
+        self.SlipPublishPeriod    = 1     # s | 1 Hz
 
         self._MaxSpeedAllowed        = 3.0  # m/s
-        self._AntiSlipSpeedModifier  = 0.5
+
 
         self._Max_Current_Threshold = 40    # A
         self._StallDebounceLimit    = 5     # Overcurrent Counts Needed
@@ -48,7 +50,12 @@ class MotorDriver:
         self._SlipDeadband        = 0.05  # m/s — skip ratio computation below this speed
 
         # Slip state — applied in UpdateMotorSpeeds at send time
-        self._SlipModifier        = 1.0   # 1.0 = normal, 0.5 = degrade, 0.0 = stop
+        self._SlipNormal = 1.0
+        self._SlipWarn  = 0.5
+        self._SlipStop = 0.0
+
+        self._SlipModifier = self._SlipNormal
+
 
         # Accumulator for encoder speed between UWB updates
         self._enc_speed_accum     = []
@@ -95,11 +102,23 @@ class MotorDriver:
     # ------------------------------------------------------------------
     async def DriveTrainDriver_Runner(self):
         await asyncio.gather(
-            self.RobotPosePublisher(),
-            self.ReadMotorPosition(),
-            self.UpdateMotorSpeeds(),
+            # self.RobotPosePublisher(),
+            # self.ReadMotorPosition(),
+            # self.UpdateMotorSpeeds(),
             self.CheckStall(),
+            self.SlipPublisherBroadcast(),
+            self.TESTING_Debug(),
         )
+
+    # TEMP TESTER REMOVE WHEN DONE
+    async def TESTING_Debug(self):
+        while True:
+            self._SlipModifier = self._SlipNormal
+            await asyncio.sleep(2)
+            self._SlipModifier = self._SlipWarn
+            await asyncio.sleep(2)
+            self._SlipModifier = self._SlipStop
+            await asyncio.sleep(2)
 
     # ------------------------------------------------------------------
     # Robot State Publisher
@@ -110,6 +129,16 @@ class MotorDriver:
                 state = self.UKF.state.copy()
             await self.PosePublisher.publish(state)
             await asyncio.sleep(self.PosePeriod)
+
+    async def SlipPublisherBroadcast(self):
+        while self.running:
+            if(self._SlipModifier == self._SlipStop):
+                await self.SlipPublisher.publish(2)
+            elif(self._SlipModifier == self._SlipWarn):
+                await self.SlipPublisher.publish(1)
+            elif(self._SlipModifier == self._SlipNormal):
+                await self.SlipPublisher.publish(0)
+            await asyncio.sleep(self.SlipPublishPeriod)
 
     # ------------------------------------------------------------------
     # Receiver Functions
@@ -142,12 +171,12 @@ class MotorDriver:
 
                 if slip >= self._SlipStopThreshold:
                     print(f"[SLIP] HARD STOP — ratio {slip:.2f}")
-                    self._SlipModifier = 0.0
+                    self._SlipModifier = self._SlipStop
                 elif slip >= self._SlipWarnThreshold:
                     print(f"[SLIP] SOFT DEGRADE — ratio {slip:.2f}")
-                    self._SlipModifier = self._AntiSlipSpeedModifier
+                    self._SlipModifier = self._SlipWarn
                 else:
-                    self._SlipModifier = 1.0
+                    self._SlipModifier = self._SlipNormal
 
         # Reset accumulator for next UWB window
         self._enc_speed_accum = []

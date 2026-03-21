@@ -67,6 +67,7 @@ async def main():
     # These are owned by your hardware/algorithm modules and published into.
     # Subscribe the UI receivers below so the UI stays in sync.
     Drivetrain_robotpose_pub = AsyncPublisher("RobotPose")      # ── FILL IN: owned by your UKF / odometry module
+    Drivetrain_slip_pub       = AsyncPublisher("Slip")
     Sensor_uwb_pub        = AsyncPublisher("UWB")       # ── FILL IN: owned by your UWB sensor module
     Sensor_imu_pub        = AsyncPublisher("IMU")       # ── FILL IN: owned by your IMU module
     Navigation_drivetrain_pub     = AsyncPublisher("NavDrivetrain")    # ── FILL IN: owned by your trajectory tracker
@@ -88,7 +89,7 @@ async def main():
 
     Accelerometer = IMUDriver(Sensor_imu_pub, Simulation=True)
     UWB_Anchors = UWB(Sensor_uwb_pub)
-    Drivetrain = MotorDriver(Drivetrain_robotpose_pub, Simulated=True)
+    Drivetrain = MotorDriver(Drivetrain_robotpose_pub, Drivetrain_slip_pub, Simulated=True)
     Navigation = TrajectoryTracker(Navigation_drivetrain_pub)
     Canine = CanineDriver(Servoangle_canine_pub, Verbose=True)
     # VISION 
@@ -129,6 +130,9 @@ async def main():
     Drivetrain_robotpose_pub.subscribe(UserInterface.diagnostics.RobotPose_Receiver)
     # Drivetrain_robotpose_pub.subscribe("VISION")
     # Drivetrain_robotpose_pub.subscribe(STATE PLANNER)
+
+    """ Slip """
+    Drivetrain_slip_pub.subscribe(UserInterface.diagnostics.Slip_Receiver)
 
     """Macro State"""
     # UI_macrostate_pub.subscribe(<STATE PLANNER>)
