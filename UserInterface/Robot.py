@@ -90,6 +90,7 @@ class Robot:
 
     # ── Mission ───────────────────────────────────────────────
     def set_sys_state(self, state):        self.sys_state = state
+    def set_sub_state(self, state):         self.sub_state = state
     def lock_navigation(self):              self.ui_locked = True
     def unlock_navigation(self):            self.ui_locked = False
     def set_target(self, x, y, theta=0.0, nav_type=None):
@@ -119,6 +120,7 @@ class Robot:
             "y":                  round(self.y,         3),
             "theta":              round(self.theta,      4),
             "macrostate":         self.sys_state,
+            "substate":           self.sub_state,
             "nav_cmd_type":       self.nav_cmd_type,
             "target":             self.target,
             "cmd_left":           round(self.cmd_left,  3),

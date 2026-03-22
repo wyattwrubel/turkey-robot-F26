@@ -84,15 +84,25 @@ class PanelDiagnostics:
           Id="Alert"    → sys_state = "Alert"
           Id="UnlockUI" → sys_state = "Scanning"  (auto mode restored)
         """
-        mapping = {
+        mainstates = {
             "Scan":     "Scanning",
             "Chase":    "Chase",
             "Alert":    "Alert",
             "UnlockUI": "Scanning",
         }
-        state = mapping.get(data.get("Id", ""))
+
+        allowed_substates = {
+            "TravelWaypoint", "StationaryScan", "StationaryCrouch", 
+            "AggressivePursuit",  "BurstAttack", "GrowlAndChase", 
+            "WatchfulDog", "TerritorialWarning", "ShortWarningBurst",
+        }
+
+        state = mainstates.get(data.get("Id", ""))
+        substate = data.get("Id", "")
         if state:
             self._robot.set_sys_state(state)
+        elif (substate in allowed_substates):
+            self._robot.set_sub_state(substate)
         else:
             print(f"[UI MacroState_Receiver] Invalid Data '{data}'")    
 
