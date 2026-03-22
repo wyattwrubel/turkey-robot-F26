@@ -15,7 +15,7 @@ class Map:
     # 1 Fixed obstacles
     # 2 Dynamic Obstacles
     # >2 penalized weight not default 0
-    
+
     def __init__(self):
         self.LoadGrid()
 
@@ -30,17 +30,16 @@ class Map:
         self._Turkey_List = []
 
     def UpdateHuman(self, xcord, ycord):
+        # Cast to int -- coordinates may arrive as numpy.float64 from vision
+        xcord, ycord = int(xcord), int(ycord)
         self._Human_List.append([xcord, ycord])
-
-        # Outer Box Near Human Allowed But Penalized With Weight 3
         self.UpdateAroundObject(xcord, ycord, width=2, data=3)
-        # 1m radius Around Human Considered Obstacle
         self.UpdateAroundObject(xcord, ycord, width=1, data=2)
 
     def UpdateTurkey(self, xcord, ycord):
+        # Cast to int -- coordinates may arrive as numpy.float64 from vision
+        xcord, ycord = int(xcord), int(ycord)
         self._Turkey_List.append([xcord, ycord])
-
-        # 1m radius Around Turkey Considered Obstacle
         self.UpdateAroundObject(xcord, ycord, width=1, data=2)
 
     def LoadGrid(self):
@@ -52,18 +51,19 @@ class Map:
             for row in reader:
                 data_cells = row[1:]  # skip y-axis label (first column)
                 numeric_row = [int(cell) if cell.strip() != '' else 0
-                            for cell in data_cells]
+                               for cell in data_cells]
                 grid.append(numeric_row)
 
         self.Zone_Map = np.array(grid, dtype=int)
+        print(f"[MAP] Loaded grid {self.Zone_Map.shape[1]} x {self.Zone_Map.shape[0]}")
 
     def UpdateAroundObject(self, xcord, ycord, width, data):
-        xcord_low = max(xcord - width, 0)
-        xcord_high = min(xcord + width+1, self.Zone_Map.shape[1]-1)
-        ycord_low = max(ycord - width, 0)
-        ycord_high = min(ycord + width+1, self.Zone_Map.shape[0]-1)
-        
+        xcord_low  = max(xcord - width, 0)
+        xcord_high = min(xcord + width + 1, self.Zone_Map.shape[1] - 1)
+        ycord_low  = max(ycord - width, 0)
+        ycord_high = min(ycord + width + 1, self.Zone_Map.shape[0] - 1)
+
         for x in range(xcord_low, xcord_high):
             for y in range(ycord_low, ycord_high):
-                if(self.Zone_Map[y,x] != 1 and (data == 0 or self.Zone_Map[y, x] != 2)):
-                    self.Zone_Map[y, x] = data 
+                if self.Zone_Map[y, x] != 1 and (data == 0 or self.Zone_Map[y, x] != 2):
+                    self.Zone_Map[y, x] = data

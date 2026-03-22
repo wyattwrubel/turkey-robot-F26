@@ -74,6 +74,11 @@ class StatePlannerReceiver:
         self._module_chase = ModuleChase(self)
         self._module_alert = ModuleAlert(self)
 
+        # Tracks turkey positions seen inside the zone on the previous frame.
+        # Used to detect inside->outside transitions for ghost enqueueing,
+        # preventing the GhostQueue from flooding on every outside-zone frame.
+        self._turkeys_inside_prev: set = set()
+
         # Active task
         self._current_mode: Mode | None         = None
         self._current_task: asyncio.Task | None = None
@@ -228,14 +233,43 @@ class StatePlannerReceiver:
             print(f"[StatePlanner] RobotPose_Receiver: invalid data '{data}'")
 
     async def VisionObject_Receiver(self, data: dict) -> None:
-        turkeys = np.asarray(data.get("Turkeys", []), dtype=float)
+        """
+        Receives VisionObject Protocol (1A).
+        Accepts both bare dicts {Turkeys, Humans} from SimpleVision
+        and fully-spec dicts {Id: "DynamicObjects", Turkeys, Humans, Ghosts}.
 
-        self.Turkeys = turkeys.tolist() if turkeys.size > 0 else []
+        All detections stored as plain Python floats to avoid numpy.float64
+        propagating into downstream code that expects native int/float.
+        """
+        def to_plain(raw) -> list:
+            """Convert any array-like of detections to list of [float, float, float]."""
+            if raw is None or (hasattr(raw, '__len__') and len(raw) == 0):
+                return []
+            arr = np.asarray(raw, dtype=float)
+            if arr.ndim == 1:
+                arr = arr.reshape(1, -1)
+            return [[float(v) for v in row] for row in arr]
 
-        # Turkeys seen outside the zone become ghost investigation targets
+        self.Turkeys = to_plain(data.get("Turkeys"))
+        humans       = to_plain(data.get("Humans"))
+        ghosts       = to_plain(data.get("Ghosts"))
+
+        # Track inside/outside transitions to enqueue ghosts only once per
+        # turkey crossing the boundary (not every frame it is outside).
+        turkeys_inside_now = set()
         for t in self.Turkeys:
-            if self.ZoneChecker.is_outside(t[0], t[1]):
-                self._try_enqueue_ghost(t[0], t[1])
+            tid = (round(t[0], 0), round(t[1], 0))  # coarse ID for tracking
+            if self.ZoneChecker.is_inside(t[0], t[1]):
+                turkeys_inside_now.add(tid)
+            else:
+                # Enqueue ghost only if this turkey was inside on the previous frame
+                if tid in self._turkeys_inside_prev:
+                    self._try_enqueue_ghost(t[0], t[1])
+        self._turkeys_inside_prev = turkeys_inside_now
+
+        # Ghosts field from vision also enqueued as investigation targets
+        for g in ghosts:
+            self._try_enqueue_ghost(g[0], g[1])
 
         if not self.IsManualMode:
             turkey_in_zone  = any(self.ZoneChecker.is_inside(t[0], t[1])  for t in self.Turkeys)

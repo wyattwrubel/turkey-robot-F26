@@ -75,6 +75,9 @@ class Servo:
         self._SendPulse(pulse_width)
 
     def _SendPulse(self,pulse_width):
-        if self.Verbose: print("ServoDriver: ", self.Name, " Sending Pulsewidth: ", pulse_width)
+        if self.Verbose == True:
+            print("ServoDriver: ", self.Name, " Sending Pulsewidth: ", pulse_width)
+        
+        
         duty_cycle = pulse_width / 20000
         self.pwm.value = duty_cycle

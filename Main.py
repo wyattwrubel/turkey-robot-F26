@@ -39,6 +39,7 @@ from Canine.CanineDriver import CanineDriver
 from DriveTrain.DriveTrainDriver import MotorDriver
 from Sensors.AccelPublisher import IMUDriver
 from Sensors.UWBPublisher import UWB
+from StatePlanner.StatePlannerReceiver import StatePlannerReceiver
 
 
 # TODO REPLACE WITH REAL VISION
@@ -117,7 +118,8 @@ async def main():
 
     Navigation = TrajectoryTracker(DriveCommand_Navigation_pub, MotionCommand_Navigation_pub, Verbose=False)
 
-    # STATE PLANNER TODO
+    # STATE PLANNER
+    StatePlanner = StatePlannerReceiver(MacroState_StatePlanner, Canine_StatePlanner_pub, MotionCommand_StatePlanner_pub, Verbose=False)
 
     # SENSORS
     UWB_Anchors = UWB(UWB_UWBPublisher_pub)
@@ -132,7 +134,7 @@ async def main():
     """VisionObject"""
     VisionObject_Vision_pub.subscribe(UserInterface.VisionObject_Receiver)
     VisionObject_Vision_pub.subscribe(Navigation.VisionObject_Receiver)
-    # VisionObject_Vision_pub.subscribe(<STATE PLANNER>)
+    VisionObject_Vision_pub.subscribe(StatePlanner.VisionObject_Receiver)
 
     """VideoFeed"""
     VideoFeed_Vision_pub.subscribe(UserInterface.VideoFeed_Receiver)   
@@ -155,11 +157,11 @@ async def main():
     RobotPose_Drivetrain_pub.subscribe(Navigation.RobotPose_Receiver)
     RobotPose_Drivetrain_pub.subscribe(UserInterface.diagnostics.RobotPose_Receiver)
     # Drivetrain_robotpose_pub.subscribe("VISION")
-    # Drivetrain_robotpose_pub.subscribe(STATE PLANNER)
+    RobotPose_Drivetrain_pub.subscribe(StatePlanner.RobotPose_Receiver)
 
     """MacroState"""
     MacroState_StatePlanner.subscribe(UserInterface.diagnostics.MacroState_Receiver)
-    # MacroState_UI_pub.subscribe(<STATE PLANNER>)
+    MacroState_UI_pub.subscribe(StatePlanner.MacroState_Receiver)
 
     """MotionCommand"""
     MotionCommand_UI_pub.subscribe(Navigation.TrajectoryCMD_Receiver)

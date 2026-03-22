@@ -219,19 +219,19 @@ class ModuleScan:
     # ------------------------------------------------------------------
 
     async def _Move_Publish(self, data: np.ndarray) -> None:
-        self.parent.MotionCommand_Publisher({"Id": "Move", "Cmd": data})
+        await self.parent.MotionCommand_Publisher({"Id": "Move", "Cmd": data})
 
     async def _Orient_Publish(self, data: np.ndarray) -> None:
-        self.parent.MotionCommand_Publisher({"Id": "Orient", "Cmd": data})
+        await self.parent.MotionCommand_Publisher({"Id": "Orient", "Cmd": data})
 
     async def _SpeedCap_Publish(self, data: np.ndarray) -> None:
-        self.parent.MotionCommand_Publisher({"Id": "SpeedCap", "Cmd": data})
+        await self.parent.MotionCommand_Publisher({"Id": "SpeedCap", "Cmd": data})
 
     async def _Audio_Publish(self, audio: str) -> None:
-        self.parent.Canine_Publisher({"Id": "System", "Type": "Audio", "Data": audio})
+        await self.parent.Canine_Publisher({"Id": "System", "Type": "Audio", "Data": audio})
 
     async def _ServoCommand_Publish(self, servoname: str, angle: float) -> None:
-        self.parent.Canine_Publisher({"Id": "System", "Type": "Servo", "Name": servoname, "Data": angle})
+        await self.parent.Canine_Publisher({"Id": "System", "Type": "Servo", "Name": servoname, "Data": angle})
 
     async def _Pose_Publish(self, pose: str) -> None:
-        self.parent.Canine_Publisher({"Id": "System", "Type": "Pose", "Data": pose})
+        await self.parent.Canine_Publisher({"Id": "System", "Type": "Pose", "Data": pose})
