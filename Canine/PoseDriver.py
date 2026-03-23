@@ -19,11 +19,11 @@ class PoseDriver():
     def __init__(self, ServoAnglePublisher, Verbose):
         self.servos = {}
         self.Verbose = Verbose
-        self.servos["FrontLeft"] = SC.ServoController("FrontLeft", "Leg", self.Front_Left_Pin, 0, True)
-        self.servos["FrontRight"] = SC.ServoController("FrontRight", "Leg", self.Front_Right_Pin, 0, True)
-        self.servos["RearLeft"] = SC.ServoController("RearLeft", "Leg", self.Rear_Left_Pin, 0, True)
-        self.servos["RearRight"] = SC.ServoController("RearRight", "Leg", self.Rear_Right_Pin, 0, True)
-        self.servos["Head"] = SC.ServoController("Head", "Head", self.Head_Pin, 0, True)
+        self.servos["FrontLeft"] = SC.ServoController("FrontLeft", "Leg", self.Front_Left_Pin, 0, Verbose)
+        self.servos["FrontRight"] = SC.ServoController("FrontRight", "Leg", self.Front_Right_Pin, 0, Verbose)
+        self.servos["RearLeft"] = SC.ServoController("RearLeft", "Leg", self.Rear_Left_Pin, 0, Verbose)
+        self.servos["RearRight"] = SC.ServoController("RearRight", "Leg", self.Rear_Right_Pin, 0, Verbose)
+        self.servos["Head"] = SC.ServoController("Head", "Head", self.Head_Pin, 0, Verbose)
         self.ServoAnglePublisher = ServoAnglePublisher
 
     async def CanineMotor_Receiver(self, data):

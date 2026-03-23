@@ -48,7 +48,7 @@ class ModuleChase:
                     await self._burst_attack()
 
         except asyncio.CancelledError:
-            await self._SpeedCap_Publish(np.array([0.0]))
+            await self._SpeedCap_Publish(0.0)
             raise
 
     # ------------------------------------------------------------------
@@ -57,7 +57,7 @@ class ModuleChase:
 
     async def _growl_and_chase(self) -> None:
         """GrowlAndChase: 1 m/s, Growl, WalkGait, Head +30->0 deg, wait 3s, AggressiveBark, ExcitedGait."""
-        await self._SpeedCap_Publish(np.array([1.0]))
+        await self._SpeedCap_Publish(1.0)
         await self._Audio_Publish("Growl")
         await self._Pose_Publish("WalkGait")
         await self._ServoCommand_Publish("Head", 30.0)
@@ -72,7 +72,7 @@ class ModuleChase:
         AggressivePursuit: 3 m/s, ExcitedGait, random head oscillate +-40 deg,
         continuously republish Move toward nearest turkey, AggressiveBark, wait 18s.
         """
-        await self._SpeedCap_Publish(np.array([3.0]))
+        await self._SpeedCap_Publish(3.0)
         await self._Pose_Publish("ExcitedGait")
         await self._ServoCommand_Publish("Head", random.uniform(-40.0, 40.0))
         await self._Audio_Publish("AggressiveBark")
@@ -91,7 +91,7 @@ class ModuleChase:
         BurstAttack: 3 m/s, ExcitedGait, continuously pursue turkey,
         head snaps +45 and -30 deg, BarkBurst, 2s waits.
         """
-        await self._SpeedCap_Publish(np.array([3.0]))
+        await self._SpeedCap_Publish(3.0)
         await self._Pose_Publish("ExcitedGait")
 
         # Republish Move during burst
@@ -134,16 +134,16 @@ class ModuleChase:
     # ------------------------------------------------------------------
 
     async def _Move_Publish(self, data: np.ndarray) -> None:
-        self.parent.MotionCommand_Publisher({"Id": "Move", "Cmd": data})
+        await self.parent.MotionCommand_Publisher.publish({"Id": "Move", "Cmd": data})
 
     async def _SpeedCap_Publish(self, data: np.ndarray) -> None:
-        self.parent.MotionCommand_Publisher({"Id": "SpeedCap", "Cmd": data})
+        await self.parent.MotionCommand_Publisher.publish({"Id": "SpeedCap", "Cmd": data})
 
     async def _Audio_Publish(self, audio: str) -> None:
-        self.parent.Canine_Publisher({"Id": "System", "Type": "Audio", "Data": audio})
+        await self.parent.Canine_Publisher.publish({"Id": "System", "Type": "Audio", "Data": audio})
 
     async def _ServoCommand_Publish(self, servoname: str, angle: float) -> None:
-        self.parent.Canine_Publisher({"Id": "System", "Type": "Servo", "Name": servoname, "Data": angle})
+        await self.parent.Canine_Publisher.publish({"Id": "System", "Type": "Servo", "Name": servoname, "Data": angle})
 
     async def _Pose_Publish(self, pose: str) -> None:
-        self.parent.Canine_Publisher({"Id": "System", "Type": "Pose", "Data": pose})
+        await self.parent.Canine_Publisher.publish({"Id": "System", "Type": "Pose", "Data": pose})

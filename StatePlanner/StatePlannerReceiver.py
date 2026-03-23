@@ -167,7 +167,7 @@ class StatePlannerReceiver:
     async def MacroState_Receiver(self, data: dict) -> None:
         """High-level system state from User Interface."""
 
-        mainstates = {"Scan", "Chase", "Alert"}
+        mainstates = {"Scan", "Chase", "Alert", "Stop"}
 
         allowed_substates = {
             "TravelWaypoint", "StationaryScan", "StationaryCrouch",

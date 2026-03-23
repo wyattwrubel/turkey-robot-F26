@@ -56,11 +56,11 @@ class TrajectoryTracker:
             self.Map.ClearDynamicObstacles()
         
             if(turkeydata.shape[0] != 0):
-                for t_idx in turkeydata:
+                for t_idx in turkeydata.astype(int):
                     self.Map.UpdateTurkey(t_idx[0], t_idx[1])
 
             if(humandata.shape[0] != 0):
-                for h_idx in humandata:
+                for h_idx in humandata.astype(int):
                     self.Map.UpdateHuman(h_idx[0], h_idx[1])
 
         else:
@@ -75,6 +75,7 @@ class TrajectoryTracker:
     # From state planner: Desired commands
     async def TrajectoryCMD_Receiver(self, data):
         if self.Verbose: (f"Processing TrajectoryCMD {data}" )
+        print("RECEIVED ", data)
 
         try:
             input_id = data["Id"]
@@ -83,10 +84,13 @@ class TrajectoryTracker:
 
         if(input_id == "Orient"):
             self._Orient_CMD_Receiver(data)
+            await self.MotionCommandPub.publish(data)
         elif(input_id == "Move"):
             self._Move_CMD_Receiver(data)
+            await self.MotionCommandPub.publish(data)
         elif(input_id == "SpeedCap"):
             self._SpeedCap_CMD_Receiver(data)
+            await self.MotionCommandPub.publish(data)
         else:
             print(f"Bad Trajectory Command ID Received: {input_id}")
 

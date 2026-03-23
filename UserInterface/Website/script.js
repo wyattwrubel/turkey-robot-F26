@@ -152,8 +152,8 @@ function handle(m) {
     // Servo sliders — always sync
     if (Array.isArray(m.servos)) syncServos(m.servos)
 
-    // ── Blocked in manual mode ─────────────────────────────
-    if (!isManual) {
+    // // ── Blocked in manual mode ─────────────────────────────
+    // if (!isManual) {
 
       // MacroState button highlights — state machine, authoritative from server in auto
       if (m.macrostate !== undefined) {
@@ -182,7 +182,7 @@ function handle(m) {
         })
       }
 
-    } // end !isManual
+    // } // end !isManual
   }
 
   // ── Camera frame ───────────────────────────────────────────

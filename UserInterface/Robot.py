@@ -35,7 +35,7 @@ class Robot:
         self.speed_limit   = 1.5
         self._estop        = False
 
-        self.sys_state    = "Scanning"
+        self.sys_state    = "Stop"
         self.sub_state    = "Idle"
         self.target       = {"x": 0.0, "y": 0.0, "theta": 0.0}
         self.nav_cmd_type = None   # "Move" | "Orient" | None

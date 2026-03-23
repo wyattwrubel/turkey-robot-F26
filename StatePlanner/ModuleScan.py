@@ -53,7 +53,7 @@ class ModuleScan:
                     await self._patrol_waypoint()
 
         except asyncio.CancelledError:
-            await self._SpeedCap_Publish(np.array([0.0]))
+            await self._SpeedCap_Publish(0.0)
             raise
 
     # ------------------------------------------------------------------
@@ -159,7 +159,7 @@ class ModuleScan:
         WalkGait, publish Move toward target, head oscillate +-45 deg every 3s,
         BarkShort every 10s. Returns once within threshold meters of target.
         """
-        await self._SpeedCap_Publish(np.array([1.0]))
+        await self._SpeedCap_Publish(1.0)
         await self._Pose_Publish("WalkGait")
         await self._Move_Publish(np.array([target[0], target[1], 0.0]))
 
@@ -219,19 +219,19 @@ class ModuleScan:
     # ------------------------------------------------------------------
 
     async def _Move_Publish(self, data: np.ndarray) -> None:
-        self.parent.MotionCommand_Publisher({"Id": "Move", "Cmd": data})
+        await self.parent.MotionCommand_Publisher.publish({"Id": "Move", "Cmd": data})
 
     async def _Orient_Publish(self, data: np.ndarray) -> None:
-        self.parent.MotionCommand_Publisher({"Id": "Orient", "Cmd": data})
+        await self.parent.MotionCommand_Publisher.publish({"Id": "Orient", "Cmd": data})
 
     async def _SpeedCap_Publish(self, data: np.ndarray) -> None:
-        self.parent.MotionCommand_Publisher({"Id": "SpeedCap", "Cmd": data})
+        await self.parent.MotionCommand_Publisher.publish({"Id": "SpeedCap", "Cmd": data})
 
     async def _Audio_Publish(self, audio: str) -> None:
-        self.parent.Canine_Publisher({"Id": "System", "Type": "Audio", "Data": audio})
+        await self.parent.Canine_Publisher.publish({"Id": "System", "Type": "Audio", "Data": audio})
 
     async def _ServoCommand_Publish(self, servoname: str, angle: float) -> None:
-        self.parent.Canine_Publisher({"Id": "System", "Type": "Servo", "Name": servoname, "Data": angle})
+        await self.parent.Canine_Publisher.publish({"Id": "System", "Type": "Servo", "Name": servoname, "Data": angle})
 
     async def _Pose_Publish(self, pose: str) -> None:
-        self.parent.Canine_Publisher({"Id": "System", "Type": "Pose", "Data": pose})
+        await self.parent.Canine_Publisher.publish({"Id": "System", "Type": "Pose", "Data": pose})

@@ -219,7 +219,6 @@ class PanelControls:
             "Cmd": speed,
         })
 
-
     # ── On-connect sync ───────────────────────────────────────────────────────
 
     async def sync_client(self, ws: WebSocket) -> None:

@@ -52,6 +52,19 @@ class PanelDiagnostics:
             self._robot.set_servo(Name, Angle)
         else:
             print(f"[UI CanineAngle_Receiver] Invalid Data '{data}'")   
+
+    async def CaninePose_Receiver(self, data) -> None: 
+        """
+        Recceives poses from state planner: 
+        Id: "System" 
+        Type: "Pose" 
+        Data: IdlePose, AlertPose, AggressivePose, WalkGait, ExcitedGait, AlertStep
+        """
+        
+        LegalPoses = {"Stop", "IdlePose", "AlertPose", "AggressivePose", "WalkGait", "ExcitedGait", "AlertStep"}
+        Pose = data.get("Data", "")
+        if Pose in LegalPoses: 
+            self._robot.set_pose_cmd(Pose)
             
     async def UWB_Sensors_Receiver(self, data) -> None:
         """
@@ -144,6 +157,8 @@ class PanelDiagnostics:
         Id: "SpeedCap"
         Cmd: 1 x 1 numpy: [motor speed (m/s)]
         """
+        print("UI MOTIONCOMMAND ", data)
+
         id  = data.get("Id",  "")
         cmd = data.get("Cmd", "")
 
@@ -155,6 +170,7 @@ class PanelDiagnostics:
             self._robot.set_target(target[0], target[1], target[2], nav_type="Orient")
         elif id == "SpeedCap":
             speed = float(np.asarray(cmd, dtype=float).flatten()[0])
+
             self._robot.set_speed(speed)
         else:
             print(f"[UI MotionCommand_Receiver] Unknown Id '{id}'")

@@ -40,10 +40,12 @@ from DriveTrain.DriveTrainDriver import MotorDriver
 from Sensors.AccelPublisher import IMUDriver
 from Sensors.UWBPublisher import UWB
 
+# STATE PLANNER IMPORT TODO
+from StatePlanner.StatePlannerReceiver import StatePlannerReceiver
+
 
 # TODO REPLACE WITH REAL VISION
 from Vision.SimpleVision import Vision
-# STATE PLANNER IMPORT TODO
 # VISION IMPORT NEEDED TODO
 
 class AsyncPublisher:
@@ -91,12 +93,12 @@ async def main():
     RobotPose_Drivetrain_pub = AsyncPublisher("RobotPose")
 
     # MacroState
-    MacroState_StatePlanner = AsyncPublisher("StatePlanner_MacroState") # Not passed into module TODO
+    MacroState_StatePlanner = AsyncPublisher("StatePlanner_MacroState")
     MacroState_UI_pub = AsyncPublisher("UI_MacroState")
 
     # MotionCommand
     MotionCommand_Navigation_pub = AsyncPublisher("Nav_MotionCommand")
-    MotionCommand_StatePlanner_pub = AsyncPublisher("StatePlanner_MotionCommand") # Not passed into module TODO
+    MotionCommand_StatePlanner_pub = AsyncPublisher("StatePlanner_MotionCommand")
     MotionCommand_UI_pub = AsyncPublisher("UI_MotionCommand")
 
     # UWB
@@ -109,15 +111,16 @@ async def main():
     # VISION OBJECT TODO ADD HERE
 
     # REPLACE WITH REAL VIDEOFEED TODO
-    vision = Vision(VideoFeed_Vision_pub)
+    vision = Vision(VideoFeed_Vision_pub, VisionObject_Vision_pub)
     
     # REAL MODULES TODO REPLACE THIS HEADER
-    Canine = CanineDriver(ServoFeedback_Canine_pub, Verbose=True)
+    Canine = CanineDriver(ServoFeedback_Canine_pub, Verbose=False)
     Drivetrain = MotorDriver(RobotPose_Drivetrain_pub, SlipFeedback_Drivetrain_pub, Simulated=True)
 
     Navigation = TrajectoryTracker(DriveCommand_Navigation_pub, MotionCommand_Navigation_pub, Verbose=False)
 
     # STATE PLANNER TODO
+    StatePlanner = StatePlannerReceiver(MacroState_StatePlanner, Canine_StatePlanner_pub, MotionCommand_StatePlanner_pub, Verbose=False)
 
     # SENSORS
     UWB_Anchors = UWB(UWB_UWBPublisher_pub)
@@ -132,7 +135,7 @@ async def main():
     """VisionObject"""
     VisionObject_Vision_pub.subscribe(UserInterface.VisionObject_Receiver)
     VisionObject_Vision_pub.subscribe(Navigation.VisionObject_Receiver)
-    # VisionObject_Vision_pub.subscribe(<STATE PLANNER>)
+    VisionObject_Vision_pub.subscribe(StatePlanner.VisionObject_Receiver)
 
     """VideoFeed"""
     VideoFeed_Vision_pub.subscribe(UserInterface.VideoFeed_Receiver)   
@@ -140,6 +143,7 @@ async def main():
     """Canine"""
     Canine_UI_pub.subscribe(Canine.CanineDriver_Receiver)
     Canine_StatePlanner_pub.subscribe(Canine.CanineDriver_Receiver)
+    Canine_StatePlanner_pub.subscribe(UserInterface.diagnostics.CaninePose_Receiver)
 
     """ServoFeedback"""
     ServoFeedback_Canine_pub.subscribe(UserInterface.diagnostics.CanineAngle_Receiver)
@@ -155,11 +159,11 @@ async def main():
     RobotPose_Drivetrain_pub.subscribe(Navigation.RobotPose_Receiver)
     RobotPose_Drivetrain_pub.subscribe(UserInterface.diagnostics.RobotPose_Receiver)
     # Drivetrain_robotpose_pub.subscribe("VISION")
-    # Drivetrain_robotpose_pub.subscribe(STATE PLANNER)
+    RobotPose_Drivetrain_pub.subscribe(StatePlanner.RobotPose_Receiver)
 
     """MacroState"""
     MacroState_StatePlanner.subscribe(UserInterface.diagnostics.MacroState_Receiver)
-    # MacroState_UI_pub.subscribe(<STATE PLANNER>)
+    MacroState_UI_pub.subscribe(StatePlanner.MacroState_Receiver)
 
     """MotionCommand"""
     MotionCommand_UI_pub.subscribe(Navigation.TrajectoryCMD_Receiver)
@@ -181,7 +185,7 @@ async def main():
         UserInterface.serve(),
 
         # TODO FAKE VISION
-        vision.run(),
+        vision.VisionRunner(),
 
         # SIMULATED MODULES
         Drivetrain.DriveTrainDriver_Runner(),

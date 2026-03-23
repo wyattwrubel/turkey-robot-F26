@@ -26,8 +26,9 @@ class Vision:
     IMAGE_DIR       = os.path.dirname(os.path.abspath(__file__))
     IMAGE_FILES     = ["turkey1.jpg", "turkey2.jpg", "turkey3.jpg"]
 
-    def __init__(self, video_publisher):
+    def __init__(self, video_publisher, visionobject_publisher):
         self._publisher = video_publisher
+        self._visionobject_pub = visionobject_publisher
         self._frames    = []
         self._index     = 0
 
@@ -54,6 +55,10 @@ class Vision:
         self._index  = (self._index + 1) % len(self._frames)
         return frame
 
+    async def VisionRunner(self):
+        await asyncio.gather(self.run(), self.faketurkeys())
+
+
     async def run(self):
         if not self._load_images():
             print("[VISION] Failed to load images — stopping")
@@ -67,3 +72,15 @@ class Vision:
             await self._publisher.publish(self._next_frame())
             elapsed = loop.time() - start
             await asyncio.sleep(max(0, self.CAPTURE_PERIOD - elapsed))
+
+    async def faketurkeys(self):
+        
+        turkeys = [
+            [50 , 20, 0.0],
+            [30, 50 , 0.0],
+        ]
+        while True: 
+            await self._visionobject_pub.publish({"Id": "DynamicObjects", "Turkeys": turkeys, "Humans": [[70.0, 30.0, 0.0]]})
+            await asyncio.sleep(10)
+            await self._visionobject_pub.publish({"Id": "DynamicObjects", "Turkeys": [], "Humans": []})
+            await asyncio.sleep(10)
