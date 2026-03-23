@@ -61,8 +61,6 @@ class PanelDiagnostics:
         Data: IdlePose, AlertPose, AggressivePose, WalkGait, ExcitedGait, AlertStep
         """
 
-        print("RECEIVED ", data)
-
         Type = data.get("Type", "")
         Data = data.get("Data", "")
         if(Type == "Audio"):
@@ -105,8 +103,6 @@ class PanelDiagnostics:
           Id="UnlockUI" → sys_state = "Scanning"  (auto mode restored)
         """
 
-        # print("UI MACRO ", data)
-
         mainstates = {
             "Scan":     "Scanning",
             "Chase":    "Chase",
@@ -125,6 +121,7 @@ class PanelDiagnostics:
         if state:
             self._robot.set_sys_state(state)
         elif (substate in allowed_substates):
+            print("SETTING ", substate)
             self._robot.set_sub_state(substate)
         else:
             print(f"[UI MacroState_Receiver] Invalid Data '{data}'")    

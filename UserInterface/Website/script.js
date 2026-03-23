@@ -161,6 +161,11 @@ function handle(m) {
         _syncMacrostateButtons(_activeMacrostate)
       }
 
+      if(m.substate !== undefined){
+        _activeSubCmd = m.substate
+        _syncSubCmdButtons(_activeSubCmd)
+      }
+
       // Speed slider
       if (m.speed_ms != null) {
         const sl = document.getElementById('spd-range')

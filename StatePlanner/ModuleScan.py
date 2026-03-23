@@ -159,6 +159,7 @@ class ModuleScan:
         WalkGait, publish Move toward target, head oscillate +-45 deg every 3s,
         BarkShort every 10s. Returns once within threshold meters of target.
         """
+        await self.parent.MacroState_Publisher.publish({"Id": "TravelWaypoint"})
         await self._SpeedCap_Publish(1.0)
         await self._Pose_Publish("WalkGait")
         await self._Move_Publish(np.array([target[0], target[1], 0.0]))
@@ -191,6 +192,7 @@ class ModuleScan:
 
     async def _stationary_scan(self) -> None:
         """StationaryScan: AlertPose, HeadScan, BarkShort, pause 4s."""
+        await self.parent.MacroState_Publisher.publish({"Id": "StationaryScan"})
         await self._Pose_Publish("AlertPose")
         await self._Pose_Publish("HeadScan")
         await self._Audio_Publish("BarkShort")
@@ -198,6 +200,7 @@ class ModuleScan:
 
     async def _stationary_crouch(self) -> None:
         """StationaryCrouch: AggressivePose, pause 1s."""
+        await self.parent.MacroState_Publisher.publish({"Id": "StationaryCrouch"})
         await self._Pose_Publish("AggressivePose")
         await asyncio.sleep(1.0)
 

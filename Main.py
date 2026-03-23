@@ -78,6 +78,7 @@ async def main():
     # Canine Protocol
     Canine_UI_pub = AsyncPublisher("UI_Canine")
     Canine_StatePlanner_pub = AsyncPublisher("StatePlanner_Canine") # Not passed into module TODO
+    Canine_Canine_pub = AsyncPublisher("Canine_Canine")
     
     # ServoFeedback Protocol
     ServoFeedback_Canine_pub = AsyncPublisher("CanineServoAngles")
@@ -114,7 +115,7 @@ async def main():
     vision = Vision(VideoFeed_Vision_pub, VisionObject_Vision_pub)
     
     # REAL MODULES TODO REPLACE THIS HEADER
-    Canine = CanineDriver(ServoFeedback_Canine_pub, Verbose=False)
+    Canine = CanineDriver(ServoFeedback_Canine_pub, Canine_Canine_pub, Verbose=False)
     Drivetrain = MotorDriver(RobotPose_Drivetrain_pub, SlipFeedback_Drivetrain_pub, Simulated=True)
 
     Navigation = TrajectoryTracker(DriveCommand_Navigation_pub, MotionCommand_Navigation_pub, Verbose=False)
@@ -144,6 +145,7 @@ async def main():
     Canine_UI_pub.subscribe(Canine.CanineDriver_Receiver)
     Canine_StatePlanner_pub.subscribe(Canine.CanineDriver_Receiver)
     Canine_StatePlanner_pub.subscribe(UserInterface.diagnostics.CaninePose_Receiver)
+    Canine_Canine_pub.subscribe(UserInterface.diagnostics.CaninePose_Receiver)
 
     """ServoFeedback"""
     ServoFeedback_Canine_pub.subscribe(UserInterface.diagnostics.CanineAngle_Receiver)
@@ -190,6 +192,7 @@ async def main():
         # SIMULATED MODULES
         Drivetrain.DriveTrainDriver_Runner(),
         Canine.PoseDriver.MotorPositions_Runner(),
+        Canine.Audio._monitor(),
 
         # ── FILL IN: add your real module coroutines here ──────────────────
         #

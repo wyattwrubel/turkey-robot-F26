@@ -57,6 +57,7 @@ class ModuleChase:
 
     async def _growl_and_chase(self) -> None:
         """GrowlAndChase: 1 m/s, Growl, WalkGait, Head +30->0 deg, wait 3s, AggressiveBark, ExcitedGait."""
+        await self.parent.MacroState_Publisher.publish({"Id": "GrowlAndChase"})
         await self._SpeedCap_Publish(1.0)
         await self._Audio_Publish("Growl")
         await self._Pose_Publish("WalkGait")
@@ -72,6 +73,7 @@ class ModuleChase:
         AggressivePursuit: 3 m/s, ExcitedGait, random head oscillate +-40 deg,
         continuously republish Move toward nearest turkey, AggressiveBark, wait 18s.
         """
+        await self.parent.MacroState_Publisher.publish({"Id": "AggressivePursuit"})
         await self._SpeedCap_Publish(3.0)
         await self._Pose_Publish("ExcitedGait")
         await self._ServoCommand_Publish("Head", random.uniform(-40.0, 40.0))
@@ -91,6 +93,7 @@ class ModuleChase:
         BurstAttack: 3 m/s, ExcitedGait, continuously pursue turkey,
         head snaps +45 and -30 deg, BarkBurst, 2s waits.
         """
+        await self.parent.MacroState_Publisher.publish({"Id": "BurstAttack"})
         await self._SpeedCap_Publish(3.0)
         await self._Pose_Publish("ExcitedGait")
 

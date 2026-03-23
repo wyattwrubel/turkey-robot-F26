@@ -9,8 +9,8 @@ class CanineDriver:
     
     UI_lock = False
 
-    def __init__(self, ServoAnglePublisher, Verbose=False):
-        self.Audio = AudioDriver.AsyncAudioDriver(Verbose)
+    def __init__(self, ServoAnglePublisher, AudioFeedbackPublisher, Verbose=False):
+        self.Audio = AudioDriver.AsyncAudioDriver(AudioFeedbackPublisher, Verbose)
         self.PoseDriver = PoseDriver.PoseDriver(ServoAnglePublisher, Verbose)
 
     async def CanineDriver_Receiver(self, data):

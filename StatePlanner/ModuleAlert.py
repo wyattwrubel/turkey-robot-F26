@@ -63,6 +63,7 @@ class ModuleAlert:
 
     async def _watchful_dog(self) -> None:
         """WatchfulDog: AlertPose, HeadScan, BarkShort every 5s for 30s."""
+        await self.parent.MacroState_Publisher.publish({"Id": "WatchfulDog"})
         await self._Pose_Publish("AlertPose")
         await self._Pose_Publish("HeadScan")
 
@@ -78,6 +79,7 @@ class ModuleAlert:
 
     async def _territorial_warning(self) -> None:
         """TerritorialWarning: AlertStep, Growl, slow head oscillate +-30 deg over 30s."""
+        await self.parent.MacroState_Publisher.publish({"Id": "TerritorialWarning"})
         await self._Pose_Publish("AlertStep")
         await self._Audio_Publish("Growl")
 
@@ -95,6 +97,7 @@ class ModuleAlert:
 
     async def _short_warning_burst(self) -> None:
         """ShortWarningBurst: 5x [BarkBurst, Head +40, AlertStep, wait 3s, AlertPose, Head -40, BarkBurst, wait 3s]."""
+        await self.parent.MacroState_Publisher.publish({"Id": "ShortWarningBurst"})
         for _ in range(5):
             await self._Audio_Publish("BarkBurst")
             await self._ServoCommand_Publish("Head", 40.0)
