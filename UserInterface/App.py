@@ -95,16 +95,16 @@ class CDSControlServer:
     # ── Broadcast helper (passed into panels that need to push directly) ──────
 
     async def _broadcast(self, msg: dict) -> None:
-        """Serialize and send a dict to every connected browser client."""
         text = json.dumps(msg)
         dead = []
-        for ws in self.connections:
+        for ws in list(self.connections):   # ← iterate a snapshot
             try:
                 await ws.send_text(text)
             except Exception:
                 dead.append(ws)
         for ws in dead:
-            self.connections.remove(ws)
+            if ws in self.connections:      # ← guard against double-remove
+                self.connections.remove(ws)
 
     # ── Receiver shims ────────────────────────────────────────────────────────
     # Panels that need to broadcast require _broadcast passed in.

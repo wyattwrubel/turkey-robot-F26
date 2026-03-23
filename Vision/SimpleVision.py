@@ -77,13 +77,14 @@ class Vision:
         await asyncio.sleep(2)
         while True: 
             await self._visionobject_pub.publish({"Id": "DynamicObjects", "Turkeys": [], "Humans": []})
-            await asyncio.sleep(10)
-            turkeys = [[30, 20 , 0.0]]
-            await self._visionobject_pub.publish({"Id": "DynamicObjects", "Turkeys": turkeys, "Humans": [[70.0, 30.0, 0.0]]})
+            await asyncio.sleep(5)
+            turkeys = [[30, 10 , 0.0]]
+            # await self._visionobject_pub.publish({"Id": "DynamicObjects", "Turkeys": turkeys, "Humans": [[70.0, 30.0, 0.0]]})
+            await self._visionobject_pub.publish({"Id": "DynamicObjects", "Turkeys": turkeys, "Humans": []})
             await asyncio.sleep(15)     
             turkeys = [
-                [60 , 60, 0.0],
+                [60 , 10, 0.0],
                 # [30, 50 , 0.0],
             ]
-            await self._visionobject_pub.publish({"Id": "DynamicObjects", "Turkeys": turkeys, "Humans": [[70.0, 30.0, 0.0]]})
+            await self._visionobject_pub.publish({"Id": "DynamicObjects", "Turkeys": turkeys, "Humans": []})
             await asyncio.sleep(10)

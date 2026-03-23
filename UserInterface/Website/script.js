@@ -81,8 +81,8 @@ function buildAudio() {
 // WEBSOCKET
 // ═══════════════════════════════════════════════
 function connect() {
-  ws = new WebSocket('ws://localhost:8000/ws')
-  // ws = new WebSocket('ws://192.168.4.2:8000/ws')
+  // ws = new WebSocket('ws://localhost:8000/ws')
+  ws = new WebSocket('ws://192.168.4.2:8000/ws')
   ws.onopen    = ()  => { wsReady = true }
   ws.onclose   = ()  => { wsReady = false; setTimeout(connect, 1500) }
   ws.onmessage = (e) => {
