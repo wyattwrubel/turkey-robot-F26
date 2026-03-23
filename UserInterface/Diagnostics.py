@@ -60,11 +60,18 @@ class PanelDiagnostics:
         Type: "Pose" 
         Data: IdlePose, AlertPose, AggressivePose, WalkGait, ExcitedGait, AlertStep
         """
-        
+
+        print("RECEIVED ", data)
+
+        Type = data.get("Type", "")
+        Data = data.get("Data", "")
+        if(Type == "Audio"):
+            self._robot.set_audio(Data)
+
         LegalPoses = {"Stop", "IdlePose", "AlertPose", "AggressivePose", "WalkGait", "ExcitedGait", "AlertStep"}
-        Pose = data.get("Data", "")
-        if Pose in LegalPoses: 
-            self._robot.set_pose_cmd(Pose)
+
+        if Data in LegalPoses: 
+            self._robot.set_pose_cmd(Data)
             
     async def UWB_Sensors_Receiver(self, data) -> None:
         """
@@ -97,6 +104,9 @@ class PanelDiagnostics:
           Id="Alert"    → sys_state = "Alert"
           Id="UnlockUI" → sys_state = "Scanning"  (auto mode restored)
         """
+
+        # print("UI MACRO ", data)
+
         mainstates = {
             "Scan":     "Scanning",
             "Chase":    "Chase",
@@ -157,7 +167,6 @@ class PanelDiagnostics:
         Id: "SpeedCap"
         Cmd: 1 x 1 numpy: [motor speed (m/s)]
         """
-        print("UI MOTIONCOMMAND ", data)
 
         id  = data.get("Id",  "")
         cmd = data.get("Cmd", "")

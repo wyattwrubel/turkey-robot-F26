@@ -293,7 +293,7 @@ function updateSliderBg(el) {
 // ═══════════════════════════════════════════════
 function playAudio(soundId, btn) {
   send({ type: 'audio_play', sound: soundId })
-  flash(btn)
+  // flash(btn)
 }
 
 // ═══════════════════════════════════════════════

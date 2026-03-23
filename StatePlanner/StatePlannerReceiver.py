@@ -103,6 +103,14 @@ class StatePlannerReceiver:
             Mode.ALERT: self._module_alert,
         }
 
+        mode_map = {
+            Mode.SCAN: "Scan",
+            Mode.CHASE: "Chase",
+            Mode.ALERT: "Alert",
+        }
+        
+        await self.MacroState_Publisher.publish({"Id": mode_map[new_mode]})
+
         self._current_task = asyncio.create_task(module_map[new_mode].run())
         self._current_task.add_done_callback(self._on_module_exit)
 

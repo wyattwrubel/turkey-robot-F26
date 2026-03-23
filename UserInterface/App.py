@@ -121,7 +121,7 @@ class CDSControlServer:
     async def _broadcast_state(self) -> None:
         while True:
             await asyncio.sleep(0.1)
-            self.robot.tick(0.1)
+            # self.robot.tick(0.1)
             if self.connections:
                 await self._broadcast(self.robot.to_state_msg())
 
