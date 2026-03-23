@@ -29,7 +29,7 @@ class Servo:
     GPIO_PIN = None
     Verbose = False
 
-    def __init__(self, Name, ServoType, GPIO_PIN, Verbose=False):
+    def __init__(self, Name, ServoType, GPIO_PIN, Current_Angle, Verbose=False):
         """
         Parameters
         ----------
@@ -43,6 +43,7 @@ class Servo:
 
         self.Name = Name
         self.GPIO_PIN = GPIO_PIN
+        self.Current_Angle = Current_Angle
         self.Verbose = Verbose
         factory = LGPIOFactory()
         self.pwm = PWMOutputDevice(GPIO_PIN, frequency=50, pin_factory=factory)
@@ -65,7 +66,8 @@ class Servo:
             print("ServoDriver: Invalid 'ServoType' Received ", ServoType)
 
     def SetAngle(self, Angle):
-        # TODO Flip orientation of some motors maybe?
+        # TODO Flip orientation of Left or Right motors
+        
         motor_angle = max(self.Min_Command_Angle, min(self.Max_Command_Angle, Angle))
         self.Current_Angle = motor_angle
         t = (motor_angle - self.Motor_Min_Angle) / (self.Motor_Max_Angle - self.Motor_Min_Angle)

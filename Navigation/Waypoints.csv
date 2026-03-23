@@ -1,0 +1,9 @@
+# Waypoints.csv — Zone Map waypoints
+# Format: label, x, y
+# Coordinates in metres, matching Zone.csv grid origin.
+
+WP1, 10.0, 5.0
+WP2, 20.0, 15.0
+WP3, 5.0, 30.0
+WP4, 30.0, 30.0
+WP5, 25.0, 60.0

@@ -9,9 +9,9 @@ class CanineDriver:
     
     UI_lock = False
 
-    def __init__(self, Verbose):
-        self.Audio = AudioDriver.AsyncAudioDriver()
-        self.PoseDriver = PoseDriver.PoseDriver(Verbose)
+    def __init__(self, ServoAnglePublisher, AudioFeedbackPublisher, Verbose=False):
+        self.Audio = AudioDriver.AsyncAudioDriver(AudioFeedbackPublisher, Verbose)
+        self.PoseDriver = PoseDriver.PoseDriver(ServoAnglePublisher, Verbose)
 
     async def CanineDriver_Receiver(self, data):
         """ Receiver For All Canine Related Commands. See Protocol #2 For More Details """
@@ -40,8 +40,7 @@ class CanineDriver:
             cmd_data = data["Data"]
         except KeyError:
            print(f"CanineDriver: 'Type' or 'Data' key missing in {data}") 
-
-        if(cmd_type == "Audio" and cmd_data in self.Audio.sounds):
+        if(cmd_type == "Audio" and (cmd_data in self.Audio.sounds) or (cmd_data == "Stop")):
             self.Audio.play(cmd_data)
         elif(cmd_type == "Servo" or cmd_type == "Pose"):
             await self.PoseDriver.CanineMotor_Receiver(data)

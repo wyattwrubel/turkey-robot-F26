@@ -15,7 +15,9 @@ class TrajectoryTracker:
     Map = MapUpdater.Map()
     MPC = MovementExecutor.MPC_loop()
 
-    def __init__(self, Verbose=False):
+    def __init__(self, DriveTrainPub, MotionCommandPub, Verbose=False):
+        self.DriveTrainPub = DriveTrainPub
+        self.MotionCommandPub = MotionCommandPub
         self.Verbose = Verbose
 
     # From vision: dynamic objects in field of view
@@ -54,11 +56,11 @@ class TrajectoryTracker:
             self.Map.ClearDynamicObstacles()
         
             if(turkeydata.shape[0] != 0):
-                for t_idx in turkeydata:
+                for t_idx in turkeydata.astype(int):
                     self.Map.UpdateTurkey(t_idx[0], t_idx[1])
 
             if(humandata.shape[0] != 0):
-                for h_idx in humandata:
+                for h_idx in humandata.astype(int):
                     self.Map.UpdateHuman(h_idx[0], h_idx[1])
 
         else:
@@ -73,6 +75,7 @@ class TrajectoryTracker:
     # From state planner: Desired commands
     async def TrajectoryCMD_Receiver(self, data):
         if self.Verbose: (f"Processing TrajectoryCMD {data}" )
+        print("RECEIVED ", data)
 
         try:
             input_id = data["Id"]
@@ -80,16 +83,19 @@ class TrajectoryTracker:
            print(f"Bad Trajectory Command ID Received: 'Id' key missing in {data}")
 
         if(input_id == "Orient"):
-            self.Orient_CMD_Receiver(data)
+            self._Orient_CMD_Receiver(data)
+            await self.MotionCommandPub.publish(data)
         elif(input_id == "Move"):
-            self.Move_CMD_Receiver(data)
+            self._Move_CMD_Receiver(data)
+            await self.MotionCommandPub.publish(data)
         elif(input_id == "SpeedCap"):
-            self.SpeedCap_CMD_Receiver(data)
+            self._SpeedCap_CMD_Receiver(data)
+            await self.MotionCommandPub.publish(data)
         else:
             print(f"Bad Trajectory Command ID Received: {input_id}")
 
     # Used to Traverse Zone For Chase Routines
-    def Move_CMD_Receiver(self, data):
+    def _Move_CMD_Receiver(self, data):
         try: 
             input_cmd = data["Cmd"]
         except KeyError:
@@ -116,7 +122,7 @@ class TrajectoryTracker:
             print(trajectory)
 
     # Used to Max Fine Adjustments For Rotation and Alert Routines
-    def Orient_CMD_Receiver(self, data):    
+    def _Orient_CMD_Receiver(self, data):    
         try: 
             input_cmd = data["Cmd"]
         except KeyError:
@@ -125,7 +131,7 @@ class TrajectoryTracker:
         self.MPC.Orient_CMD_Receiver(input_cmd)
 
     # Regulates Maximum Speed Traversed By The Robot
-    def SpeedCap_CMD_Receiver(self, data):
+    def _SpeedCap_CMD_Receiver(self, data):
         try: 
             input_cmd = data["Cmd"]
         except KeyError:
