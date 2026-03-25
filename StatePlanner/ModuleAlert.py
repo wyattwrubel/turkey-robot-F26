@@ -18,7 +18,6 @@ Outputs:
 import asyncio
 import numpy as np
 
-
 class ModuleAlert:
 
     def __init__(self, parent):
@@ -34,24 +33,26 @@ class ModuleAlert:
         Runs one 2-minute alert path then exits naturally.
         _on_module_exit in StatePlannerReceiver handles re-arbitration.
 
-        Path1: WatchfulDog, TerritorialWarning, WatchfulDog,        WatchfulDog
-        Path2: WatchfulDog, TerritorialWarning, ShortWarningBurst,  WatchfulDog
-        Path3: ShortWarningBurst, WatchfulDog,  ShortWarningBurst,  WatchfulDog
+        Path1: TerritorialWarning, ShortWarningBurst, TerritorialWarning, ShortWarningBurst
+        Path2: TerritorialWarning, WatchfulDog
+        Path3: ShortWarnngBurst, WatchfulDog
         """
-        alert_paths = [
-            [self._watchful_dog, self._territorial_warning, self._watchful_dog,        self._watchful_dog],
-            [self._watchful_dog, self._territorial_warning, self._short_warning_burst,  self._watchful_dog],
-            [self._short_warning_burst, self._watchful_dog, self._short_warning_burst,  self._watchful_dog],
-        ]
-
+        
         try:
-            path = alert_paths[self._path_idx % 3]
-            self._path_idx += 1
-
-            for substate_fn in path:
-                await substate_fn()
-
-            # Natural exit -- _on_module_exit will call _rearbitrate()
+            border_distance = self.parent.ZoneChecker.border_distance(self.parent.Current_RobotPose[0], self.parent.Current_RobotPose[1])
+            if(border_distance < 2):
+                await self._territorial_warning()
+                await self._short_warning_burst()
+                await self._territorial_warning()
+                await self._short_warning_burst()
+            else:
+                if(self._path_idx % 2 == 1):
+                    await self._territorial_warning()
+                    await self._watchful_dog()
+                else:
+                    await self._short_warning_burst()
+                    await self._watchful_dog()
+                self._path_idx+=1
 
         except asyncio.CancelledError:
             await self._SpeedCap_Publish(0.0)
@@ -62,50 +63,43 @@ class ModuleAlert:
     # ------------------------------------------------------------------
 
     async def _watchful_dog(self) -> None:
-        """WatchfulDog: AlertPose, HeadScan, BarkShort every 5s for 30s."""
         await self.parent.MacroState_Publisher.publish({"Id": "WatchfulDog"})
         await self._Pose_Publish("AlertPose")
+        await self._SpeedCap_Publish(3.0)
         await self._Pose_Publish("HeadScan")
-
-        elapsed    = 0.0
-        bark_timer = 0.0
-        while elapsed < 30.0:
-            await asyncio.sleep(0.5)
-            elapsed    += 0.5
-            bark_timer += 0.5
-            if bark_timer >= 5.0:
-                await self._Audio_Publish("BarkShort")
-                bark_timer = 0.0
+        
+        for i in range(0,6):  
+            await self._Audio_Publish("BarkShort")
+            await asyncio.sleep(5)
 
     async def _territorial_warning(self) -> None:
-        """TerritorialWarning: AlertStep, Growl, slow head oscillate +-30 deg over 30s."""
         await self.parent.MacroState_Publisher.publish({"Id": "TerritorialWarning"})
+        await self._SpeedCap_Publish(3.0)
         await self._Pose_Publish("AlertStep")
-        await self._Audio_Publish("Growl")
+        
+        for i in range(0,5):  
+            await self._Audio_Publish("BarkShort_2x2")
+            await asyncio.sleep(2)
+            await self._Audio_Publish("BarkShort_3x")
+            await asyncio.sleep(1)
+            await self._Audio_Publish("BarkShort_3x")
+            await asyncio.sleep(1)
+            await self._Audio_Publish("BarkShort_2x2")
+            await asyncio.sleep(2)
 
-        elapsed    = 0.0
-        head_timer = 0.0
-        head_dir   = 1
-        while elapsed < 30.0:
-            await asyncio.sleep(0.5)
-            elapsed    += 0.5
-            head_timer += 0.5
-            if head_timer >= 5.0:
-                await self._ServoCommand_Publish("Head", 30.0 * head_dir)
-                head_dir  *= -1
-                head_timer = 0.0
 
     async def _short_warning_burst(self) -> None:
-        """ShortWarningBurst: 5x [BarkBurst, Head +40, AlertStep, wait 3s, AlertPose, Head -40, BarkBurst, wait 3s]."""
         await self.parent.MacroState_Publisher.publish({"Id": "ShortWarningBurst"})
-        for _ in range(5):
+        await self._SpeedCap_Publish(3.0)
+
+        for i in range(5):
             await self._Audio_Publish("BarkBurst")
             await self._ServoCommand_Publish("Head", 40.0)
             await self._Pose_Publish("AlertStep")
             await asyncio.sleep(3.0)
             await self._Pose_Publish("AlertPose")
             await self._ServoCommand_Publish("Head", -40.0)
-            await self._Audio_Publish("BarkBurst")
+            await self._Audio_Publish("BarkShort_2x2")
             await asyncio.sleep(3.0)
 
     # ------------------------------------------------------------------

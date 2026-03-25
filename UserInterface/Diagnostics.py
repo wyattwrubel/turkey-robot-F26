@@ -66,7 +66,7 @@ class PanelDiagnostics:
         if(Type == "Audio"):
             self._robot.set_audio(Data)
 
-        LegalPoses = {"Stop", "IdlePose", "AlertPose", "AggressivePose", "WalkGait", "ExcitedGait", "AlertStep"}
+        LegalPoses = {"Stop", "IdlePose", "AlertPose", "AggressivePose", "WalkGait", "ExcitedGait", "AlertStep", "BarkBurst_2x2", "BarkBurst_3x"}
 
         if Data in LegalPoses: 
             self._robot.set_pose_cmd(Data)
@@ -113,7 +113,7 @@ class PanelDiagnostics:
         allowed_substates = {
             "TravelWaypoint", "StationaryScan", "StationaryCrouch", 
             "AggressivePursuit",  "BurstAttack", "GrowlAndChase", 
-            "WatchfulDog", "TerritorialWarning", "ShortWarningBurst",
+            "WatchfulDog", "TerritorialWarning", "ShortWarningBurst", "Stop"
         }
 
         state = mainstates.get(data.get("Id", ""))
@@ -121,7 +121,6 @@ class PanelDiagnostics:
         if state:
             self._robot.set_sys_state(state)
         elif (substate in allowed_substates):
-            print("SETTING ", substate)
             self._robot.set_sub_state(substate)
         else:
             print(f"[UI MacroState_Receiver] Invalid Data '{data}'")    

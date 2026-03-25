@@ -74,17 +74,17 @@ class Vision:
             await asyncio.sleep(max(0, self.CAPTURE_PERIOD - elapsed))
 
     async def faketurkeys(self):
-        await asyncio.sleep(2)
+        await asyncio.sleep(4)
         while True: 
-            await self._visionobject_pub.publish({"Id": "DynamicObjects", "Turkeys": [], "Humans": []})
-            await asyncio.sleep(5)
+            # await self._visionobject_pub.publish({"Id": "DynamicObjects", "Turkeys": [], "Humans": []})
+            # await asyncio.sleep(5)
             turkeys = [[30, 10 , 0.0]]
             # await self._visionobject_pub.publish({"Id": "DynamicObjects", "Turkeys": turkeys, "Humans": [[70.0, 30.0, 0.0]]})
             await self._visionobject_pub.publish({"Id": "DynamicObjects", "Turkeys": turkeys, "Humans": []})
-            await asyncio.sleep(15)     
-            turkeys = [
-                [60 , 10, 0.0],
-                # [30, 50 , 0.0],
-            ]
-            await self._visionobject_pub.publish({"Id": "DynamicObjects", "Turkeys": turkeys, "Humans": []})
-            await asyncio.sleep(10)
+            await asyncio.sleep(20)     
+            # turkeys = [
+            #     [60 , 10, 0.0],
+            #     # [30, 50 , 0.0],
+            # ]
+            # await self._visionobject_pub.publish({"Id": "DynamicObjects", "Turkeys": turkeys, "Humans": []})
+            # await asyncio.sleep(60)

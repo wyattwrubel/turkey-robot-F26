@@ -33,10 +33,30 @@ class Mode(Enum):
     CHASE = auto()
     ALERT = auto()
 
-
 # ------------------------------------------------------------------
 # StatePlannerReceiver
 # ------------------------------------------------------------------
+
+
+        # # Republish Move toward turkey every 0.5s for 18s
+        # elapsed = 0.0
+        # while elapsed < 18.0:
+        #     target = self._nearest_turkey_position()
+        #     if target is not None:
+        #         await self._Move_Publish(np.array([target[0], target[1], 0.0]))
+        #     await asyncio.sleep(0.5)
+        #     elapsed += 0.5
+
+
+        # # Republish Move during burst
+        # target = self._nearest_turkey_position()
+        # if target is not None:
+        #     await self._Move_Publish(np.array([target[0], target[1], 0.0]))
+
+    # ------------------------------------------------------------------
+    # Turkey Helpers
+    # ------------------------------------------------------------------
+
 
 class StatePlannerReceiver:
 
@@ -175,12 +195,12 @@ class StatePlannerReceiver:
     async def MacroState_Receiver(self, data: dict) -> None:
         """High-level system state from User Interface."""
 
-        mainstates = {"Scan", "Chase", "Alert", "Stop"}
+        mainstates = {"Scan", "Chase", "Alert"}
 
         allowed_substates = {
             "TravelWaypoint", "StationaryScan", "StationaryCrouch",
             "AggressivePursuit", "BurstAttack", "GrowlAndChase",
-            "WatchfulDog", "TerritorialWarning", "ShortWarningBurst",
+            "WatchfulDog", "TerritorialWarning", "ShortWarningBurst", "Stop"
         }
 
         state = data.get("Id", "")
@@ -213,6 +233,7 @@ class StatePlannerReceiver:
                 "WatchfulDog":        self._module_alert._watchful_dog,
                 "TerritorialWarning": self._module_alert._territorial_warning,
                 "ShortWarningBurst":  self._module_alert._short_warning_burst,
+                "Stop":               self.StopAll,
             }
 
             if self._current_task and not self._current_task.done():
@@ -227,6 +248,11 @@ class StatePlannerReceiver:
 
         else:
             print(f"[StatePlanner] MacroState_Receiver: invalid data '{data}'")
+
+    async def StopAll(self):
+        await self._module_scan._Pose_Publish("IdlePose")
+        await self._module_scan._Audio_Publish("Stop")
+        await self.MacroState_Publisher.publish({"Id": "Stop"})
 
     async def RobotPose_Receiver(self, data) -> None:
         arr = np.asarray(data, dtype=float).flatten()
