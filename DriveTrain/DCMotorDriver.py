@@ -24,10 +24,10 @@ class DC_Driver:
     """
 
     # Serial ports -- one per motor controller TODO update to real ports
-    port_fl  = "/tmp/vserial0"
-    port_fr  = "/tmp/vserial1"
-    port_rl  = "/tmp/vserial2"
-    port_rr  = "/tmp/vserial3"
+    port_fl  = "/dev/ttyACM0"
+    port_fr  = "/dev/ttyACM1"
+    port_rl  = "/dev/ttyACM2"
+    port_rr  = "/dev/ttyACM3"
 
     baudrate = 115200
     timeout  = 0.05   # seconds -- keep short for real-time control

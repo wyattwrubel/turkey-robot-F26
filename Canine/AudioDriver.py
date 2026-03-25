@@ -21,6 +21,8 @@ class AsyncAudioDriver:
             "BarkBurst":     pygame.mixer.Sound(f"{base}/BarkBurst.mp3"),
             "Growl":         pygame.mixer.Sound(f"{base}/Growl.mp3"),
             "AggressiveBark":pygame.mixer.Sound(f"{base}/AggressiveBark.mp3"),
+            "BarkShort_2x2": pygame.mixer.Sound(f"{base}/BarkShort_2x2.mp3"),
+            "BarkShort_3x": pygame.mixer.Sound(f"{base}/BarkShort_3x.mp3"),
         }
 
     # ------------------------------------------------------------------

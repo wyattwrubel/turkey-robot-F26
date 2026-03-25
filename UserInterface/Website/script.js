@@ -14,6 +14,8 @@ const AUDIO_DEFS = [
   { id: 'BarkBurst',     label: '🔊 BarkBurst'     },
   { id: 'Growl',         label: '🔊 Growl'         },
   { id: 'AggressiveBark',label: '🔊 AggressiveBark'},
+  { id: 'BarkShort_2x2',label: '🔊 BarkShort_2x2'},
+  { id: 'BarkShort_3x',label: '🔊 BarkShort_3x'},
   { id: 'Stop',          label: 'Stop Audio'        },
 ]
 
