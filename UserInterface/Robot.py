@@ -53,16 +53,6 @@ class Robot:
         # 0 = nominal, 1 = warning, 2 = error
         self.drivetrain_status = 0
 
-    # def tick(self, dt: float = 0.1) -> None:
-    #     """Advance audio highlight timer. Called at 10 Hz.
-    #     Note: active_pose is now a persistent state machine — it does NOT time out.
-    #     It remains set until explicitly changed via set_pose_cmd().
-    #     """
-    #     if self.active_audio is not None:
-    #         self._audio_timer -= dt
-    #         if self._audio_timer <= 0:
-    #             self.active_audio = None
-
     # ── Sensors ───────────────────────────────────────────────
     def set_robot_pose(self, x, y, theta): self.x, self.y, self.theta = x, y, theta
     def set_uwb(self, x, y):               self.uwb_x, self.uwb_y = x, y

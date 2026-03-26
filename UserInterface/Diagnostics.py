@@ -66,9 +66,9 @@ class PanelDiagnostics:
         if(Type == "Audio"):
             self._robot.set_audio(Data)
 
-        LegalPoses = {"Stop", "IdlePose", "AlertPose", "AggressivePose", "WalkGait", "ExcitedGait", "AlertStep", "BarkBurst_2x2", "BarkBurst_3x"}
-
-        if Data in LegalPoses: 
+        LegalPoses = {"Stop", "IdlePose", "AlertPose", "AggressivePose", "WalkGait", "ExcitedGait", "AlertStep", "HeadScan"}
+        print("DATA UI RECEIVED ", data)
+        if Data in LegalPoses and Type == "Pose": 
             self._robot.set_pose_cmd(Data)
             
     async def UWB_Sensors_Receiver(self, data) -> None:

@@ -99,11 +99,13 @@ class PanelControls:
             angle    = float(data.get("angle", 0.0))
             self._robot.set_servo(servo_id, angle)
             await self._pub_servo(servo_id, angle)
+            await self._macrostate_pub.publish({"Id": "Idle"})
 
         elif msg_type == "pose_command":
             pose = data.get("pose", "")
             self._robot.set_pose_cmd(pose)
             await self._pub_pose(pose)
+            await self._macrostate_pub.publish({"Id": "Idle"})
 
         elif msg_type == "audio_play":
             sound = data.get("sound", "")
@@ -122,6 +124,7 @@ class PanelControls:
         elif msg_type == "estop":
             self._robot.estop_engage()
             await self._pub_drivetrain("UI", 0.0, 0.0)
+            await self._macrostate_pub.publish({"Id": "Stop"})
 
         elif msg_type == "estop_reset":
             self._robot.estop_release()

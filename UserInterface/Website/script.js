@@ -83,9 +83,9 @@ function buildAudio() {
 // WEBSOCKET
 // ═══════════════════════════════════════════════
 function connect() {
-  // ws = new WebSocket('ws://localhost:8000/ws')
+  ws = new WebSocket('ws://localhost:8000/ws')
   // ws = new WebSocket('ws://192.168.4.2:8000/ws')
-  ws = new WebSocket('ws://100.67.22.116:8000/ws')
+  // ws = new WebSocket('ws://100.67.22.116:8000/ws')
   
   ws.onopen    = ()  => { wsReady = true }
   ws.onclose   = ()  => { wsReady = false; setTimeout(connect, 1500) }
@@ -160,6 +160,7 @@ function handle(m) {
     // if (!isManual) {
 
       // MacroState button highlights — state machine, authoritative from server in auto
+
       if (m.macrostate !== undefined) {
         _activeMacrostate = m.macrostate
         _syncMacrostateButtons(_activeMacrostate)
