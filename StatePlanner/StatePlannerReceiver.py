@@ -60,6 +60,7 @@ class StatePlannerReceiver:
 
     async def _switch_to(self, coro) -> None:
         """Cancel the running task and start a new one."""
+        await self.Stop_Routine()
         await self._cancel_current_task()
         self._current_task = asyncio.get_event_loop().create_task(coro)
 
@@ -165,11 +166,12 @@ class StatePlannerReceiver:
 
     async def _arbitrate_auto(self) -> None:
         """Called whenever sensor data changes. Switches task only if mode changed."""
-        if self.Turkeys:
+        
+        if any(self.ZoneChecker.is_inside(turkey[0], turkey[1]) for turkey in self.Turkeys):
             target = Mode.CHASE
-        elif self.GhostQueue:
+        elif (self._active_auto_mode == Mode.CHASE):
             target = Mode.ALERT
-        else:
+        elif (self._current_task == None):
             target = Mode.SCAN
 
         if target == self._active_auto_mode:
@@ -192,29 +194,53 @@ class StatePlannerReceiver:
     # ------------------------------------------------------------------
 
     async def Scan_Routine(self):
+        AtWaypoint = False
+
         await self.MacroState_Publisher.publish({"Id": "Scan"})
         if (self.Verbose):
             print("[StatePlannerReceiver] Starting Scan Routine")        
+        
+        # TODO 
         while True: 
             print("SCANNING")
             await asyncio.sleep(2)
 
     async def Chase_Routine(self):
         await self.MacroState_Publisher.publish({"Id": "Chase"})
+
+        #TODO 
+        TurkeyNear = False
+        
         if (self.Verbose):
             print("[StatePlannerReceiver] Starting Chase Routine")        
         while True: 
-            print("TURKEYS ", self.Turkeys)
-            await asyncio.sleep(2)
+            if(TurkeyNear == False):
+                if (self.Verbose):
+                    print("[StatePlannerReceiver] Starting Chase GrowlAndChase")
 
-    async def Alert_Routine(self, EndOfChase=False):
+                await self._module_chase._growl_and_chase()
+                
+                if (self.Verbose):
+                    print("[StatePlannerReceiver] Starting Chase AggressivePursuit")
+
+                await self._module_chase._aggressive_pursuit()
+            else:
+                if (self.Verbose):
+                    print("[StatePlannerReceiver] Starting Chase BurstAttack")
+
+                await self._module_chase._burst_attack()
+            
+    async def Alert_Routine(self):
         await self.MacroState_Publisher.publish({"Id": "Alert"})
         if (self.Verbose):
             print("[StatePlannerReceiver] Starting Alert Routine")
         
+        # TODO
+        EndOfChase=False
+
         if(EndOfChase == True):
             if (self.Verbose):
-                print("[StatePlannerReceiver] Starting TerminalChaseRoutine")
+                print("[StatePlannerReceiver] Starting Alert TerminalChaseRoutine")
                 
             await self._module_alert._territorial_warning()
             await self._module_alert._short_warning_burst()
@@ -222,20 +248,19 @@ class StatePlannerReceiver:
             await self._module_alert._short_warning_burst()
         else:
             if (self.Verbose):
-                print("[StatePlannerReceiver] Starting LoseVisualRoutine")
+                print("[StatePlannerReceiver] Starting Alert LoseVisualRoutine")
         
             self._scan_routine_idx+=1
 
             if(self._scan_routine_idx % 2 == 1):
-                print("HERE")
                 await self._module_alert._territorial_warning()
                 await self._module_alert._watchful_dog()
             else:
-                print("THERE")
                 await self._module_alert._short_warning_burst()
                 await self._module_alert._watchful_dog()
+        
+        await self._switch_to(self.Scan_Routine())
 
-        await self.Stop_Routine()
 
     # ------------------------------------------------------------------
     # Utilities
@@ -243,12 +268,12 @@ class StatePlannerReceiver:
 
     
     async def Stop_Routine(self) -> None:
-        await self._cancel_current_task()
         await self.MacroState_Publisher.publish({"Id": "Stop"})
         await self.Canine_Publisher.publish({"Id": "UI", "Type": "Pose", "Data": "IdlePose"})
         await self._Audio_Publish("Stop")
         self._current_mode    = None
         self._current_submode = None
+        await self._cancel_current_task()
 
     def _try_enqueue_ghost(self, x: float, y: float) -> None:
         candidate = np.array([x, y])

@@ -81,10 +81,11 @@ class Vision:
             turkeys = [[30, 10 , 0.0]]
             # await self._visionobject_pub.publish({"Id": "DynamicObjects", "Turkeys": turkeys, "Humans": [[70.0, 30.0, 0.0]]})
             await self._visionobject_pub.publish({"Id": "DynamicObjects", "Turkeys": turkeys, "Humans": []})
-            await asyncio.sleep(20)     
-            # turkeys = [
-            #     [60 , 10, 0.0],
-            #     # [30, 50 , 0.0],
-            # ]
-            # await self._visionobject_pub.publish({"Id": "DynamicObjects", "Turkeys": turkeys, "Humans": []})
-            # await asyncio.sleep(60)
+            await asyncio.sleep(5)     
+            turkeys = [
+                [60 , 10, 0.0],
+                # [30, 50 , 0.0],
+            ]
+            await self._visionobject_pub.publish({"Id": "DynamicObjects", "Turkeys": turkeys, "Humans": []})
+            await asyncio.sleep(500)
+
