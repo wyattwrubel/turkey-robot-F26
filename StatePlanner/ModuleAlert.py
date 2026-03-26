@@ -16,10 +16,10 @@ class ModuleAlert:
         await self.parent._Pose_Publish("AlertPose")
         await self.parent._SpeedCap_Publish(3.0)
         await asyncio.sleep(0.1)
-        await self._Pose_Publish("HeadScan")
+        await self.parent._Pose_Publish("HeadScan")
         
         for i in range(0,6):  
-            await self._Audio_Publish("BarkShort")
+            await self.parent._Audio_Publish("BarkShort")
             await asyncio.sleep(5)
 
     async def _territorial_warning(self) -> None:

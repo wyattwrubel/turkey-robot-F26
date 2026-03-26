@@ -38,6 +38,8 @@ class StatePlannerReceiver:
         self._module_chase  = ModuleChase(self)
         self._module_alert  = ModuleAlert(self)
 
+        self._scan_routine_idx = 0 
+
         self._current_mode    = None
         self._current_submode = None
         self._current_task: asyncio.Task | None = None
@@ -191,27 +193,55 @@ class StatePlannerReceiver:
 
     async def Scan_Routine(self):
         await self.MacroState_Publisher.publish({"Id": "Scan"})
+        if (self.Verbose):
+            print("[StatePlannerReceiver] Starting Scan Routine")        
         while True: 
             print("SCANNING")
             await asyncio.sleep(2)
 
     async def Chase_Routine(self):
         await self.MacroState_Publisher.publish({"Id": "Chase"})
+        if (self.Verbose):
+            print("[StatePlannerReceiver] Starting Chase Routine")        
         while True: 
-            print("CHASE")
             print("TURKEYS ", self.Turkeys)
             await asyncio.sleep(2)
 
-    async def Alert_Routine(self):
+    async def Alert_Routine(self, EndOfChase=False):
         await self.MacroState_Publisher.publish({"Id": "Alert"})
-        while True:
-            print("ALERT")
-            await asyncio.sleep(2)
+        if (self.Verbose):
+            print("[StatePlannerReceiver] Starting Alert Routine")
+        
+        if(EndOfChase == True):
+            if (self.Verbose):
+                print("[StatePlannerReceiver] Starting TerminalChaseRoutine")
+                
+            await self._module_alert._territorial_warning()
+            await self._module_alert._short_warning_burst()
+            await self._module_alert._territorial_warning()
+            await self._module_alert._short_warning_burst()
+        else:
+            if (self.Verbose):
+                print("[StatePlannerReceiver] Starting LoseVisualRoutine")
+        
+            self._scan_routine_idx+=1
+
+            if(self._scan_routine_idx % 2 == 1):
+                print("HERE")
+                await self._module_alert._territorial_warning()
+                await self._module_alert._watchful_dog()
+            else:
+                print("THERE")
+                await self._module_alert._short_warning_burst()
+                await self._module_alert._watchful_dog()
+
+        await self.Stop_Routine()
 
     # ------------------------------------------------------------------
     # Utilities
     # ------------------------------------------------------------------
 
+    
     async def Stop_Routine(self) -> None:
         await self._cancel_current_task()
         await self.MacroState_Publisher.publish({"Id": "Stop"})
