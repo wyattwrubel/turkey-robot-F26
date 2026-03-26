@@ -88,7 +88,7 @@ class StatePlannerReceiver:
         await self._arbitrate_auto()
 
     async def MacroState_Receiver(self, data: dict) -> None:
-        mainstates = {"Scan", "Chase", "Alert", "Stop", "Idle"}
+        mainstates = {"Scan", "Chase", "Alert", "Stop"}
         allowed_substates = {
             "TravelWaypoint", "StationaryScan", "StationaryCrouch",
             "AggressivePursuit", "BurstAttack", "GrowlAndChase",
@@ -137,8 +137,6 @@ class StatePlannerReceiver:
             await self._switch_to(self.Chase_Routine())
         elif mode == "Alert":
             await self._switch_to(self.Alert_Routine())
-        elif mode == "Idle":
-            await self.Idle_Routine()
         elif mode == "Stop":
             await self.Stop_Routine()
 
@@ -209,14 +207,8 @@ class StatePlannerReceiver:
     async def Stop_Routine(self) -> None:
         await self._cancel_current_task()
         await self.MacroState_Publisher.publish({"Id": "Stop"})
-        await self._module_scan._Pose_Publish("IdlePose")
-        await self._module_scan._Audio_Publish("Stop")
-        self._current_mode    = None
-        self._current_submode = None
-
-    async def Idle_Routine(self) -> None:
-        await self._cancel_current_task()
-        await self.MacroState_Publisher.publish({"Id": "Stop"})
+        await self.Canine_Publisher.publish({"Id": "UI", "Type": "Pose", "Data": "IdlePose"})
+        await self._Audio_Publish("Stop")
         self._current_mode    = None
         self._current_submode = None
 
@@ -229,3 +221,27 @@ class StatePlannerReceiver:
         if self.Verbose:
             print(f"[StatePlanner] Ghost enqueued at ({x:.2f}, {y:.2f}). "
                   f"Queue length: {len(self.GhostQueue)}")
+
+
+
+    async def _SpeedCap_Publish(self, data: np.ndarray) -> None:
+        await self.MotionCommand_Publisher.publish({"Id": "SpeedCap", "Cmd": data})
+
+    async def _Audio_Publish(self, audio: str) -> None:
+        if(self.IsManualMode == True):
+            await self.Canine_Publisher.publish({"Id": "UI", "Type": "Audio", "Data": audio})
+        else:
+            await self.Canine_Publisher.publish({"Id": "System", "Type": "Audio", "Data": audio})
+
+
+    async def _ServoCommand_Publish(self, servoname: str, angle: float) -> None:
+        if(self.IsManualMode == True):
+            await self.Canine_Publisher.publish({"Id": "UI", "Type": "Servo", "Name": servoname, "Data": angle})
+        else:
+            await self.Canine_Publisher.publish({"Id": "System", "Type": "Servo", "Name": servoname, "Data": angle})
+
+    async def _Pose_Publish(self, pose: str) -> None:
+        if(self.IsManualMode == True):
+            await self.Canine_Publisher.publish({"Id": "UI", "Type": "Pose", "Data": pose})
+        else:
+            await self.Canine_Publisher.publish({"Id": "System", "Type": "Pose", "Data": pose})

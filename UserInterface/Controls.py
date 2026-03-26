@@ -99,13 +99,11 @@ class PanelControls:
             angle    = float(data.get("angle", 0.0))
             self._robot.set_servo(servo_id, angle)
             await self._pub_servo(servo_id, angle)
-            await self._macrostate_pub.publish({"Id": "Idle"})
 
         elif msg_type == "pose_command":
             pose = data.get("pose", "")
             self._robot.set_pose_cmd(pose)
             await self._pub_pose(pose)
-            await self._macrostate_pub.publish({"Id": "Idle"})
 
         elif msg_type == "audio_play":
             sound = data.get("sound", "")

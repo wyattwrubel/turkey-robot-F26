@@ -14,64 +14,45 @@ class ModuleChase:
     # ------------------------------------------------------------------
     async def _growl_and_chase(self) -> None:
         await self.parent.MacroState_Publisher.publish({"Id": "GrowlAndChase"})
-        await self._SpeedCap_Publish(0.5)
-        await self._Audio_Publish("Growl")
-        await self._Pose_Publish("AggressivePose")
-        await self._ServoCommand_Publish("Head", 0.0)
+        await self.parent._SpeedCap_Publish(0.5)
+        await self.parent._Audio_Publish("Growl")
+        await self.parent._Pose_Publish("AggressivePose")
+        await self.parent._ServoCommand_Publish("Head", 0.0)
         await asyncio.sleep(3.0)
 
     async def _aggressive_pursuit(self) -> None:
         await self.parent.MacroState_Publisher.publish({"Id": "AggressivePursuit"})
-        await self._SpeedCap_Publish(3.0)
-        await self._Pose_Publish("ExcitedGait")
-        await self._ServoCommand_Publish("Head", random.uniform(-40.0, 40.0))
-        await self._Audio_Publish("Stop")
+        await self.parent._SpeedCap_Publish(3.0)
+        await self.parent._Pose_Publish("ExcitedGait")
+        await self.parent._ServoCommand_Publish("Head", random.uniform(-40.0, 40.0))
+        await self.parent._Audio_Publish("Stop")
         await asyncio.sleep(1)
         
         while True: 
-            await self._Audio_Publish("AggressiveBark")
+            await self.parent._Audio_Publish("AggressiveBark")
             await asyncio.sleep(18)
 
     async def _burst_attack(self) -> None:
         await self.parent.MacroState_Publisher.publish({"Id": "BurstAttack"})
-        await self._SpeedCap_Publish(3.0)
-        await self._Pose_Publish("ExcitedGait")
+        await self.parent._SpeedCap_Publish(3.0)
+        await self.parent._Pose_Publish("ExcitedGait")
 
         while True: 
-            await self._ServoCommand_Publish("Head", 30.0)
-            await self._Audio_Publish("BarkShort_2x2")
+            await self.parent._ServoCommand_Publish("Head", 30.0)
+            await self.parent._Audio_Publish("BarkShort_2x2")
             await asyncio.sleep(1.8)
-            await self._ServoCommand_Publish("Head", -30.0)
-            await self._Audio_Publish("BarkShort_3x")
+            await self.parent._ServoCommand_Publish("Head", -30.0)
+            await self.parent._Audio_Publish("BarkShort_3x")
             await asyncio.sleep(1.8)
-            await self._ServoCommand_Publish("Head", 30.0)
-            await self._Audio_Publish("BarkShort_3x")
+            await self.parent._ServoCommand_Publish("Head", 30.0)
+            await self.parent._Audio_Publish("BarkShort_3x")
             await asyncio.sleep(1.8)
-            await self._ServoCommand_Publish("Head", -30.0)
-            await self._Audio_Publish("BarkShort_3x")
+            await self.parent._ServoCommand_Publish("Head", -30.0)
+            await self.parent._Audio_Publish("BarkShort_3x")
             await asyncio.sleep(1.8)
-            await self._ServoCommand_Publish("Head", 30.0)
-            await self._Audio_Publish("BarkShort_2x2")
+            await self.parent._ServoCommand_Publish("Head", 30.0)
+            await self.parent._Audio_Publish("BarkShort_2x2")
             await asyncio.sleep(1.8)
-            await self._ServoCommand_Publish("Head", -30.0)
-            await self._Audio_Publish("BarkShort_3x")
+            await self.parent._ServoCommand_Publish("Head", -30.0)
+            await self.parent._Audio_Publish("BarkShort_3x")
             await asyncio.sleep(1.8)
-
-    # ------------------------------------------------------------------
-    # Publish Helpers
-    # ------------------------------------------------------------------
-
-    async def _Move_Publish(self, data: np.ndarray) -> None:
-        await self.parent.MotionCommand_Publisher.publish({"Id": "Move", "Cmd": data})
-
-    async def _SpeedCap_Publish(self, data: np.ndarray) -> None:
-        await self.parent.MotionCommand_Publisher.publish({"Id": "SpeedCap", "Cmd": data})
-
-    async def _Audio_Publish(self, audio: str) -> None:
-        await self.parent.Canine_Publisher.publish({"Id": "System", "Type": "Audio", "Data": audio})
-
-    async def _ServoCommand_Publish(self, servoname: str, angle: float) -> None:
-        await self.parent.Canine_Publisher.publish({"Id": "System", "Type": "Servo", "Name": servoname, "Data": angle})
-
-    async def _Pose_Publish(self, pose: str) -> None:
-        await self.parent.Canine_Publisher.publish({"Id": "System", "Type": "Pose", "Data": pose})
