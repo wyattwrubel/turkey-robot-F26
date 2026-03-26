@@ -58,7 +58,7 @@ class PanelDiagnostics:
         Recceives poses from state planner: 
         Id: "System" 
         Type: "Pose" 
-        Data: IdlePose, AlertPose, AggressivePose, WalkGait, ExcitedGait, AlertStep
+        Data: IdlePose, AlertPo se, AggressivePose, WalkGait, ExcitedGait, AlertStep
         """
 
         Type = data.get("Type", "")
@@ -67,7 +67,6 @@ class PanelDiagnostics:
             self._robot.set_audio(Data)
 
         LegalPoses = {"Stop", "IdlePose", "AlertPose", "AggressivePose", "WalkGait", "ExcitedGait", "AlertStep", "HeadScan"}
-        print("DATA UI RECEIVED ", data)
         if Data in LegalPoses and Type == "Pose": 
             self._robot.set_pose_cmd(Data)
             
@@ -102,14 +101,14 @@ class PanelDiagnostics:
           Id="Alert"    → sys_state = "Alert"
           Id="UnlockUI" → sys_state = "Scanning"  (auto mode restored)
         """
+        print("UI RECEIVED ", data)
 
         mainstates = {
             "Scan":     "Scanning",
             "Chase":    "Chase",
             "Alert":    "Alert",
-            "UnlockUI": "Scanning",
         }
-
+        
         allowed_substates = {
             "TravelWaypoint", "StationaryScan", "StationaryCrouch", 
             "AggressivePursuit",  "BurstAttack", "GrowlAndChase", 

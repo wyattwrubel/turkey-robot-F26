@@ -84,7 +84,6 @@ class StatePlannerReceiver:
         for g in (ghosts.tolist() if ghosts.size > 0 else []):
             self._try_enqueue_ghost(g[0], g[1])
 
-        # Arbitrate and only switch if the mode has actually changed
         await self._arbitrate_auto()
 
     async def MacroState_Receiver(self, data: dict) -> None:
@@ -102,7 +101,6 @@ class StatePlannerReceiver:
             self._current_mode     = None
             self._current_submode  = None
             self._active_auto_mode = None
-            # Re-arbitrate immediately based on current sensor state
             await self._arbitrate_auto()
             return
 
@@ -173,7 +171,7 @@ class StatePlannerReceiver:
             target = Mode.SCAN
 
         if target == self._active_auto_mode:
-            return  # Already running the right thing -- do nothing
+            return
 
         self._active_auto_mode = target
 
@@ -192,13 +190,23 @@ class StatePlannerReceiver:
     # ------------------------------------------------------------------
 
     async def Scan_Routine(self):
-        print()
+        await self.MacroState_Publisher.publish({"Id": "Scan"})
+        while True: 
+            print("SCANNING")
+            await asyncio.sleep(2)
 
     async def Chase_Routine(self):
-        print()
+        await self.MacroState_Publisher.publish({"Id": "Chase"})
+        while True: 
+            print("CHASE")
+            print("TURKEYS ", self.Turkeys)
+            await asyncio.sleep(2)
 
     async def Alert_Routine(self):
-        print()
+        await self.MacroState_Publisher.publish({"Id": "Alert"})
+        while True:
+            print("ALERT")
+            await asyncio.sleep(2)
 
     # ------------------------------------------------------------------
     # Utilities
@@ -222,8 +230,6 @@ class StatePlannerReceiver:
             print(f"[StatePlanner] Ghost enqueued at ({x:.2f}, {y:.2f}). "
                   f"Queue length: {len(self.GhostQueue)}")
 
-
-
     async def _SpeedCap_Publish(self, data: np.ndarray) -> None:
         await self.MotionCommand_Publisher.publish({"Id": "SpeedCap", "Cmd": data})
 
@@ -232,7 +238,6 @@ class StatePlannerReceiver:
             await self.Canine_Publisher.publish({"Id": "UI", "Type": "Audio", "Data": audio})
         else:
             await self.Canine_Publisher.publish({"Id": "System", "Type": "Audio", "Data": audio})
-
 
     async def _ServoCommand_Publish(self, servoname: str, angle: float) -> None:
         if(self.IsManualMode == True):
