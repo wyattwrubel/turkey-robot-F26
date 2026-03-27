@@ -15,6 +15,9 @@ class YOLODetector:
         self.half = CONFIG.model.half
 
         self.class_name_map = CONFIG.class_cfg.class_name_map
+        import os
+        os.environ["OMP_NUM_THREADS"] = "4"
+        os.environ["OPENBLAS_NUM_THREADS"] = "4"
         self.model = YOLO(self.model_path)
 
         print(f"[YOLO] Model loaded from: {self.model_path}")

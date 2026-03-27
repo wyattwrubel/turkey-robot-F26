@@ -17,13 +17,16 @@ class CameraConfig:
 
 @dataclass
 class ModelConfig:
-    model_path: str = "/home/turkeysquad/ME450/MainDesign/Vision/weights/turkey_1280.pt"
+    # model_path: str = "/home/turkeysquad/ME450/MainDesign/Vision/weights/turkey_1280.pt"
+    model_path: str = "/home/turkeysquad/ME450/MainDesign/Vision/weights/turkey_640.pt"
     conf_thresh: float = 0.3
     iou_thresh: float = 0.50
     imgsz: int = 640
-    max_det: int = 10
+    # max_det: int = 10
+    max_det: int = 5
     device: str = "cpu" #"cuda:0"   # "cpu" / "cuda:0"
-    half: bool = True
+    # half: bool = True
+    half: bool = False
 
     classes_of_interest: List[str] = field(default_factory=lambda: [
         "turkey",
