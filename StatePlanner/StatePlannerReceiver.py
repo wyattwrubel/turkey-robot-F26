@@ -29,7 +29,7 @@ class StatePlannerReceiver:
 
         self.Current_RobotPose = np.array([0.0, 0.0, 0.0])
         self.IsManualMode      = False
-        self.WaypointQueue = [np.array([10, 10]), np.array([20, 20])]
+        self.WaypointQueue     = [np.array([10, 10]), np.array([20, 20])]
         self.Turkeys           = []
         self.GhostQueue        = []
 
@@ -38,12 +38,13 @@ class StatePlannerReceiver:
         self._module_chase  = ModuleChase(self)
         self._module_alert  = ModuleAlert(self)
 
-        self._scan_routine_idx = 0 
+        self._scan_routine_idx = 0
 
         self._current_mode    = None
         self._current_submode = None
         self._current_task: asyncio.Task | None = None
-        self._active_auto_mode: Mode | None = None  # Track what auto is currently running
+        self._active_auto_mode: Mode | None = None
+        self._alert_running   = False  # Guard: prevents arbitration from interrupting Alert
 
     # ------------------------------------------------------------------
     # Helpers
@@ -104,6 +105,7 @@ class StatePlannerReceiver:
             self._current_mode     = None
             self._current_submode  = None
             self._active_auto_mode = None
+            self._alert_running    = False
             await self._arbitrate_auto()
             return
 
@@ -165,13 +167,20 @@ class StatePlannerReceiver:
     # ------------------------------------------------------------------
 
     async def _arbitrate_auto(self) -> None:
-        """Called whenever sensor data changes. Switches task only if mode changed."""
-        
+        """
+        Called whenever sensor data changes. Switches task only if mode changed.
+        Will not interrupt Alert — Alert transitions to Scan itself when complete.
+        """
+
+        # Don't interrupt alert mid-sequence — it will call _switch_to(Scan) itself
+        if self._alert_running:
+            return
+
         if any(self.ZoneChecker.is_inside(turkey[0], turkey[1]) for turkey in self.Turkeys):
             target = Mode.CHASE
-        elif (self._active_auto_mode == Mode.CHASE):
+        elif self._active_auto_mode == Mode.CHASE:
             target = Mode.ALERT
-        elif (self._current_task == None):
+        else:
             target = Mode.SCAN
 
         if target == self._active_auto_mode:
@@ -179,7 +188,7 @@ class StatePlannerReceiver:
 
         self._active_auto_mode = target
 
-        if self.Verbose and target != None:
+        if self.Verbose:
             print(f"[StatePlanner] Auto mode → {target.name}")
 
         if target == Mode.CHASE:
@@ -194,133 +203,130 @@ class StatePlannerReceiver:
     # ------------------------------------------------------------------
 
     async def Scan_Routine(self):
-
         await self.MacroState_Publisher.publish({"Id": "Scan"})
-        if (self.Verbose):
-            print("[StatePlannerReceiver] Starting Scan Routine")        
-        
-        # If at a waypoint: Finish scan cycle
+        if self.Verbose:
+            print("[StatePlannerReceiver] Starting Scan Routine")
 
-        # IF new new waypoint: Grab next spot to investigate from ghost
-        # If now new ghosts: Grab from next in queue
-        
-        target = None
-
-        if(self.GhostQueue):
-            target = self.GhostQueue[0]
-            self.GhostQueue.pop(0)
+        if self.GhostQueue:
+            target = self.GhostQueue.pop(0)
         else:
             target = self.WaypointQueue[self._scan_routine_idx % len(self.WaypointQueue)]
-            self._scan_routine_idx+=1
+            self._scan_routine_idx += 1
 
-        while True: 
-            
+        while True:
             robot_pos = np.array(self.Current_RobotPose[:3])
-            distance_to_waypoint = np.linalg.norm(np.array(target[:2]) - robot_pos)
+            distance_to_waypoint = np.linalg.norm(np.array(target[:2]) - robot_pos[:2])
+            print("WAYPOINT ", target)
+            print("DISTANCE ", distance_to_waypoint)
 
-            if(distance_to_waypoint < 1):
-                # Initiate scan routine: 3 full rotations, 90 degree turns, 2 second delay per, gesture every other
-                for i in range(1,12):
-                    if i % 4 == 0: 
-                        await self.Scan_Routine._stationary_scan()
+            if distance_to_waypoint < 1:
+                # Arrived — do scan cycle: 3 full rotations, 90° turns, 2s delay per step
+                for i in range(1, 12):
+                    robot_pos = np.array(self.Current_RobotPose[:3])
+
+                    if i % 4 == 0:
+                        await self._module_scan._stationary_scan()
                     elif i % 4 == 2:
-                        await self.Scan_Routine._stationary_crouch()
-                        robot_pos[2] = ((robot_pos[2] + np.pi) + np.pi) % (2 * np.pi) - np.pi
+                        await self._module_scan._stationary_crouch()
 
-                    await self.MotionCommand_Publisher.publish({"Id": "Orient", "Cmd": robot_pos[:3]})  
+                    robot_pos[2] = ((robot_pos[2] + np.pi / 2) + np.pi) % (2 * np.pi) - np.pi
+                    await self.MotionCommand_Publisher.publish({"Id": "Orient", "Cmd": robot_pos[:3].tolist()})
                     await asyncio.sleep(2)
-                if(self.GhostQueue):
-                    target = self.GhostQueue[0]
-                    self.GhostQueue.pop(0)
+
+                if self.GhostQueue:
+                    target = self.GhostQueue.pop(0)
                 else:
                     target = self.WaypointQueue[self._scan_routine_idx % len(self.WaypointQueue)]
-                    self._scan_routine_idx+=1
-                    await self.MotionCommand_Publisher.publish({"Id": "Move", "Cmd": robot_pos[2]})  
-                    await self.Scan_Routine._travel_to_waypoint()
+                    self._scan_routine_idx += 1
+
+                await self.MotionCommand_Publisher.publish({"Id": "Move", "Cmd": target[:2].tolist()})
+                await self._module_scan._travel_to_waypoint()
+
             else:
-                await asyncio.sleep(0.5)                
-            
-        
+                await asyncio.sleep(0.5)
+
     async def Chase_Routine(self):
         await self.MacroState_Publisher.publish({"Id": "Chase"})
 
-        if not self.Turkeys: 
+        if not self.Turkeys:
             return
 
-        robot_pos = np.array(self.Current_RobotPose[:2])  # [x, y]
+        if self.Verbose:
+            print("[StatePlannerReceiver] Starting Chase Routine")
+
+        robot_pos = np.array(self.Current_RobotPose[:2])
         nearest_turkey = min(self.Turkeys, key=lambda t: np.linalg.norm(np.array(t[:2]) - robot_pos))
         await self.MotionCommand_Publisher.publish({"Id": "Move", "Cmd": nearest_turkey})
 
-        distance_away = np.linalg.norm(np.array(nearest_turkey[:2] - robot_pos))
+        while True:
+            # Recompute each iteration so TurkeyNear stays current
+            robot_pos     = np.array(self.Current_RobotPose[:2])
+            distance_away = np.linalg.norm(np.array(nearest_turkey[:2]) - robot_pos)
+            TurkeyNear    = distance_away <= 5
 
-        if(distance_away > 5):
-            TurkeyNear = False
-        else:
-            TurkeyNear = True
-
-        if (self.Verbose):
-            print("[StatePlannerReceiver] Starting Chase Routine")        
-        while True: 
-            if(TurkeyNear == False):
-                if (self.Verbose):
-                    print("[StatePlannerReceiver] Starting Chase GrowlAndChase")
-
+            if not TurkeyNear:
+                if self.Verbose:
+                    print("[StatePlannerReceiver] Chase — GrowlAndChase")
                 await self._module_chase._growl_and_chase()
-                
-                if (self.Verbose):
-                    print("[StatePlannerReceiver] Starting Chase AggressivePursuit")
 
+                if self.Verbose:
+                    print("[StatePlannerReceiver] Chase — AggressivePursuit")
                 await self._module_chase._aggressive_pursuit()
             else:
-                if (self.Verbose):
-                    print("[StatePlannerReceiver] Starting Chase BurstAttack")
-
+                if self.Verbose:
+                    print("[StatePlannerReceiver] Chase — BurstAttack")
                 await self._module_chase._burst_attack()
-            
+
     async def Alert_Routine(self):
-        await self.MacroState_Publisher.publish({"Id": "Alert"})
-        if (self.Verbose):
-            print("[StatePlannerReceiver] Starting Alert Routine")
-        
-        if(self.Turkeys):
-            EndOfChase=True
-        else:
-            EndOfChase=False
-            
-        if(EndOfChase == True):
-            if (self.Verbose):
-                print("[StatePlannerReceiver] Starting Alert TerminalChaseRoutine")
-                
-            await self._module_alert._territorial_warning()
-            await self._module_alert._short_warning_burst()
-            await self._module_alert._territorial_warning()
-            await self._module_alert._short_warning_burst()
-        else:
-            if (self.Verbose):
-                print("[StatePlannerReceiver] Starting Alert LoseVisualRoutine")
-        
-            self._scan_routine_idx+=1
+        # Set guard so arbitration doesn't interrupt us mid-sequence
+        self._alert_running = True
+        try:
+            await self.MacroState_Publisher.publish({"Id": "Alert"})
+            if self.Verbose:
+                print("[StatePlannerReceiver] Starting Alert Routine")
 
-            if(self._scan_routine_idx % 2 == 1):
-                await self._module_alert._territorial_warning()
-                await self._module_alert._watchful_dog()
+            if self.Turkeys:
+                EndOfChase = True
             else:
-                await self._module_alert._short_warning_burst()
-                await self._module_alert._watchful_dog()
-        
-        await self._switch_to(self.Scan_Routine())
+                EndOfChase = False
 
+            if EndOfChase:
+                if self.Verbose:
+                    print("[StatePlannerReceiver] Alert — TerminalChaseRoutine")
+                await self._module_alert._territorial_warning()
+                await self._module_alert._short_warning_burst()
+                await self._module_alert._territorial_warning()
+                await self._module_alert._short_warning_burst()
+            else:
+                if self.Verbose:
+                    print("[StatePlannerReceiver] Alert — LoseVisualRoutine")
+                self._scan_routine_idx += 1
+                if self._scan_routine_idx % 2 == 1:
+                    await self._module_alert._territorial_warning()
+                    await self._module_alert._watchful_dog()
+                else:
+                    await self._module_alert._short_warning_burst()
+                    await self._module_alert._watchful_dog()
+
+        finally:
+            # Always clear the guard, even if the task is cancelled
+            self._alert_running    = False
+            self._active_auto_mode = None  # Reset so arbitration picks correct next mode
+
+        # Transition to scan once alert sequence is fully complete
+        await self._switch_to(self.Scan_Routine())
 
     # ------------------------------------------------------------------
     # Utilities
     # ------------------------------------------------------------------
-    
+
     async def Stop_Routine(self) -> None:
         await self.MacroState_Publisher.publish({"Id": "Stop"})
         await self.Canine_Publisher.publish({"Id": "UI", "Type": "Pose", "Data": "IdlePose"})
         await self._Audio_Publish("Stop")
         self._current_mode    = None
         self._current_submode = None
+        self._alert_running   = False
         await self._cancel_current_task()
 
     def _try_enqueue_ghost(self, x: float, y: float) -> None:
@@ -337,20 +343,19 @@ class StatePlannerReceiver:
         await self.MotionCommand_Publisher.publish({"Id": "SpeedCap", "Cmd": data})
 
     async def _Audio_Publish(self, audio: str) -> None:
-        if(self.IsManualMode == True):
-            await self.Canine_Publisher.publish({"Id": "UI", "Type": "Audio", "Data": audio})
+        if self.IsManualMode:
+            await self.Canine_Publisher.publish({"Id": "UI",     "Type": "Audio", "Data": audio})
         else:
             await self.Canine_Publisher.publish({"Id": "System", "Type": "Audio", "Data": audio})
 
     async def _Pose_Publish(self, pose: str) -> None:
-        if(self.IsManualMode == True):
-            await self.Canine_Publisher.publish({"Id": "UI", "Type": "Pose", "Data": pose})
+        if self.IsManualMode:
+            await self.Canine_Publisher.publish({"Id": "UI",     "Type": "Pose", "Data": pose})
         else:
             await self.Canine_Publisher.publish({"Id": "System", "Type": "Pose", "Data": pose})
 
-
     async def _ServoCommand_Publish(self, servoname: str, angle: float) -> None:
-        if(self.IsManualMode == True):
-            await self.Canine_Publisher.publish({"Id": "UI", "Type": "Servo", "Name": servoname, "Data": angle})
+        if self.IsManualMode:
+            await self.Canine_Publisher.publish({"Id": "UI",     "Type": "Servo", "Name": servoname, "Data": angle})
         else:
             await self.Canine_Publisher.publish({"Id": "System", "Type": "Servo", "Name": servoname, "Data": angle})

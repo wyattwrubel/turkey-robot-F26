@@ -75,9 +75,9 @@ class Vision:
 
     async def faketurkeys(self):
         await asyncio.sleep(4)
-        # while True: 
-        #     # await self._visionobject_pub.publish({"Id": "DynamicObjects", "Turkeys": [], "Humans": []})
-        #     # await asyncio.sleep(5)
+        while True: 
+            await self._visionobject_pub.publish({"Id": "DynamicObjects", "Turkeys": [], "Humans": []})
+            await asyncio.sleep(5)
         #     turkeys = [[30, 10 , 0.0], [10, 40, 0.0]]
         #     # await self._visionobject_pub.publish({"Id": "DynamicObjects", "Turkeys": turkeys, "Humans": [[70.0, 30.0, 0.0]]})
         #     await self._visionobject_pub.publish({"Id": "DynamicObjects", "Turkeys": turkeys, "Humans": []})
