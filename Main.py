@@ -40,13 +40,16 @@ from DriveTrain.DriveTrainDriver import MotorDriver
 from Sensors.AccelPublisher import IMUDriver
 from Sensors.UWBPublisher import UWB
 
+
+
 # STATE PLANNER IMPORT TODO
 from StatePlanner.StatePlannerReceiver import StatePlannerReceiver
 
 
-# TODO REPLACE WITH REAL VISION
+# TODO FAKE VISION REMOVE EVENTUALLY
 from Vision.SimpleVision import Vision
 # VISION IMPORT NEEDED TODO
+from Vision.Vision import VisionObject
 
 class AsyncPublisher:
     def __init__(self, name: str = ""):
@@ -71,9 +74,11 @@ async def main():
     
     # VisionObject Protocol
     VisionObject_Vision_pub = AsyncPublisher("VideoObject") # Not passed into module TODO
+    TESTING_VisionObject_Vision_pub = AsyncPublisher("TestVideoObject") # Not passed into module TODO
 
     # VideoFeed Protocol
     VideoFeed_Vision_pub = AsyncPublisher("VideoFeed")
+    TESTING_VideoFeed_Vision_pub = AsyncPublisher("TestVideoFeed")
 
     # Canine Protocol
     Canine_UI_pub = AsyncPublisher("UI_Canine")
@@ -112,7 +117,10 @@ async def main():
     # VISION OBJECT TODO ADD HERE
 
     # REPLACE WITH REAL VIDEOFEED TODO
-    vision = Vision(VideoFeed_Vision_pub, VisionObject_Vision_pub)
+    VisionObj = VisionObject(VideoFeed_Vision_pub, VisionObject_Vision_pub)
+    VisionObj.start()
+
+    vision = Vision(TESTING_VideoFeed_Vision_pub, TESTING_VisionObject_Vision_pub)
     
     # REAL MODULES TODO REPLACE THIS HEADER
     Canine = CanineDriver(ServoFeedback_Canine_pub, Canine_Canine_pub, Verbose=False)
@@ -138,8 +146,15 @@ async def main():
     VisionObject_Vision_pub.subscribe(Navigation.VisionObject_Receiver)
     VisionObject_Vision_pub.subscribe(StatePlanner.VisionObject_Receiver)
 
+    TESTING_VisionObject_Vision_pub.subscribe(UserInterface.VisionObject_Receiver)
+    TESTING_VisionObject_Vision_pub.subscribe(Navigation.VisionObject_Receiver)
+    TESTING_VisionObject_Vision_pub.subscribe(StatePlanner.VisionObject_Receiver)
+
     """VideoFeed"""
     VideoFeed_Vision_pub.subscribe(UserInterface.VideoFeed_Receiver)   
+
+    TESTING_VideoFeed_Vision_pub.subscribe(UserInterface.VideoFeed_Receiver)   
+
 
     """Canine"""
     Canine_UI_pub.subscribe(Canine.CanineDriver_Receiver)
@@ -187,7 +202,7 @@ async def main():
         UserInterface.serve(),
 
         # TODO FAKE VISION
-        vision.VisionRunner(),
+        # vision.VisionRunner(),
 
         # SIMULATED MODULES
         Drivetrain.DriveTrainDriver_Runner(),

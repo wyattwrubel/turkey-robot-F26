@@ -358,4 +358,4 @@ class StatePlannerReceiver:
         if self.IsManualMode:
             await self.Canine_Publisher.publish({"Id": "UI",     "Type": "Servo", "Name": servoname, "Data": angle})
         else:
-            await self.Canine_Publisher.publish({"Id": "System", "Type": "Servo", "Name": servoname, "Data": angle})
+            await self.Canine_Publisher.publish({"Id": "System", "Type": "Servo", "Name": servoname, "Data": angle})    
