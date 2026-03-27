@@ -1,0 +1,18 @@
+# ===== Core =====
+numpy>=1.24,<2.0
+opencv-python-headless>=4.8,<4.10
+pandas>=1.5,<2.2          
+
+# ===== YOLO (Ultralytics) =====
+ultralytics>=8.0,<9.0
+
+# ===== Visualization (optional) =====
+matplotlib>=3.7,<3.9
+
+# ===== Utilities =====
+pyyaml
+tqdm
+joblib>=1.2               
+
+# ===== Optional: tracking (future upgrade) =====
+scipy
