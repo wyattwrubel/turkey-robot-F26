@@ -147,7 +147,6 @@ class PanelControls:
             await self._drivetrain_pub.publish({"Id": "UnlockUI"})
             await self._canine_pub.publish({"Id": "UnlockUI"})
             await self._macrostate_pub.publish({"Id": "UnlockUI"})
-            await self._navigation_pub.publish({"Id": "UnlockUI"})
 
     async def _handle_key_command(self, data: dict) -> None:
         """

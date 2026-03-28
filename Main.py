@@ -209,6 +209,7 @@ async def main():
         Canine.PoseDriver.MotorPositions_Runner(),
         Canine.Audio._monitor(),
 
+        Navigation.MPC.DriveTrain_Sender(),
         # ── FILL IN: add your real module coroutines here ──────────────────
         #
         # ukf.run(),

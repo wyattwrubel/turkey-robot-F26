@@ -6,7 +6,7 @@ class MPC_loop:
     
     Tracked_Trajectory = []
     Desired_State = np.array([0, 0, 0], dtype=np.float32)
-    Verbose = False
+    Verbose = True
 
     def Orient_CMD_Receiver(self, data):
         self.Desired_State = data
