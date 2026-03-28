@@ -216,8 +216,6 @@ class StatePlannerReceiver:
         while True:
             robot_pos = np.array(self.Current_RobotPose[:3])
             distance_to_waypoint = np.linalg.norm(np.array(target[:2]) - robot_pos[:2])
-            print("WAYPOINT ", target)
-            print("DISTANCE ", distance_to_waypoint)
 
             if distance_to_waypoint < 1:
                 # Arrived — do scan cycle: 3 full rotations, 90° turns, 2s delay per step

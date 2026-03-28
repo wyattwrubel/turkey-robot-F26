@@ -30,7 +30,8 @@ class TemporalManager:
         self,
         init_window: int = 10,
         init_min_hits: int = 7,
-        delete_missing_frames: int = 30,
+        # delete_missing_frames: int = 30,
+        delete_missing_frames: int = 0,
     ):
         self.init_window = init_window
         self.init_min_hits = init_min_hits

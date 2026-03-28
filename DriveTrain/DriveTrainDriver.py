@@ -15,7 +15,7 @@ class MotorDriver:
         self.Verbose        = Verbose
 
         # ---- UKF initialisation ----
-        initial_state = np.array([2.0, 2.0, 0.0])
+        initial_state = np.array([18.0, 32.0, 0.0])
         P0    = np.diag([0.5, 0.5, 0.1])
         Q     = np.diag([0.00025, 0.00025, 0.0017])
         R_uwb = np.diag([0.02, 0.02])

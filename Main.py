@@ -175,7 +175,7 @@ async def main():
     """RobotPose"""
     RobotPose_Drivetrain_pub.subscribe(Navigation.RobotPose_Receiver)
     RobotPose_Drivetrain_pub.subscribe(UserInterface.diagnostics.RobotPose_Receiver)
-    # Drivetrain_robotpose_pub.subscribe("VISION")
+    RobotPose_Drivetrain_pub.subscribe(VisionObj.RobotPose_Receiver)
     RobotPose_Drivetrain_pub.subscribe(StatePlanner.RobotPose_Receiver)
 
     """MacroState"""
