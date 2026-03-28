@@ -46,12 +46,20 @@ class VisionObject:
 
         self._cam       = USBCamera()
         self._detector  = YOLODetector()
-        self._manager   = TemporalManager(init_window=10, init_min_hits=7, delete_missing_frames=30)
+        self._manager   = TemporalManager(
+            init_window=10,
+            init_min_hits=7,
+            delete_missing_frames=30,   
+        )
         self._estimator = PositionEstimator()
         self._outputter = CoordinateOutput()
 
         self._outputs_lock  = threading.Lock()
         self._frame_lock    = threading.Lock()
+
+        # Snapshot of outputs for video publisher — always in sync with inference
+        self._display_outputs      = []
+        self._display_outputs_lock = threading.Lock()
 
         # Latest robot pose [X, Y, theta] in world frame
         self._robot_pose      = np.array([0.0, 0.0, 0.0])
@@ -66,15 +74,11 @@ class VisionObject:
         self._loop_thread      = None
 
     # ------------------------------------------------------------------
-    # RobotPose Receiver — call this from your pose publisher subscriber
+    # RobotPose Receiver
     # Protocol 4: 1x3 numpy array [X (m), Y (m), theta (rad)]
     # ------------------------------------------------------------------
 
     async def RobotPose_Receiver(self, pose_array):
-        """
-        Receives latest robot pose from drivetrain publisher.
-        pose_array: 1x3 numpy array [X, Y, theta]
-        """
         try:
             pose = np.asarray(pose_array, dtype=float).flatten()
             if pose.shape[0] != 3:
@@ -87,8 +91,6 @@ class VisionObject:
 
     # ------------------------------------------------------------------
     # Pose transform helper
-    # Converts camera-relative (x_m, y_m) into world frame using
-    # current robot pose [X, Y, theta]
     # ------------------------------------------------------------------
 
     def _to_world_frame(self, x_cam, y_cam):
@@ -96,31 +98,24 @@ class VisionObject:
         Transform camera-relative position into world frame.
 
         Map convention:
-        - Origin at top-left
-        - Positive X = right
-        - Positive Y = down  
-        - Positive theta = CCW
-        - theta = 0 points RIGHT (East)
+          - Origin at top-left
+          - Positive X = right
+          - Positive Y = down
+          - Positive theta = CCW
+          - theta = 0 points RIGHT (East)
 
         Camera mounted on front of robot:
-        - x_cam = lateral (positive = right)
-        - y_cam = forward (positive = away from camera)
-
-        Since theta=0 is East (right) and camera forward should map to
-        the robot's heading direction, we offset by -90 degrees so that
-        y_cam (forward) aligns correctly with the heading vector.
+          - x_cam = lateral (positive = right)
+          - y_cam = forward (positive = away from camera)
         """
         with self._robot_pose_lock:
             rx, ry, rtheta = self._robot_pose
 
-        # Offset theta so camera forward aligns with robot heading
-        # theta=0 is East, camera forward is the heading direction
         t = rtheta + (np.pi / 2.0)
 
         cos_t = np.cos(t)
         sin_t = np.sin(t)
 
-        # Y-down map frame, CCW positive theta
         world_x = rx + cos_t * x_cam + sin_t * y_cam
         world_y = ry - sin_t * x_cam + cos_t * y_cam
 
@@ -133,23 +128,18 @@ class VisionObject:
     async def VisionObject_sender(self, coord_outputs, frame_w):
         """
         Publishes detections in world frame coordinates.
-        Filters out any detection whose bounding box is fully off-screen.
         Protocol 1A: { Id, Turkeys, Humans, Ghosts }
         """
         turkeys = []
         humans  = []
 
         for out in coord_outputs:
-
-            # ── Off-screen filter ──────────────────────────────────────
-            # If the entire bbox is outside the frame width, drop the track
             x1, y1, x2, y2 = out.bbox
             if x2 <= 0 or x1 >= frame_w:
                 if self.Verbose:
                     print(f"[Vision] Dropping off-screen track: {out.class_name} id={out.target_id}")
                 continue
 
-            # ── Transform to world frame ───────────────────────────────
             world_x, world_y = self._to_world_frame(out.x_m, out.y_m)
             angle_rad = out.angle_deg * (np.pi / 180.0)
             entry = [world_x, world_y, angle_rad]
@@ -163,7 +153,7 @@ class VisionObject:
             "Id":      "DynamicObjects",
             "Turkeys": np.array(turkeys, dtype=float).tolist() if turkeys else [],
             "Humans":  np.array(humans,  dtype=float).tolist() if humans  else [],
-            "Ghosts":  [],  # not yet implemented
+            "Ghosts":  [],
         }
 
         if self.Verbose:
@@ -184,8 +174,8 @@ class VisionObject:
 
         for out in outputs:
             x1, y1, x2, y2 = out.bbox
-            print("BOUNDING BOXES ", x1," ",  y1," ", x2," ",  y2, " ")
-            # Skip tracks that have drifted off-screen
+
+            # Skip off-screen tracks
             if x2 <= 0 or x1 >= w or y2 <= 0 or y1 >= h:
                 continue
 
@@ -195,6 +185,13 @@ class VisionObject:
                 annotated, label, (x1, max(20, y1 - 8)),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2,
             )
+
+        if self.Verbose:
+            if outputs:
+                for out in outputs:
+                    print(f"[VideoFeed] bbox={out.bbox}")
+            else:
+                print("[VideoFeed] No targets")
 
         success, encoded = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 40])
         if not success:
@@ -206,6 +203,7 @@ class VisionObject:
             print(f"[VideoFeed] Encoded frame: {len(encoded_bytes)} bytes")
 
         await self.VideoFeed_Vision_pub.publish(encoded_bytes)
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -325,7 +323,9 @@ class VisionObject:
 
             if self.debug_draw:
                 vis = frame.copy()
-                vis = self._draw(vis, self.outputs)
+                with self._display_outputs_lock:
+                    draw_outputs = list(self._display_outputs)
+                vis = self._draw(vis, draw_outputs)
 
                 curr_time = time.time()
                 fps = 1.0 / max(curr_time - prev_time, 1e-6)
@@ -361,9 +361,13 @@ class VisionObject:
                 await asyncio.sleep(0.01)
                 continue
 
+            # Use snapshot set by inference — never reads stale self.outputs
+            with self._display_outputs_lock:
+                current_outputs = list(self._display_outputs)
+
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(None, lambda: None)
-            await self.VideoFeed_sender(frame, self.outputs)
+            await self.VideoFeed_sender(frame, current_outputs)
 
             elapsed = time.time() - loop_start
             await asyncio.sleep(max(0.0, pub_interval - elapsed))
@@ -389,22 +393,30 @@ class VisionObject:
             positions     = self._estimator.estimate_all(confirmed, w, h)
             coord_outputs = self._outputter.convert_all(positions)
 
-            # Filter out tracks whose bbox has left the frame entirely
-            # TemporalManager keeps tracks alive after last detection —
-            # we don't publish or draw stale off-screen positions
+            # Filter off-screen tracks
             visible_outputs = [
                 out for out in coord_outputs
                 if not (out.bbox[2] <= 0 or out.bbox[0] >= w or
                         out.bbox[3] <= 0 or out.bbox[1] >= h)
             ]
 
+            # Update both outputs and display snapshot atomically
             with self._outputs_lock:
-                self._outputs = visible_outputs   # only visible tracks stored
+                self._outputs = visible_outputs
+
+            with self._display_outputs_lock:
+                self._display_outputs = visible_outputs   # vidpub reads this
+
+            if visible_outputs:
+                for out in visible_outputs:
+                    print(f"[Inference] {out.class_name} bbox={out.bbox}")
+            else:
+                print("[Inference] No targets")
 
             if self.debug_print:
                 self._outputter.print_all(visible_outputs)
 
-            # Always publish — even if empty, downstream gets [] arrays
+            # Always publish — downstream gets empty arrays when nothing visible
             if self._event_loop and self._event_loop.is_running():
                 asyncio.run_coroutine_threadsafe(
                     self.VisionObject_sender(visible_outputs, w),
@@ -415,14 +427,18 @@ class VisionObject:
             sleep_time = inference_interval - elapsed
             if sleep_time > 0:
                 time.sleep(sleep_time)
+
     # ------------------------------------------------------------------
     # Draw helper
     # ------------------------------------------------------------------
 
     @staticmethod
     def _draw(frame, outputs):
+        h, w = frame.shape[:2]
         for out in outputs:
             x1, y1, x2, y2 = out.bbox
+            if x2 <= 0 or x1 >= w or y2 <= 0 or y1 >= h:
+                continue
             label = f"{out.class_name} | x={out.x_m:.2f}, y={out.y_m:.2f}"
             cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
             cv2.putText(frame, label, (x1, max(20, y1 - 8)),

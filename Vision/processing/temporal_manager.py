@@ -30,8 +30,7 @@ class TemporalManager:
         self,
         init_window: int = 10,
         init_min_hits: int = 7,
-        # delete_missing_frames: int = 30,
-        delete_missing_frames: int = 0,
+        delete_missing_frames: int = 2,
     ):
         self.init_window = init_window
         self.init_min_hits = init_min_hits
@@ -120,8 +119,11 @@ class TemporalManager:
             if target.target_id not in matched_target_ids:
                 if target.confirmed:
                     target.missing_streak += 1
-                    if target.missing_streak < self.delete_missing_frames:
+                    # Fixed: <= so delete_missing_frames=0 drops track
+                    # on the very first missed frame with no grace period
+                    if target.missing_streak <= self.delete_missing_frames:
                         remaining_targets.append(target)
+                    # else: drop immediately
                 else:
                     target.frame_history.append(False)
                     if len(target.frame_history) > self.init_window:

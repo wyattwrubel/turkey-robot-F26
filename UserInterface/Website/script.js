@@ -613,8 +613,12 @@ function sendWaypointMove() {
 }
 
 function _clampPan() {
-  mapPanX = Math.max(0, Math.min(MAP_W - MAP_W / mapZoom, mapPanX))
-  mapPanY = Math.max(0, Math.min(MAP_H - MAP_H / mapZoom, mapPanY))
+  const maxPanX = MAP_W - MAP_W / mapZoom
+  const maxPanY = MAP_H - MAP_H / mapZoom
+
+  // Allow panning in both directions with margin
+  mapPanX = Math.max(-MAP_W*2 / mapZoom, Math.min(maxPanX + MAP_W / mapZoom, mapPanX))
+  mapPanY = Math.max(-MAP_H*2 / mapZoom, Math.min(maxPanY + MAP_H / mapZoom, mapPanY))
 }
 
 function drawMap(canvas) {
