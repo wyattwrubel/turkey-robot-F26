@@ -107,6 +107,9 @@ async def main():
     MotionCommand_StatePlanner_pub = AsyncPublisher("StatePlanner_MotionCommand")
     MotionCommand_UI_pub = AsyncPublisher("UI_MotionCommand")
 
+    # MPCFeedback
+    MPCFeedback_Navigation_pub = AsyncPublisher("Nav_MPC")
+
     # UWB
     UWB_UWBPublisher_pub = AsyncPublisher("UWB")
     
@@ -128,7 +131,7 @@ async def main():
     Canine = CanineDriver(ServoFeedback_Canine_pub, Canine_Canine_pub, Verbose=False)
     Drivetrain = MotorDriver(RobotPose_Drivetrain_pub, SlipFeedback_Drivetrain_pub, Simulated=True)
 
-    Navigation = TrajectoryTracker(DriveCommand_Navigation_pub, MotionCommand_Navigation_pub, Verbose=False)
+    Navigation = TrajectoryTracker(DriveCommand_Navigation_pub, MotionCommand_Navigation_pub, MPCFeedback_Navigation_pub, Verbose=False)
 
     # STATE PLANNER TODO
     StatePlanner = StatePlannerReceiver(MacroState_StatePlanner, Canine_StatePlanner_pub, MotionCommand_StatePlanner_pub, Verbose=False)
@@ -189,6 +192,9 @@ async def main():
     MotionCommand_Navigation_pub.subscribe(UserInterface.diagnostics.MotionCommand_Receiver)
     MotionCommand_StatePlanner_pub.subscribe(Navigation.TrajectoryCMD_Receiver)
      
+    """ MPCFeedback"""
+    MPCFeedback_Navigation_pub.subscribe(UserInterface.diagnostics.TrajectoryTracker_Receiver)
+
     """UWB X,Y Values"""
     UWB_UWBPublisher_pub.subscribe(Drivetrain.Drivetrain_UWBReceiver)
     UWB_UWBPublisher_pub.subscribe(UserInterface.diagnostics.UWB_Sensors_Receiver)

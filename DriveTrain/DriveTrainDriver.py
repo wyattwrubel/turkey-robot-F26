@@ -8,11 +8,14 @@ import time
 import UnscentedKalmanFilter as UKF
 
 class MotorDriver:
-    def __init__(self, PosePublisher, SlipPublisher, Simulated=False, Verbose=False):
+    def __init__(self, PosePublisher, SlipPublisher, Simulated=False, Verbose=False, SkipUKFUpdates=False):
         self.PosePublisher  = PosePublisher
         self.SlipPublisher  = SlipPublisher
         self.SimulatedData  = Simulated
         self.Verbose        = Verbose
+
+        # When True: skip UWB + accel correction steps, publish predict-only state
+        self.SkipUKFUpdates = SkipUKFUpdates
 
         # ---- UKF initialisation ----
         initial_state = np.array([18.0, 32.0, 0.0])
@@ -29,7 +32,7 @@ class MotorDriver:
         self.MotorSpeeds = np.array([0.0, 0.0], dtype=np.float64)
 
         # Timing constants
-        self.WheelBase            = 0.7   # meters — TODO REPLACE with real track width
+        self.WheelBase            = 0.7
         self.PosePeriod           = 0.2   # s | 5 Hz
         self.UWBSamplePeriod      = 0.5   # s | 2 Hz
         self.ReadMotorDataPeriod  = 0.05  # s | 20 Hz
@@ -40,22 +43,20 @@ class MotorDriver:
         self._MaxSpeedAllowed       = 3.0  # m/s
 
         self._Max_Current_Threshold = 40   # A
-        self._StallDebounceLimit    = 5    # consecutive overcurrent scans before hard stop
+        self._StallDebounceLimit    = 5
         self._stall_debounce        = 0
 
-        # Slip detection thresholds (Li & Wang 2014, optimal traction band 0.1-0.4)
+        # Slip detection thresholds
         self._SlipWarnThreshold = 0.3
         self._SlipStopThreshold = 0.5
-        self._SlipDeadband      = 0.05  # m/s -- skip ratio below this speed
+        self._SlipDeadband      = 0.05  # m/s
 
-        # Slip state sentinels -- _SlipModifier is always one of these three values
         self._SlipNormal = 1.0
         self._SlipWarn   = 0.5
         self._SlipStop   = 0.0
 
         self._SlipModifier = self._SlipNormal
 
-        # Accumulator for encoder speed between UWB updates
         self._enc_speed_accum = []
         self._prev_uwb_pos    = initial_state[:2].copy()
         self._prev_uwb_time   = time.time()
@@ -63,7 +64,6 @@ class MotorDriver:
         self.running = True
         self.UI_lock = False
 
-        # asyncio lock -- prevents concurrent access to UKF state
         self._state_lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
@@ -121,10 +121,21 @@ class MotorDriver:
     # Robot State Publisher
     # ------------------------------------------------------------------
     async def RobotPosePublisher(self):
+        """
+        Publishes robot pose at PosePeriod.
+
+        SkipUKFUpdates=False (default): publishes full UKF state (predict + correct).
+        SkipUKFUpdates=True:            publishes predict-only state — UWB and accel
+                                        correction steps are bypassed, so this is the
+                                        raw kinematic dead-reckoning estimate from the
+                                        state space model alone.
+        """
         while self.running:
             async with self._state_lock:
                 state = self.UKF.state.copy()
             await self.PosePublisher.publish(state)
+            if self.SkipUKFUpdates:
+                print(f"[UKF SIM] Dead-reckoning state: {np.round(state, 3)}")
             await asyncio.sleep(self.PosePeriod)
 
     async def SlipPublisherBroadcast(self):
@@ -145,16 +156,18 @@ class MotorDriver:
         Receives UWB Data From UWB Publisher.
         Data: 2 x 1 Numpy Array (X [m], Y [m])
 
-        Also serves as the slip detection trigger -- compares UWB-derived
-        ground truth speed against the average encoder speed accumulated
-        since the last UWB update. Sets _SlipModifier which is applied
-        at send time in UpdateMotorSpeeds.
+        When SkipUKFUpdates=True: slip detection still runs (UWB ground truth
+        is still valid), but the UKF correction step is skipped so the pose
+        estimate stays as predict-only dead reckoning.
         """
         UWB_positions = data.copy().astype(np.float64)
-        async with self._state_lock:
-            self.UKF.update_uwb(UWB_positions[0], UWB_positions[1])
 
-        # --- Slip detection ---
+        if not self.SkipUKFUpdates:
+            async with self._state_lock:
+                self.UKF.update_uwb(UWB_positions[0], UWB_positions[1])
+
+        # Slip detection always runs regardless of SkipUKFUpdates —
+        # UWB ground truth is still valid even when not correcting the filter
         now   = time.time()
         dt    = now - self._prev_uwb_time
         v_uwb = np.hypot(UWB_positions[0] - self._prev_uwb_pos[0],
@@ -177,7 +190,6 @@ class MotorDriver:
             else:
                 self._SlipModifier = self._SlipNormal
 
-        # Reset accumulator for next UWB window
         self._enc_speed_accum = []
         self._prev_uwb_pos    = UWB_positions
         self._prev_uwb_time   = now
@@ -186,7 +198,12 @@ class MotorDriver:
         """
         Receives Accelerometer Data From Accel Publisher.
         Data: 1 x 1 Numpy Array (theta [radians])
+
+        Skipped entirely when SkipUKFUpdates=True.
         """
+        if self.SkipUKFUpdates:
+            return
+
         theta = data.copy().astype(np.float64)
         async with self._state_lock:
             self.UKF.update_accel(theta)
@@ -194,6 +211,8 @@ class MotorDriver:
     async def ReadMotorPosition(self):
         """
         High-rate encoder loop. Drives the UKF prediction step.
+        Prediction always runs regardless of SkipUKFUpdates — the state
+        space model is what we want when skipping corrections.
         Only runs when using real hardware.
         """
         if self.SimulatedData:
@@ -218,9 +237,6 @@ class MotorDriver:
 
             self._enc_speed_accum.append(v_avg)
 
-            # Accumulate scalar encoder speed for slip check in UWBReceiver
-            self._enc_speed_accum.append((abs(v_l) + abs(v_r)) / 2.0)
-
             if self.Verbose:
                 print(f"[ENC ] v_l={v_l:.3f}  v_r={v_r:.3f}  dt={dt*1e3:.1f}ms  "
                       f"state={np.round(self.UKF.state, 3)}")
@@ -231,7 +247,11 @@ class MotorDriver:
     # Motor Speed Updates
     # ------------------------------------------------------------------
     async def UpdateMotorSpeeds(self):
-        """Send commanded speeds to the motor driver (or simulate)."""
+        """
+        Send commanded speeds to the motor driver (or simulate).
+        Prediction step always runs here for simulated mode —
+        SkipUKFUpdates does not affect this path.
+        """
         while self.running:
             if self.SimulatedData:
                 v_l = float(self.MotorSpeeds[0])
@@ -256,8 +276,7 @@ class MotorDriver:
         """
         Polls all four motor currents at ReadCurrentPeriod.
         If any motor exceeds _Max_Current_Threshold for _StallDebounceLimit
-        consecutive scans, sets _SlipModifier to _SlipStop to hard-stop all
-        motors via UpdateMotorSpeeds.
+        consecutive scans, sets _SlipModifier to _SlipStop.
         """
         if self.SimulatedData:
             return

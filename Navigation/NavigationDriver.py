@@ -14,11 +14,11 @@ class TrajectoryTracker:
 
     Map = MapUpdater.Map()
 
-    def __init__(self, DriveTrainPub, MotionCommandPub, Verbose=False):
+    def __init__(self, DriveTrainPub, MotionCommandPub, MPCFeedback_Navigation_pub, Verbose=False):
         self.MotionCommandPub = MotionCommandPub
         self.Verbose = Verbose
 
-        self.MPC = MovementExecutor.MPC_loop(self, DriveTrainPub)
+        self.MPC = MovementExecutor.MPC_loop(self, DriveTrainPub, MPCFeedback_Navigation_pub)
         asyncio.create_task(self.MPC.DriveTrain_Sender())
 
     # From vision: dynamic objects in field of view
@@ -84,10 +84,10 @@ class TrajectoryTracker:
            print(f"Bad Trajectory Command ID Received: 'Id' key missing in {data}")
 
         if(input_id == "Orient"):
-            self._Orient_CMD_Receiver(data)
+            await self._Orient_CMD_Receiver(data)
             await self.MotionCommandPub.publish(data)
         elif(input_id == "Move"):
-            self._Move_CMD_Receiver(data)
+            await self._Move_CMD_Receiver(data)
             await self.MotionCommandPub.publish(data)
         elif(input_id == "SpeedCap"):
             self._SpeedCap_CMD_Receiver(data)
@@ -96,14 +96,14 @@ class TrajectoryTracker:
             print(f"Bad Trajectory Command ID Received: {input_id}")
 
     # Used to Traverse Zone For Chase Routines
-    def _Move_CMD_Receiver(self, data):
+    async def _Move_CMD_Receiver(self, data):
         try: 
             input_cmd = data["Cmd"]
         except KeyError:
             print(f"Bad Trajectory Command ID Received: 'Cmd' key missing in {data}")
 
         trajectory = PathGenerator.GenerateTrajectory(self.Map.Zone_Map, self.Current_State, input_cmd)
-        self.MPC.Move_CMD_Receiver(trajectory)
+        await self.MPC.Move_CMD_Receiver(trajectory)
         
         if self.Verbose:
             start = trajectory[0]
@@ -123,13 +123,13 @@ class TrajectoryTracker:
             print(trajectory)
 
     # Used to Max Fine Adjustments For Rotation and Alert Routines
-    def _Orient_CMD_Receiver(self, data):    
+    async def _Orient_CMD_Receiver(self, data):    
         try: 
             input_cmd = data["Cmd"]
         except KeyError:
             print(f"Bad Trajectory Command ID Received: 'Cmd' key missing in {data}")
 
-        self.MPC.Orient_CMD_Receiver(input_cmd)
+        await self.MPC.Orient_CMD_Receiver(input_cmd)
 
     # Regulates Maximum Speed Traversed By The Robot
     def _SpeedCap_CMD_Receiver(self, data):
