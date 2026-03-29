@@ -118,7 +118,9 @@ async def main():
 
     # REPLACE WITH REAL VIDEOFEED TODO
     VisionObj = VisionObject(VideoFeed_Vision_pub, VisionObject_Vision_pub)
-    VisionObj.start()
+    
+    # TODO UNCOMMENT FOR REAL
+    # VisionObj.start()
 
     vision = Vision(TESTING_VideoFeed_Vision_pub, TESTING_VisionObject_Vision_pub)
     
@@ -209,7 +211,7 @@ async def main():
         Canine.PoseDriver.MotorPositions_Runner(),
         Canine.Audio._monitor(),
 
-        Navigation.MPC.DriveTrain_Sender(),
+        # Navigation.MPC.DriveTrain_Sender(), 
         # ── FILL IN: add your real module coroutines here ──────────────────
         #
         # ukf.run(),

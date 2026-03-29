@@ -13,12 +13,13 @@ class TrajectoryTracker:
     Verbose = False
 
     Map = MapUpdater.Map()
-    MPC = MovementExecutor.MPC_loop()
 
     def __init__(self, DriveTrainPub, MotionCommandPub, Verbose=False):
-        self.DriveTrainPub = DriveTrainPub
         self.MotionCommandPub = MotionCommandPub
         self.Verbose = Verbose
+
+        self.MPC = MovementExecutor.MPC_loop(self, DriveTrainPub)
+        asyncio.create_task(self.MPC.DriveTrain_Sender())
 
     # From vision: dynamic objects in field of view
     async def VisionObject_Receiver(self, data):
