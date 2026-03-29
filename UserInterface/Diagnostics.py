@@ -178,3 +178,25 @@ class PanelDiagnostics:
             self._robot.set_speed(speed)
         else:
             print(f"[UI MotionCommand_Receiver] Unknown Id '{id}'")
+
+    async def TrajectoryTracker_Receiver(self, data: dict) -> None:
+        """
+        Receives MPC Feedback Protocol 6B messages from TrajectoryTracker.
+
+        6.1  Id: "Reference"      — full reference trajectory on move command
+        6.2  Id: "FeedbackMPC"    — live lookahead horizon each timestep
+        6.3  Id: "ClearTrajectory"— destination reached, clear display
+        """
+        id  = data.get("Id", "")
+        cmd = data.get("Cmd", None)
+
+        if id == "Reference":
+            arr = np.asarray(cmd, dtype=float)
+            self._robot.set_reference_trajectory(arr)
+        elif id == "FeedbackMPC":
+            arr = np.asarray(cmd, dtype=float)
+            self._robot.set_mpc_horizon(arr)
+        elif id == "ClearTrajectory":
+            self._robot.clear_trajectories()
+        else:
+            print(f"[UI TrajectoryTracker_Receiver] Unknown Id '{id}'")

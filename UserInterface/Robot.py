@@ -17,7 +17,12 @@ All fields written by panel receivers. Read by the 10 Hz broadcast loop.
                           0 = nominal (green dot)
                           1 = warning (amber dot)
                           2 = error   (red dot)
+  reference_trajectory  ← diagnostics.TrajectoryTracker_Receiver (6.1)
+  mpc_horizon           ← diagnostics.TrajectoryTracker_Receiver (6.2)
 """
+
+import numpy as np
+
 
 class Robot:
 
@@ -53,6 +58,10 @@ class Robot:
         # 0 = nominal, 1 = warning, 2 = error
         self.drivetrain_status = 0
 
+        # Trajectory tracking (Protocol 6B)
+        self.reference_trajectory = []   # full reference path    — N×2 [x, y]
+        self.mpc_horizon          = []   # live lookahead horizon  — N×2 [x, y]
+
     # ── Sensors ───────────────────────────────────────────────
     def set_robot_pose(self, x, y, theta): self.x, self.y, self.theta = x, y, theta
     def set_uwb(self, x, y):               self.uwb_x, self.uwb_y = x, y
@@ -73,19 +82,32 @@ class Robot:
           0 — nominal  (green dot in UI)
           1 — warning  (amber dot in UI)
           2 — error    (red dot in UI)
-        Hook this into your drivetrain subsystem / fault monitor.
         """
         assert status in (0, 1, 2), f"drivetrain_status must be 0, 1, or 2 — got {status}"
         self.drivetrain_status = status
 
     # ── Mission ───────────────────────────────────────────────
     def set_sys_state(self, state):        self.sys_state = state
-    def set_sub_state(self, state):         self.sub_state = state
-    def lock_navigation(self):              self.ui_locked = True
-    def unlock_navigation(self):            self.ui_locked = False
+    def set_sub_state(self, state):        self.sub_state = state
+    def lock_navigation(self):             self.ui_locked = True
+    def unlock_navigation(self):           self.ui_locked = False
     def set_target(self, x, y, theta=0.0, nav_type=None):
         self.target       = {"x": round(x, 3), "y": round(y, 3), "theta": round(theta, 4)}
         self.nav_cmd_type = nav_type
+
+    # ── Trajectory Tracking (Protocol 6B) ────────────────────
+    def set_reference_trajectory(self, arr: np.ndarray) -> None:
+        """6.1 Reference — full path being tracked. arr is N×2 [x, y]."""
+        self.reference_trajectory = arr.tolist() if arr.size > 0 else []
+
+    def set_mpc_horizon(self, arr: np.ndarray) -> None:
+        """6.2 FeedbackMPC — current lookahead horizon. arr is N×2 [x, y]."""
+        self.mpc_horizon = arr.tolist() if arr.size > 0 else []
+
+    def clear_trajectories(self) -> None:
+        """6.3 ClearTrajectory — wipe both fields on arrival."""
+        self.reference_trajectory = []
+        self.mpc_horizon          = []
 
     # ── Canine ────────────────────────────────────────────────
     def set_servo(self, servo_id, angle):  self.servo_angles[servo_id] = angle
@@ -102,23 +124,25 @@ class Robot:
     # ── Serialisers ───────────────────────────────────────────
     def to_state_msg(self) -> dict:
         return {
-            "type":               "state",
-            "uwb_x":              round(self.uwb_x,    3),
-            "uwb_y":              round(self.uwb_y,    3),
-            "imu_theta":          round(self.imu_theta, 4),
-            "x":                  round(self.x,         3),
-            "y":                  round(self.y,         3),
-            "theta":              round(self.theta,      4),
-            "macrostate":         self.sys_state,
-            "substate":           self.sub_state,
-            "nav_cmd_type":       self.nav_cmd_type,
-            "target":             self.target,
-            "cmd_left":           round(self.cmd_left,  3),
-            "cmd_right":          round(self.cmd_right, 3),
-            "speed_ms":           self.speed_limit,
-            "active_pose":        self.active_pose,
-            "active_audio":       self.active_audio,
-            "drivetrain_status":  self.drivetrain_status,
+            "type":                  "state",
+            "uwb_x":                 round(self.uwb_x,     3),
+            "uwb_y":                 round(self.uwb_y,     3),
+            "imu_theta":             round(self.imu_theta,  4),
+            "x":                     round(self.x,          3),
+            "y":                     round(self.y,          3),
+            "theta":                 round(self.theta,       4),
+            "macrostate":            self.sys_state,
+            "substate":              self.sub_state,
+            "nav_cmd_type":          self.nav_cmd_type,
+            "target":                self.target,
+            "cmd_left":              round(self.cmd_left,   3),
+            "cmd_right":             round(self.cmd_right,  3),
+            "speed_ms":              self.speed_limit,
+            "active_pose":           self.active_pose,
+            "active_audio":          self.active_audio,
+            "drivetrain_status":     self.drivetrain_status,
+            "reference_trajectory":  self.reference_trajectory,
+            "mpc_horizon":           self.mpc_horizon,
             "servos": [{"id": k, "angle": v} for k, v in self.servo_angles.items()],
         }
 

@@ -12,9 +12,13 @@ ARRIVAL_DIST = 0.5
 GHOST_SPEED  = 2.8
 
 # Proportional unicycle gains
-K_V  = 1.2   # forward speed per meter of position error
-K_W  = 3.0   # turn rate per radian of heading error
-K_LA = 0.8   # lookahead blend: how much to chase ghost vs point-to-goal
+K_V  = 1.2
+K_W  = 3.0
+K_LA = 0.8
+
+# MPC Feedback horizon config
+MPC_HORIZON_STEPS  = 8    # total lookahead steps sampled
+MPC_HORIZON_STRIDE = 1    # sample every N ghost steps (~0.1s each)
 
 
 def wrap(a):
@@ -41,6 +45,32 @@ def path_to_refs(path):
         refs.append(np.array([x, y, th]))
     return refs
 
+
+# ─────────────────────────────────────────────
+# Protocol 6 — MPC Feedback Protocol
+# ─────────────────────────────────────────────
+def proto_6_1_reference_trajectory(refs):
+    coords = np.array([[r[0], r[1]] for r in refs])
+    print(f"[Reference | Cmd: {coords.tolist()}]")
+
+def proto_6_2_mpc_feedback(ghost, n_steps=MPC_HORIZON_STEPS, stride=MPC_HORIZON_STRIDE):
+    horizon = []
+    seg, t, done = ghost._seg, ghost._t, ghost.done
+
+    for i in range(n_steps):
+        for _ in range(stride):
+            ghost.advance()
+        pt = ghost._current()
+        horizon.append([pt[0], pt[1]])
+
+    ghost._seg, ghost._t, ghost.done = seg, t, done
+
+    print(f"[FeedbackMPC | Cmd: {np.array(horizon).tolist()}]")
+
+def proto_6_3_clear_trajectory():
+    print("[ClearTrajectory]")
+
+# ─────────────────────────────────────────────
 
 class Ghost:
     def __init__(self):
@@ -94,47 +124,25 @@ class Ghost:
 
 
 def control(state, ghost_current, ghost_ahead):
-    """
-    Pure nonproprietary nonlinear tracking controller.
-    Blends two targets:
-      1. ghost_current — the immediate reference (keeps robot on path)
-      2. ghost_ahead   — a lookahead point (gives smooth curved approach)
-
-    This is the standard pure-pursuit + heading control used in real
-    differential drive robots. No linearization, no QP, always stable.
-    """
     x, y, th = state
 
-    # Vector to current ghost position
     dx_c = ghost_current[0] - x
     dy_c = ghost_current[1] - y
     dist_c = np.hypot(dx_c, dy_c)
 
-    # Vector to lookahead ghost position
     dx_a = ghost_ahead[0] - x
     dy_a = ghost_ahead[1] - y
     dist_a = np.hypot(dx_a, dy_a)
 
-    # Heading toward lookahead point (pure pursuit arc)
     th_pursuit = heading_to((x, y), ghost_ahead[:2])
-
-    # Reference heading from path
     th_ref = ghost_current[2]
 
-    # Blend: when close to ghost, weight toward path heading;
-    # when far, weight toward pursuit heading to cut back to path
-    alpha = np.clip(dist_c / 2.0, 0.0, 1.0)  # 0=on path, 1=far off
+    alpha = np.clip(dist_c / 2.0, 0.0, 1.0)
     th_target = wrap((1 - alpha) * th_ref + alpha * th_pursuit)
 
-    # Heading error
     h_err = wrap(th_target - th)
-
-    # Forward speed: full speed when heading is good, reduce when turning hard
-    # This prevents the robot from driving off path while trying to turn
-    heading_factor = np.cos(h_err) ** 2   # smooth speed reduction for large angles
+    heading_factor = np.cos(h_err) ** 2
     v = np.clip(K_V * max(dist_c, dist_a * 0.5) * heading_factor, 0.2, V_MAX)
-
-    # Turn rate
     omega = np.clip(K_W * h_err, -2 * V_MAX / WHEELBASE, 2 * V_MAX / WHEELBASE)
 
     return unicycle_to_wheels(v, omega)
@@ -164,6 +172,9 @@ class MPC_loop:
         self._last_u = np.zeros(2)
         self._mode   = "trajectory"
 
+        # ── 6.1: broadcast reference trajectory on new move command ──
+        proto_6_1_reference_trajectory(refs)
+
     async def MPC_Main(self):
         state = np.array(self._parent.Current_State, dtype=np.float64)
 
@@ -176,14 +187,21 @@ class MPC_loop:
                 self._last_u = np.zeros(2)
                 self._mode   = "idle"
                 await self._send(np.zeros(2))
+
+                # ── 6.3: clear trajectories on arrival ──
+                proto_6_3_clear_trajectory()
                 return
 
             ghost_now   = self._ghost.lookahead(0)
-            ghost_ahead = self._ghost.lookahead(8)   # ~0.8s lookahead
+            ghost_ahead = self._ghost.lookahead(8)
 
             u = control(state, ghost_now, ghost_ahead)
             self._last_u = u
             await self._send(u, ghost_now, state)
+
+            # ── 6.2: broadcast MPC horizon each timestep ──
+            proto_6_2_mpc_feedback(self._ghost)
+
             self._ghost.advance()
 
         elif self._mode == "fixed":
@@ -195,7 +213,6 @@ class MPC_loop:
                 self._mode   = "idle"
                 await self._send(np.zeros(2))
                 return
-            # Point toward goal with heading correction
             th_goal  = heading_to(state[:2], self._goal[:2])
             h_err    = wrap(th_goal - state[2])
             hf       = np.cos(h_err) ** 2
@@ -207,14 +224,14 @@ class MPC_loop:
 
     async def _send(self, u, ref=None, state=None):
         cmd = np.array(u, dtype=np.float32)
-        if ref is not None and state is not None:
-            err = np.linalg.norm(state[:2] - ref[:2])
-            print(f"[DriveCommand | Cmd: {cmd} | "
-                  f"Pos: ({state[0]:.2f}, {state[1]:.2f}) θ={np.degrees(state[2]):.1f}° | "
-                  f"Ref: ({ref[0]:.2f}, {ref[1]:.2f}) θ={np.degrees(ref[2]):.1f}° | "
-                  f"Err: {err:.2f}m]")
-        else:
-            print(f"[DriveCommand | Cmd: {cmd}]")
+        # if ref is not None and state is not None:
+        #     err = np.linalg.norm(state[:2] - ref[:2])
+        #     print(f"[DriveCommand | Cmd: {cmd} | "
+        #           f"Pos: ({state[0]:.2f}, {state[1]:.2f}) θ={np.degrees(state[2]):.1f}° | "
+        #           f"Ref: ({ref[0]:.2f}, {ref[1]:.2f}) θ={np.degrees(ref[2]):.1f}° | "
+        #           f"Err: {err:.2f}m]")
+        # else:
+        #     print(f"[DriveCommand | Cmd: {cmd}]")
         await self.Drivetrain_pub.publish({"Id": "System", "Cmd": cmd.tolist()})
 
     async def DriveTrain_Sender(self):
