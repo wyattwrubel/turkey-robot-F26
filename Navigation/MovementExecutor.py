@@ -21,9 +21,9 @@ V_MAX        = 3.0
 V_MIN        = -3.0
 ARRIVAL_DIST = 0.5
 
-N  = 20                        # MPC horizon steps
-Q  = np.diag([5.0, 5.0, 1.5])
-R  = np.diag([0.5, 0.5])
+N  = 30                        # MPC horizon steps
+Q  = np.diag([25.0, 25.0, 10.0])
+R  = np.diag([0.3, 0.3])
 L  = WHEELBASE
 
 # ─────────────────────────────────────────────
@@ -79,7 +79,7 @@ def build_reference(waypoints_xy: np.ndarray, dt: float, total_time: float) -> n
     dx  = np.diff(xs, append=xs[-1])
     dy  = np.diff(ys, append=ys[-1])
     ths = np.arctan2(-dy, dx)
-    ths = np.unwrap(ths)
+    ths = (ths + np.pi) % (2 * np.pi) - np.pi   # ← wrap back to (-π, π)
 
     return np.column_stack([xs, ys, ths])
 
@@ -256,7 +256,8 @@ class MPC_loop:
         waypoints_xy = np.vstack([robot[:2], waypoints_xy])
 
         total_dist  = np.sum(np.linalg.norm(np.diff(waypoints_xy, axis=0), axis=1))
-        self._v_fwd = np.clip(total_dist / (total_dist / 2.7), 0.3, V_MAX)  # target 2.7 m/s
+        
+        self._v_fwd = np.clip(total_dist / (total_dist / 2.8), 0.3, V_MAX)  # target 2.7 m/s
         total_time  = total_dist / self._v_fwd + 5.0
 
         self._ref_traj   = build_reference(waypoints_xy, DT, total_time)

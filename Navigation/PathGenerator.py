@@ -1,75 +1,101 @@
 import numpy as np
 import heapq
 
-# Library to interface with TrajectoryTracker -> High Level Function
+def heuristic(a, b):
+    return np.hypot(a[0] - b[0], a[1] - b[1])
 def GenerateTrajectory(map, current_state, desired_state):
     neighbors = [(-1,0),(1,0),(0,-1),(0,1),
                 (-1,-1),(-1,1),(1,-1),(1,1)]
-  
+
+    robot_theta = float(current_state[2])   # ← extract heading before converting
+
     desired_state = np.array(desired_state)
     current_state = tuple(np.array(current_state[0:2]).astype(int))
     desired_state = tuple(np.array(desired_state[0:2]).astype(int))
 
-    width = map.shape[1]
+    width  = map.shape[1]
     height = map.shape[0]
 
     close_set = set()
     came_from = {}
-    gscore = {current_state: 0}
-    fscore = {current_state: heuristic(current_state, desired_state)}
+    gscore    = {current_state: 0}
+    fscore    = {current_state: heuristic(current_state, desired_state)}
+    direction = {current_state: None}
     open_heap = []
     heapq.heappush(open_heap, (fscore[current_state], current_state))
 
     best_node = current_state
-    best_h = heuristic(current_state, desired_state)
+    best_h    = heuristic(current_state, desired_state)
 
     while open_heap:
-        current = heapq.heappop(open_heap)[1]
+        current   = heapq.heappop(open_heap)[1]
         current_h = heuristic(current, desired_state)
 
-        if(current_h < best_h):
-            best_h = current_h
+        if current_h < best_h:
+            best_h    = current_h
             best_node = current
-        if(current == desired_state):
+        if current == desired_state:
             best_node = desired_state
             break
 
         close_set.add(current)
+        current_dir = direction[current]
+        is_first_step = (current == current_state)   # ← only true for start node
 
         for dx, dy in neighbors:
             neighbor = (current[0] + dx, current[1] + dy)
-            x,y, = neighbor
+            x, y     = neighbor
 
-            if x < 0 or x >= width or y < 0 or y >= height: 
+            if x < 0 or x >= width or y < 0 or y >= height:
                 continue
-            if map[y, x] == 1 or map[y,x] == 2:
+            if map[y, x] == 1 or map[y, x] == 2:
                 continue
-            if neighbor in close_set: 
+            if neighbor in close_set:
                 continue
-            # TODO ANY OTHER PRUNING TACTICS GOES HERE
+
+            if dx != 0 and dy != 0:
+                if map[current[1] + dy, current[0]] == 1 or \
+                   map[current[1], current[0] + dx] == 1:
+                    continue
 
             tentative_g = gscore[current] + np.hypot(dx, dy)
-            if (map[y, x] >= 2):
-                tentative_g = tentative_g + map[y,x]
+
+            # ── direction change penalty ────────────────────────────
+            new_dir = (dx, dy)
+            if current_dir is not None and new_dir != current_dir:
+                tentative_g += 0.3
+                curr_is_diag = (current_dir[0] != 0 and current_dir[1] != 0)
+                new_is_diag  = (dx != 0 and dy != 0)
+                if curr_is_diag != new_is_diag:
+                    tentative_g += 0.5
+            # ───────────────────────────────────────────────────────
+
+            # ── initial heading penalty ─────────────────────────────
+            if is_first_step:
+                step_angle  = np.arctan2(-dy, dx)   # Y-down convention
+                hdg_err     = abs(np.arctan2(
+                    np.sin(step_angle - robot_theta),
+                    np.cos(step_angle - robot_theta)
+                ))
+                # Scale penalty: 0 if aligned, up to 2.0 if pointing opposite
+                tentative_g += (hdg_err / np.pi) * 5.0
+            # ───────────────────────────────────────────────────────
 
             if neighbor not in gscore or tentative_g < gscore[neighbor]:
-                came_from[neighbor] = current
-                gscore[neighbor] = tentative_g
-                fscore[neighbor] = tentative_g + heuristic(neighbor, desired_state)
+                came_from[neighbor]  = current
+                gscore[neighbor]     = tentative_g
+                fscore[neighbor]     = tentative_g + heuristic(neighbor, desired_state)
+                direction[neighbor]  = new_dir
                 heapq.heappush(open_heap, (fscore[neighbor], neighbor))
 
     if best_node not in came_from and best_node != current_state:
         return None
-            
+
     path = [best_node]
     while best_node in came_from:
         best_node = came_from[best_node]
         path.append(best_node)
-    
+
     path.reverse()
     path = [(int(x), int(y)) for (x, y) in path]
     return path
-
-def heuristic(a, b):
-    return np.hypot(a[0] - b[0], a[1] - b[1])
-
