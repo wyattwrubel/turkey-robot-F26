@@ -33,7 +33,7 @@ class MotorDriver:
 
         # Timing constants
         self.WheelBase            = 0.7
-        self.PosePeriod           = 0.2   # s | 5 Hz
+        self.PosePeriod           = 0.02   # s | 50 Hz
         self.UWBSamplePeriod      = 0.5   # s | 2 Hz
         self.ReadMotorDataPeriod  = 0.05  # s | 20 Hz
         self.UpdateMotorPeriod    = 0.2   # s | 5 Hz
