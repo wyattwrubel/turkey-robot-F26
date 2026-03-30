@@ -76,7 +76,7 @@ class MotorDriver:
         v     = (v_l + v_r) / 2.0
         omega = (v_r - v_l) / self.WheelBase
         self._dr_state[0] = x  + v * np.cos(th) * dt
-        self._dr_state[1] = y  + v * np.sin(th) * dt
+        self._dr_state[1] = y  - v * np.sin(th) * dt
         self._dr_state[2] = th + omega * dt
 
     @property

@@ -2,8 +2,10 @@
 # Format: label, x, y
 # Coordinates in metres, matching Zone.csv grid origin.
 
-WP1, 10.0, 5.0
-WP2, 20.0, 15.0
-WP3, 5.0, 30.0
-WP4, 30.0, 30.0
-WP5, 25.0, 60.0
+WP0, 10.0, 40.0
+WP1, 7.0, 20.0
+WP2, 7.0, 7.0
+WP3, 25.0, 7.0
+WP4, 25.0, 25.0
+WP5, 25.0, 50.0
+WP6, 20.0, 65.0

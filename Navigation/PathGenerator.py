@@ -3,15 +3,14 @@ import heapq
 
 def heuristic(a, b):
     return np.hypot(a[0] - b[0], a[1] - b[1])
+
 def GenerateTrajectory(map, current_state, desired_state):
     neighbors = [(-1,0),(1,0),(0,-1),(0,1),
-                (-1,-1),(-1,1),(1,-1),(1,1)]
-
-    robot_theta = float(current_state[2])   # ← extract heading before converting
+                 (-1,-1),(-1,1),(1,-1),(1,1)]
 
     desired_state = np.array(desired_state)
-    current_state = tuple(np.array(current_state[0:2]).astype(int))
-    desired_state = tuple(np.array(desired_state[0:2]).astype(int))
+    current_state = tuple(np.array(current_state[0:2]).round().astype(int))
+    desired_state = tuple(np.array(desired_state[0:2]).round().astype(int))
 
     width  = map.shape[1]
     height = map.shape[0]
@@ -40,7 +39,6 @@ def GenerateTrajectory(map, current_state, desired_state):
 
         close_set.add(current)
         current_dir = direction[current]
-        is_first_step = (current == current_state)   # ← only true for start node
 
         for dx, dy in neighbors:
             neighbor = (current[0] + dx, current[1] + dy)
@@ -60,7 +58,7 @@ def GenerateTrajectory(map, current_state, desired_state):
 
             tentative_g = gscore[current] + np.hypot(dx, dy)
 
-            # ── direction change penalty ────────────────────────────
+            # Penalise direction changes to prefer straight lines
             new_dir = (dx, dy)
             if current_dir is not None and new_dir != current_dir:
                 tentative_g += 0.3
@@ -68,23 +66,12 @@ def GenerateTrajectory(map, current_state, desired_state):
                 new_is_diag  = (dx != 0 and dy != 0)
                 if curr_is_diag != new_is_diag:
                     tentative_g += 0.5
-            # ───────────────────────────────────────────────────────
-
-            # ── initial heading penalty ─────────────────────────────
-            if is_first_step:
-                step_angle  = np.arctan2(-dy, dx)   # Y-down convention
-                hdg_err     = abs(np.arctan2(
-                    np.sin(step_angle - robot_theta),
-                    np.cos(step_angle - robot_theta)
-                ))
-
-            # ───────────────────────────────────────────────────────
 
             if neighbor not in gscore or tentative_g < gscore[neighbor]:
-                came_from[neighbor]  = current
-                gscore[neighbor]     = tentative_g
-                fscore[neighbor]     = tentative_g + heuristic(neighbor, desired_state)
-                direction[neighbor]  = new_dir
+                came_from[neighbor] = current
+                gscore[neighbor]    = tentative_g
+                fscore[neighbor]    = tentative_g + heuristic(neighbor, desired_state)
+                direction[neighbor] = new_dir
                 heapq.heappush(open_heap, (fscore[neighbor], neighbor))
 
     if best_node not in came_from and best_node != current_state:
@@ -96,5 +83,4 @@ def GenerateTrajectory(map, current_state, desired_state):
         path.append(best_node)
 
     path.reverse()
-    path = [(int(x), int(y)) for (x, y) in path]
-    return path
+    return [(int(x), int(y)) for (x, y) in path]

@@ -16,12 +16,12 @@ WHEELBASE    = 0.7
 DT           = 0.1
 V_MAX        = 3.0
 V_MIN        = -3.0
-ARRIVAL_DIST = 0.5
+ARRIVAL_DIST = 0.1
 N            = 30
 L            = WHEELBASE
 
 # Cost weights — Q penalises [x, y, theta], R penalises [vl, vr]
-Q  = np.diag([10.0, 10.0, 5.0])   # state tracking
+Q  = np.diag([10.0, 10.0, 0.5])   # state tracking
 Qf = 3.0 * Q                       # terminal state (scaled Q)
 R  = np.diag([0.3, 0.3])           # control effort
 
@@ -238,15 +238,14 @@ class MPC_loop:
     # ─── Command receivers ────────────────────────────────────────────────────
 
     async def Orient_CMD_Receiver(self, data):
-        # data: target heading in radians
-        target_hdg = float(data)
-        KP = 3.0  # tune this — units: (m/s wheel speed) / rad
+        target_hdg = float(data[2])
+        KP = 3.0
 
         while True:
             state = np.array(self._parent.Current_State, dtype=np.float64)
             err   = wrap(target_hdg - state[2])
 
-            if abs(err) < np.radians(3.0):   # 3° deadband
+            if abs(err) < np.radians(3.0):
                 await self._send(np.zeros(2))
                 return
 
@@ -267,17 +266,23 @@ class MPC_loop:
         total_time   = total_dist / self._v_fwd
 
         self._ref_traj   = build_reference(waypoints_xy, DT, total_time)
-        self._ref_idx    = 0
         self._init_guess = np.zeros(self._mpc['n_dec'])
 
-        # Seed the continuous-heading tracker, then shift the whole reference
-        # trajectory so its heading branch matches the robot's current θ.
-        # Without this, a robot at θ=+179° facing a ref at θ=-179° would see
-        # a spurious 358° error on step 0 and spin before moving.
+        # Seed continuous heading from robot's current wrapped angle, then
+        # shift the entire reference trajectory so its heading origin matches
+        # the robot's continuous theta.
         self._theta_continuous = robot[2]
         ref_th0    = self._ref_traj[0, 2]
         th_offset  = robot[2] - wrap(robot[2] - ref_th0)
         self._ref_traj[:, 2] += (th_offset - ref_th0)
+
+        dists = np.linalg.norm(self._ref_traj[:, :2] - robot[:2], axis=1)
+        self._ref_idx = int(np.argmin(dists))
+
+        # Drop everything before the closest point — purges any backtracking
+        # artifact from the interpolation (e.g. dead-end arm of a T-intersection)
+        self._ref_traj = self._ref_traj[self._ref_idx:]
+        self._ref_idx  = 0
 
         self._mode = "trajectory"
         await self._proto_6_1_reference_trajectory(self._ref_traj)

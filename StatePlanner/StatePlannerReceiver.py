@@ -29,7 +29,8 @@ class StatePlannerReceiver:
 
         self.Current_RobotPose = np.array([0.0, 0.0, 0.0])
         self.IsManualMode      = False
-        self.WaypointQueue     = [np.array([10, 10]), np.array([20, 20])]
+        self.WaypointQueue     = self._load_waypoints('/home/turkeysquad/ME450/MainDesign/Navigation/Waypoints.csv')
+
         self.Turkeys           = []
         self.GhostQueue        = []
 
@@ -44,7 +45,19 @@ class StatePlannerReceiver:
         self._current_submode = None
         self._current_task: asyncio.Task | None = None
         self._active_auto_mode: Mode | None = None
-        self._alert_running   = False  # Guard: prevents arbitration from interrupting Alert
+        self._alert_running   = False
+
+    def _load_waypoints(self, path: str) -> list:
+        waypoints = []
+        with open(path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                parts = line.split(',')
+                x, y = float(parts[1]), float(parts[2])
+                waypoints.append(np.array([x, y]))
+        return waypoints
 
     # ------------------------------------------------------------------
     # Helpers
@@ -205,21 +218,19 @@ class StatePlannerReceiver:
     async def Scan_Routine(self):
         await self.MacroState_Publisher.publish({"Id": "Scan"})
         if self.Verbose:
-            print("[StatePlannerReceiver] Starting Scan Routine")
+            print("[StatePlanner] Starting Scan Routine")
 
-        if self.GhostQueue:
-            target = self.GhostQueue.pop(0)
-        else:
-            target = self.WaypointQueue[self._scan_routine_idx % len(self.WaypointQueue)]
-            self._scan_routine_idx += 1
+        target = self._next_target()
+        await self._orient_toward(target)
+        await self.MotionCommand_Publisher.publish({"Id": "Move", "Cmd": target[:2].tolist()})
+        await self._module_scan._travel_to_waypoint()
 
         while True:
             robot_pos = np.array(self.Current_RobotPose[:3])
-            distance_to_waypoint = np.linalg.norm(np.array(target[:2]) - robot_pos[:2])
+            dist      = np.linalg.norm(target[:2] - robot_pos[:2])
 
-            if distance_to_waypoint < 1:
-                # Arrived — do scan cycle: 3 full rotations, 90° turns, 2s delay per step
-                for i in range(1, 12):
+            if dist < 0.5:
+                for i in range(1, 5):
                     robot_pos = np.array(self.Current_RobotPose[:3])
 
                     if i % 4 == 0:
@@ -229,19 +240,30 @@ class StatePlannerReceiver:
 
                     robot_pos[2] = ((robot_pos[2] + np.pi / 2) + np.pi) % (2 * np.pi) - np.pi
                     await self.MotionCommand_Publisher.publish({"Id": "Orient", "Cmd": robot_pos[:3].tolist()})
-                    await asyncio.sleep(2)
+                    await asyncio.sleep(1)
 
-                if self.GhostQueue:
-                    target = self.GhostQueue.pop(0)
-                else:
-                    target = self.WaypointQueue[self._scan_routine_idx % len(self.WaypointQueue)]
-                    self._scan_routine_idx += 1
-
+                target = self._next_target()
+                await self._orient_toward(target)
                 await self.MotionCommand_Publisher.publish({"Id": "Move", "Cmd": target[:2].tolist()})
                 await self._module_scan._travel_to_waypoint()
 
             else:
                 await asyncio.sleep(0.5)
+
+    def _next_target(self) -> np.ndarray:
+        if self.GhostQueue:
+            return self.GhostQueue.pop(0)
+        target = self.WaypointQueue[self._scan_routine_idx % len(self.WaypointQueue)]
+        self._scan_routine_idx += 1
+        return target
+
+    async def _orient_toward(self, target: np.ndarray):
+        robot_pos = np.array(self.Current_RobotPose[:3])
+        dx        = target[0] - robot_pos[0]
+        dy        = target[1] - robot_pos[1]
+        heading   = np.arctan2(-dy, dx)   # Y-down convention
+        pose      = [robot_pos[0], robot_pos[1], heading]
+        await self.MotionCommand_Publisher.publish({"Id": "Orient", "Cmd": pose})
 
     async def Chase_Routine(self):
         await self.MacroState_Publisher.publish({"Id": "Chase"})

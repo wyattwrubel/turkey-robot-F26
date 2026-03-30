@@ -129,7 +129,7 @@ async def main():
     
     # REAL MODULES TODO REPLACE THIS HEADER
     Canine = CanineDriver(ServoFeedback_Canine_pub, Canine_Canine_pub, Verbose=False)
-    Drivetrain = MotorDriver(RobotPose_Drivetrain_pub, SlipFeedback_Drivetrain_pub, Simulated=True)
+    Drivetrain = MotorDriver(RobotPose_Drivetrain_pub, SlipFeedback_Drivetrain_pub, Simulated=True, SkipUKFUpdates=True)
 
     Navigation = TrajectoryTracker(DriveCommand_Navigation_pub, MotionCommand_Navigation_pub, MPCFeedback_Navigation_pub, Verbose=False)
 
