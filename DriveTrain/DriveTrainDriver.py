@@ -36,7 +36,7 @@ class MotorDriver:
         self.PosePeriod           = 0.01
         self.UWBSamplePeriod      = 0.5
         self.ReadMotorDataPeriod  = 0.05
-        self.UpdateMotorPeriod    = 0.2
+        self.UpdateMotorPeriod    = 0.1
         self.ReadCurrentPeriod    = 0.1
         self.SlipPublishPeriod    = 1
 
