@@ -238,8 +238,23 @@ class MPC_loop:
     # ─── Command receivers ────────────────────────────────────────────────────
 
     async def Orient_CMD_Receiver(self, data):
-        print("[MPC] Orient mode — WIP")
-        self._mode = "idle"
+        # data: target heading in radians
+        target_hdg = float(data)
+        KP = 3.0  # tune this — units: (m/s wheel speed) / rad
+
+        while True:
+            state = np.array(self._parent.Current_State, dtype=np.float64)
+            err   = wrap(target_hdg - state[2])
+
+            if abs(err) < np.radians(3.0):   # 3° deadband
+                await self._send(np.zeros(2))
+                return
+
+            omega = KP * err
+            vr =  np.clip( omega * L / 2, V_MIN, V_MAX)
+            vl =  np.clip(-omega * L / 2, V_MIN, V_MAX)
+            await self._send(np.array([vl, vr]))
+            await asyncio.sleep(DT)
 
     async def Move_CMD_Receiver(self, data):
         robot = np.array(self._parent.Current_State, dtype=np.float64)
