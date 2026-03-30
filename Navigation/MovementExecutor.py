@@ -2,14 +2,12 @@ import asyncio
 import numpy as np
 import sys
 sys.path.insert(0, '/home/turkeysquad/ME450/MainDesign/casadi')
-# Also remove the venv casadi if it snuck in already
 if 'casadi' in sys.modules:
     del sys.modules['casadi']
 
 import casadi as ca
 
 from scipy.interpolate import interp1d
-
 
 
 # ─────────────────────────────────────────────
@@ -21,36 +19,39 @@ V_MAX        = 3.0
 V_MIN        = -3.0
 ARRIVAL_DIST = 0.5
 
-N  = 30                        # MPC horizon steps
-Q  = np.diag([25.0, 25.0, 10.0])
-R  = np.diag([0.3, 0.3])
+N  = 30
+
+# ── Cost weights ──────────────────────────────────────────────────────────────
+# Cross-track (lateral) error is penalized hard — this implicitly enforces
+# heading because the only way to reduce it is to point the right direction.
+# Along-track error is light — we don't care much if we're a bit behind/ahead.
+# Theta is NOT penalized at all — it's an emergent consequence of XY tracking.
+W_CROSS     = 80.0    # lateral deviation penalty  ← heavy
+W_ALONG     = 5.0     # along-path deviation        ← light
+W_TERMINAL  = 3.0     # terminal cost multiplier on both
+R           = np.diag([0.3, 0.3])
+OMEGA_WEIGHT = 1.5    # turn-rate damping: penalises (vr-vl)²/L²
+# ─────────────────────────────────────────────────────────────────────────────
+
 L  = WHEELBASE
 
+PIVOT_THRESHOLD_DEG = 45.0
+PIVOT_ALIGN_DEG     = 10.0
+PIVOT_OMEGA         = 3.0
+
+
 # ─────────────────────────────────────────────
-# Helpers  (stateless, no Ghost)
+# Helpers
 # ─────────────────────────────────────────────
 def wrap(a):
     return np.arctan2(np.sin(a), np.cos(a))
 
 def heading_to(from_xy, to_xy):
     dx = to_xy[0] - from_xy[0]
-    dy = to_xy[1] - from_xy[1]   # already positive downward
-    return np.arctan2(-dy, dx)    # ← remove the negative sign that was here
-
-def path_to_refs(path):
-    """Convert a list of (x,y) waypoints into (x, y, theta) reference rows."""
-    pts  = [(float(x), float(y)) for x, y in path]
-    refs = []
-    for i, (x, y) in enumerate(pts):
-        if i < len(pts) - 1:
-            th = heading_to((x, y), pts[i + 1])
-        else:
-            th = refs[-1][2] if refs else 0.0
-        refs.append(np.array([x, y, th]))
-    return refs
+    dy = to_xy[1] - from_xy[1]
+    return np.arctan2(-dy, dx)
 
 def build_reference(waypoints_xy: np.ndarray, dt: float, total_time: float) -> np.ndarray:
-    # Remove duplicate or near-duplicate points that cause interp1d to fail
     keep = np.ones(len(waypoints_xy), dtype=bool)
     for i in range(1, len(waypoints_xy)):
         if np.linalg.norm(waypoints_xy[i] - waypoints_xy[i-1]) < 1e-6:
@@ -70,7 +71,6 @@ def build_reference(waypoints_xy: np.ndarray, dt: float, total_time: float) -> n
     t_dense = np.arange(0, total_time, dt)
     t_n     = (t_dense / total_time).clip(0, 1)
 
-    # Use cubic if enough points, fall back to linear otherwise
     kind = 'cubic' if len(waypoints_xy) >= 4 else 'linear'
 
     xs = interp1d(arc_n, waypoints_xy[:, 0], kind=kind)(t_n)
@@ -79,15 +79,11 @@ def build_reference(waypoints_xy: np.ndarray, dt: float, total_time: float) -> n
     dx  = np.diff(xs, append=xs[-1])
     dy  = np.diff(ys, append=ys[-1])
     ths = np.arctan2(-dy, dx)
-    ths = (ths + np.pi) % (2 * np.pi) - np.pi   # ← wrap back to (-π, π)
+    ths = np.unwrap(ths)
 
     return np.column_stack([xs, ys, ths])
 
 def nominal_input_from_ref(ref_slice: np.ndarray, v_fwd: float) -> np.ndarray:
-    """
-    Invert the kinematic model to get feed-forward (vl, vr) along the reference.
-    v_fwd is the average forward speed (derived from path length / total time).
-    """
     u_ref = np.zeros((N, 2))
     for k in range(N):
         dth       = ref_slice[k+1, 2] - ref_slice[k, 2] if k+1 < len(ref_slice) else 0.0
@@ -97,78 +93,101 @@ def nominal_input_from_ref(ref_slice: np.ndarray, v_fwd: float) -> np.ndarray:
         u_ref[k]  = [vl, vr]
     return u_ref
 
-def build_param_vector(x_cur, ref_idx, ref_traj, v_fwd):
-    """Slice reference horizon and pack the IPOPT parameter vector."""
-    end  = min(ref_idx + N + 1, len(ref_traj))
-    pad  = N + 1 - (end - ref_idx)
-    xref = np.vstack([ref_traj[ref_idx:end],
-                      np.tile(ref_traj[-1], (pad, 1))])
+def get_ref_slice(ref_idx, ref_traj, v_fwd):
+    end = min(ref_idx + N + 1, len(ref_traj))
+    pad = N + 1 - (end - ref_idx)
+    xref  = np.vstack([ref_traj[ref_idx:end], np.tile(ref_traj[-1], (pad, 1))])
     u_ref = nominal_input_from_ref(xref, v_fwd)
-    p     = np.concatenate([x_cur, xref.flatten(), u_ref.flatten()])
-    return p, xref, u_ref
+    return xref, u_ref
+
+def pivot_wheels(heading_error_rad: float) -> np.ndarray:
+    sign = np.sign(heading_error_rad)
+    vl   = np.clip(-sign * PIVOT_OMEGA * L / 2, V_MIN, V_MAX)
+    vr   = np.clip( sign * PIVOT_OMEGA * L / 2, V_MIN, V_MAX)
+    return np.array([vl, vr])
+
 
 # ─────────────────────────────────────────────
-# MPC solver  (built once, reused every step)
+# MPC solver
 # ─────────────────────────────────────────────
 def build_mpc_solver():
     """
-    Construct and return the CasADi IPOPT solver.
-    Called once at startup — structure never changes, only p changes per step.
+    Cost is expressed in path-frame coordinates (along-track, cross-track)
+    rather than world-frame (x, y, theta).
+
+    At each horizon step k, given the reference heading theta_ref[k]:
+      - along-track error  = (dx)*cos(theta_ref) - (dy)*sin(theta_ref)  -- how far behind/ahead
+      - cross-track error  = (dx)*sin(theta_ref) + (dy)*cos(theta_ref)  -- lateral deviation
+
+    Cross-track is penalized heavily (W_CROSS), along-track lightly (W_ALONG).
+    Theta is NOT in the cost — heading alignment is implicit.
+
+    theta_ref values are passed as parameters (one per horizon step) so the
+    rotation is fixed at solve time — no trig inside the optimisation variables,
+    keeping the problem cleanly convex in the position states.
     """
     n_states, n_controls = 3, 2
 
-    # Symbolic state / input
     x_s, y_s, th_s = ca.SX.sym('x'), ca.SX.sym('y'), ca.SX.sym('theta')
     vl_s, vr_s      = ca.SX.sym('vl'), ca.SX.sym('vr')
     states  = ca.vertcat(x_s, y_s, th_s)
     inputs  = ca.vertcat(vl_s, vr_s)
 
-    # Discrete nonlinear dynamics (Euler)
-    v         = (vl_s + vr_s) / 2
-    omega     = (vr_s - vl_s) / L
-    f_expr    = ca.vertcat(v * ca.cos(th_s), -v * ca.sin(th_s), omega)
-    f_disc    = ca.Function('f', [states, inputs], [states + DT * f_expr])
+    v      = (vl_s + vr_s) / 2
+    omega  = (vr_s - vl_s) / L
+    f_expr = ca.vertcat(v * ca.cos(th_s), -v * ca.sin(th_s), omega)
+    f_disc = ca.Function('f', [states, inputs], [states + DT * f_expr])
 
-    # Decision variables
-    X_mpc = ca.SX.sym('X', n_states,   N + 1)
-    U_mpc = ca.SX.sym('U', n_controls, N)
+    X_mpc  = ca.SX.sym('X', n_states,   N + 1)
+    U_mpc  = ca.SX.sym('U', n_controls, N)
 
-    # Parameters: initial state + reference states + reference inputs
-    X0_p   = ca.SX.sym('X0',   n_states)
-    Xref_p = ca.SX.sym('Xref', n_states,   N + 1)
-    Uref_p = ca.SX.sym('Uref', n_controls, N)
-    p_all  = ca.vertcat(X0_p,
-                        ca.reshape(Xref_p, -1, 1),
-                        ca.reshape(Uref_p, -1, 1))
+    # Parameters: initial state, reference XY (N+1), reference theta (N+1),
+    #             reference inputs (N)
+    X0_p      = ca.SX.sym('X0',      n_states)
+    Xref_p    = ca.SX.sym('Xref',    2,   N + 1)   # xy only
+    ThRef_p   = ca.SX.sym('ThRef',   1,   N + 1)   # theta_ref per step
+    Uref_p    = ca.SX.sym('Uref',    n_controls, N)
+    p_all     = ca.vertcat(
+        X0_p,
+        ca.reshape(Xref_p,  -1, 1),
+        ca.reshape(ThRef_p, -1, 1),
+        ca.reshape(Uref_p,  -1, 1),
+    )
 
-    # Cost + constraints
     obj = 0
     g   = [X_mpc[:, 0] - X0_p]
 
     for k in range(N):
-        dx   = X_mpc[0, k] - Xref_p[0, k]
-        dy   = X_mpc[1, k] - Xref_p[1, k]
-        dth  = X_mpc[2, k] - Xref_p[2, k]
-        dth_w = dth - 2*ca.pi * ca.floor((dth + ca.pi) / (2*ca.pi))
+        dx  = X_mpc[0, k] - Xref_p[0, k]
+        dy  = X_mpc[1, k] - Xref_p[1, k]
+        th  = ThRef_p[0, k]               # reference heading at step k (fixed param)
 
-        e_x  = ca.vertcat(dx, dy, dth_w)
-        e_u  = U_mpc[:, k] - Uref_p[:, k]
-        obj += ca.mtimes([e_x.T, Q, e_x]) + ca.mtimes([e_u.T, R, e_u])
+        # Rotate world-frame error into path frame
+        e_along = dx * ca.cos(th) - dy * ca.sin(th)
+        e_cross = dx * ca.sin(th) + dy * ca.cos(th)
+
+        e_u     = U_mpc[:, k] - Uref_p[:, k]
+        omega_k = (U_mpc[1, k] - U_mpc[0, k]) / L
+
+        obj += (W_ALONG * e_along**2
+                + W_CROSS * e_cross**2
+                + ca.mtimes([e_u.T, R, e_u])
+                + OMEGA_WEIGHT * omega_k**2)
+
         g.append(X_mpc[:, k+1] - f_disc(X_mpc[:, k], U_mpc[:, k]))
 
-    # Terminal cost
-    dth_N  = X_mpc[2, N] - Xref_p[2, N]
-    dth_wN = dth_N - 2*ca.pi * ca.floor((dth_N + ca.pi) / (2*ca.pi))
-    e_xN   = ca.vertcat(X_mpc[0, N] - Xref_p[0, N],
-                        X_mpc[1, N] - Xref_p[1, N],
-                        dth_wN)
-    obj += ca.mtimes([e_xN.T, Q, e_xN])
+    # Terminal — same path-frame cost, scaled up
+    dx_N  = X_mpc[0, N] - Xref_p[0, N]
+    dy_N  = X_mpc[1, N] - Xref_p[1, N]
+    th_N  = ThRef_p[0, N]
+    e_along_N = dx_N * ca.cos(th_N) - dy_N * ca.sin(th_N)
+    e_cross_N = dx_N * ca.sin(th_N) + dy_N * ca.cos(th_N)
+    obj += W_TERMINAL * (W_ALONG * e_along_N**2 + W_CROSS * e_cross_N**2)
 
-    # Bounds
-    opt_vars  = ca.vertcat(ca.reshape(X_mpc, -1, 1), ca.reshape(U_mpc, -1, 1))
-    n_dec     = opt_vars.numel()
-    lbx       = -np.inf * np.ones(n_dec)
-    ubx       =  np.inf * np.ones(n_dec)
+    opt_vars   = ca.vertcat(ca.reshape(X_mpc, -1, 1), ca.reshape(U_mpc, -1, 1))
+    n_dec      = opt_vars.numel()
+    lbx        = -np.inf * np.ones(n_dec)
+    ubx        =  np.inf * np.ones(n_dec)
     ctrl_start = n_states * (N + 1)
     for i in range(N):
         for j in range(n_controls):
@@ -179,11 +198,11 @@ def build_mpc_solver():
     g_concat = ca.vertcat(*g)
     n_g      = g_concat.numel()
 
-    nlp = {'f': obj, 'x': opt_vars, 'g': g_concat, 'p': p_all}
+    nlp    = {'f': obj, 'x': opt_vars, 'g': g_concat, 'p': p_all}
     solver = ca.nlpsol('solver', 'ipopt', nlp,
                        {'ipopt.print_level': 0, 'print_time': 0})
 
-    meta = {
+    return {
         'solver':      solver,
         'f_disc':      f_disc,
         'lbx':         lbx,
@@ -195,7 +214,22 @@ def build_mpc_solver():
         'n_controls':  n_controls,
         'n_states':    n_states,
     }
-    return meta
+
+def build_param_vector(state, xref, u_ref):
+    """
+    Pack the parameter vector for the new solver signature.
+    ThRef is passed separately so the solver can rotate errors into path frame.
+    """
+    xy_ref = xref[:, :2]          # (N+1, 2)
+    th_ref = xref[:, 2:3]         # (N+1, 1)  — unwrapped is fine, only cos/sin used
+    p = np.concatenate([
+        state,
+        xy_ref.flatten(),
+        th_ref.flatten(),
+        u_ref.flatten(),
+    ])
+    return p
+
 
 # ─────────────────────────────────────────────
 # Main controller class
@@ -208,38 +242,32 @@ class MPC_loop:
         self._parent         = parent
 
         self._mode       = "idle"
-        self._ref_traj   = None   # dense (M, 3) reference
-        self._ref_idx    = 0      # current position along ref_traj
-        self._v_fwd      = 0.5   # updated when a new path is loaded
-        self._init_guess = None   # warm-start vector
+        self._ref_traj   = None
+        self._ref_idx    = 0
+        self._v_fwd      = 0.5
+        self._init_guess = None
+        self._target_hdg = 0.0
 
         print("[MPC] Building solver…")
         self._mpc = build_mpc_solver()
         print("[MPC] Solver ready.")
 
     # ─────────────────────────────────────────────
-    # Protocol 6 — MPC Feedback Protocol
+    # Protocol 6
     # ─────────────────────────────────────────────
 
-    async def _proto_6_1_reference_trajectory(self, ref_traj: np.ndarray):
-        """6.1 ReferenceTrajectory — fires once on new Move command."""
+    async def _proto_6_1_reference_trajectory(self, ref_traj):
         await self.MPCFeedback_pub.publish({
-            "Id":  "Reference",
-            "Cmd": ref_traj[:, :2].tolist(),
+            "Id": "Reference", "Cmd": ref_traj[:, :2].tolist()
         })
 
-    async def _proto_6_2_mpc_feedback(self, xref_slice: np.ndarray):
-        """6.2 FeedbackMPC — fires every control timestep."""
+    async def _proto_6_2_mpc_feedback(self, xref_slice):
         await self.MPCFeedback_pub.publish({
-            "Id":  "FeedbackMPC",
-            "Cmd": xref_slice[:, :2].tolist(),
+            "Id": "FeedbackMPC", "Cmd": xref_slice[:, :2].tolist()
         })
 
     async def _proto_6_3_clear_trajectory(self):
-        """6.3 ClearTrajectory — fires on arrival."""
-        await self.MPCFeedback_pub.publish({
-            "Id": "ClearTrajectory",
-        })
+        await self.MPCFeedback_pub.publish({"Id": "ClearTrajectory"})
 
     # ─────────────────────────────────────────────
     # Command receivers
@@ -255,17 +283,26 @@ class MPC_loop:
         waypoints_xy = np.array([[float(x), float(y)] for x, y in data])
         waypoints_xy = np.vstack([robot[:2], waypoints_xy])
 
-        total_dist  = np.sum(np.linalg.norm(np.diff(waypoints_xy, axis=0), axis=1))
-        
-        self._v_fwd = np.clip(total_dist / (total_dist / 2.8), 0.3, V_MAX)  # target 2.7 m/s
-        total_time  = total_dist / self._v_fwd + 5.0
+        total_dist = np.sum(np.linalg.norm(np.diff(waypoints_xy, axis=0), axis=1))
+        self._v_fwd  = np.clip(total_dist / (total_dist / 2.8), 0.3, V_MAX)
+        total_time   = total_dist / self._v_fwd + 5.0
 
         self._ref_traj   = build_reference(waypoints_xy, DT, total_time)
         self._ref_idx    = 0
         self._init_guess = np.zeros(self._mpc['n_dec'])
-        self._mode       = "trajectory"
+
+        initial_ref_hdg = wrap(self._ref_traj[0, 2])
+        hdg_err         = wrap(initial_ref_hdg - robot[2])
+
+        if abs(np.degrees(hdg_err)) > PIVOT_THRESHOLD_DEG:
+            self._target_hdg = initial_ref_hdg
+            self._mode       = "pivot"
+            print(f"[MPC] Pivot engaged — hdg_err={np.degrees(hdg_err):.1f}°")
+        else:
+            self._mode = "trajectory"
 
         await self._proto_6_1_reference_trajectory(self._ref_traj)
+
     # ─────────────────────────────────────────────
     # Control loop
     # ─────────────────────────────────────────────
@@ -273,11 +310,27 @@ class MPC_loop:
     async def MPC_Main(self):
         state = np.array(self._parent.Current_State, dtype=np.float64)
 
+        # ── Pivot ─────────────────────────────────────────────────────────────
+        if self._mode == "pivot":
+            hdg_err = wrap(self._target_hdg - state[2])
+            if abs(np.degrees(hdg_err)) < PIVOT_ALIGN_DEG:
+                print("[MPC] Pivot done — switching to trajectory")
+                self._mode = "trajectory"
+            else:
+                u = pivot_wheels(hdg_err)
+                print(f"[MPC] PIVOT | "
+                      f"state=({state[0]:6.2f}, {state[1]:6.2f}, {np.degrees(state[2]):7.2f}°) | "
+                      f"target={np.degrees(self._target_hdg):7.2f}° | "
+                      f"err={np.degrees(hdg_err):7.2f}° | "
+                      f"u=[{u[0]:5.2f}, {u[1]:5.2f}]")
+                await self._send(u)
+                return
+        # ─────────────────────────────────────────────────────────────────────
+
         if self._mode == "trajectory":
             final = self._ref_traj[-1]
             dist  = np.linalg.norm(state[:2] - final[:2])
 
-            # Arrival check
             if self._ref_idx >= len(self._ref_traj) - 1 and dist < ARRIVAL_DIST:
                 print(f"[MPC] Arrived at ({final[0]:.2f}, {final[1]:.2f}), err={dist:.3f} m")
                 self._mode = "idle"
@@ -285,19 +338,16 @@ class MPC_loop:
                 await self._proto_6_3_clear_trajectory()
                 return
 
-            # Build parameter vector for this timestep
-            p_vec, xref_slice, _ = build_param_vector(
-                state, self._ref_idx, self._ref_traj, self._v_fwd
-            )
+            xref, u_ref = get_ref_slice(self._ref_idx, self._ref_traj, self._v_fwd)
+            p_vec       = build_param_vector(state, xref, u_ref)
 
-            # Solve
             sol = self._mpc['solver'](
-                x0   = self._init_guess,
-                lbx  = self._mpc['lbx'],
-                ubx  = self._mpc['ubx'],
-                lbg  = self._mpc['lbg'],
-                ubg  = self._mpc['ubg'],
-                p    = p_vec,
+                x0  = self._init_guess,
+                lbx = self._mpc['lbx'],
+                ubx = self._mpc['ubx'],
+                lbg = self._mpc['lbg'],
+                ubg = self._mpc['ubg'],
+                p   = p_vec,
             )
 
             sol_flat = sol['x'].full().flatten()
@@ -305,33 +355,32 @@ class MPC_loop:
             nc       = self._mpc['n_controls']
             u        = sol_flat[cs : cs + nc]
 
-            # ── debug ──────────────────────────────────────────────
-            p_vec_dbg  = p_vec  # already built above
-            xref_now   = xref_slice[0]
-            xref_next  = xref_slice[1] if len(xref_slice) > 1 else xref_slice[0]
+            xref_now = xref[0]
+            # Compute path-frame errors for logging
+            dx       = state[0] - xref_now[0]
+            dy       = state[1] - xref_now[1]
+            th       = xref_now[2]
+            e_along  = dx * np.cos(th) - dy * np.sin(th)
+            e_cross  = dx * np.sin(th) + dy * np.cos(th)
 
             print(f"[MPC] idx={self._ref_idx:04d} | "
-                f"state=({state[0]:6.2f}, {state[1]:6.2f}, {np.degrees(state[2]):7.2f}°) | "
-                f"ref=  ({xref_now[0]:6.2f}, {xref_now[1]:6.2f}, {np.degrees(xref_now[2]):7.2f}°) | "
-                f"u=[{u[0]:5.2f}, {u[1]:5.2f}] | "
-                f"hdg_err={np.degrees(wrap(state[2] - xref_now[2])):7.2f}°")
-            # ── end debug ──────────────────────────────────────────
+                  f"state=({state[0]:6.2f}, {state[1]:6.2f}, {np.degrees(state[2]):7.2f}°) | "
+                  f"ref=  ({xref_now[0]:6.2f}, {xref_now[1]:6.2f}, "
+                  f"{np.degrees(wrap(xref_now[2])):7.2f}°) | "
+                  f"e_along={e_along:6.3f} e_cross={e_cross:6.3f} | "
+                  f"u=[{u[0]:5.2f}, {u[1]:5.2f}]")
 
-            # Warm-start next iteration with current solution
             self._init_guess = sol_flat
-
-            # Advance reference index by one step
-            self._ref_idx = min(self._ref_idx + 1, len(self._ref_traj) - 1)
+            self._ref_idx    = min(self._ref_idx + 1, len(self._ref_traj) - 1)
 
             await self._send(u)
-            await self._proto_6_2_mpc_feedback(xref_slice)
+            await self._proto_6_2_mpc_feedback(xref)
 
         elif self._mode == "fixed":
             print("[MPC] Fixed/orient mode — WIP")
             self._mode = "idle"
 
     async def _send(self, u, **_):
-        """Publish wheel velocities to the drivetrain."""
         cmd = np.array(u, dtype=np.float32)
         await self.Drivetrain_pub.publish({"Id": "System", "Cmd": cmd.tolist()})
 

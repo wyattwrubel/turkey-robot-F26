@@ -77,8 +77,7 @@ def GenerateTrajectory(map, current_state, desired_state):
                     np.sin(step_angle - robot_theta),
                     np.cos(step_angle - robot_theta)
                 ))
-                # Scale penalty: 0 if aligned, up to 2.0 if pointing opposite
-                tentative_g += (hdg_err / np.pi) * 5.0
+
             # ───────────────────────────────────────────────────────
 
             if neighbor not in gscore or tentative_g < gscore[neighbor]:
