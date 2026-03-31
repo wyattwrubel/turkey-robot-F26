@@ -21,6 +21,11 @@ class StatePlannerReceiver:
 
     GHOST_DEDUP_RADIUS_M = 5.0
 
+    # Chase tuning — only send a new Move if the turkey moved this far (m)
+    CHASE_GOAL_THRESHOLD_M  = 0.5
+    # How often to check (seconds). A* only replans if goal actually moved.
+    CHASE_GOAL_UPDATE_RATE  = 2.0
+
     def __init__(self, MacroState_Publisher, Canine_Publisher, MotionCommand_Publisher, Verbose=False):
         self.MacroState_Publisher    = MacroState_Publisher
         self.Canine_Publisher        = Canine_Publisher
@@ -73,7 +78,6 @@ class StatePlannerReceiver:
         self._current_task = None
 
     async def _switch_to(self, coro) -> None:
-        """Cancel the running task and start a new one."""
         await self.Stop_Routine()
         await self._cancel_current_task()
         self._current_task = asyncio.get_event_loop().create_task(coro)
@@ -155,7 +159,6 @@ class StatePlannerReceiver:
             await self._switch_to(self.Alert_Routine())
         elif mode == "Stop":
             await self.Stop_Routine()
-
         elif submode == "TravelWaypoint":
             await self._switch_to(self._module_scan._travel_to_waypoint())
         elif submode == "StationaryScan":
@@ -176,18 +179,14 @@ class StatePlannerReceiver:
             await self._switch_to(self._module_alert._short_warning_burst())
 
     # ------------------------------------------------------------------
-    # Automatic arbitration  (Chase > Alert > Scan)
+    # Automatic arbitration
     # ------------------------------------------------------------------
 
     async def _arbitrate_auto(self) -> None:
-        """
-        Called whenever sensor data changes. Switches task only if mode changed.
-        Will not interrupt Alert — Alert transitions to Scan itself when complete.
-        """
-
-        # Don't interrupt alert mid-sequence — it will call _switch_to(Scan) itself
         if self._alert_running:
-            return
+            if not any(self.ZoneChecker.is_inside(t[0], t[1]) for t in self.Turkeys):
+                return
+            self._alert_running = False
 
         if any(self.ZoneChecker.is_inside(turkey[0], turkey[1]) for turkey in self.Turkeys):
             target = Mode.CHASE
@@ -246,7 +245,6 @@ class StatePlannerReceiver:
                 await self._orient_toward(target)
                 await self.MotionCommand_Publisher.publish({"Id": "Move", "Cmd": target[:2].tolist()})
                 await self._module_scan._travel_to_waypoint()
-
             else:
                 await asyncio.sleep(0.5)
 
@@ -261,7 +259,7 @@ class StatePlannerReceiver:
         robot_pos = np.array(self.Current_RobotPose[:3])
         dx        = target[0] - robot_pos[0]
         dy        = target[1] - robot_pos[1]
-        heading   = np.arctan2(-dy, dx)   # Y-down convention
+        heading   = np.arctan2(-dy, dx)
         pose      = [robot_pos[0], robot_pos[1], heading]
         await self.MotionCommand_Publisher.publish({"Id": "Orient", "Cmd": pose})
 
@@ -274,41 +272,74 @@ class StatePlannerReceiver:
         if self.Verbose:
             print("[StatePlannerReceiver] Starting Chase Routine")
 
-        robot_pos = np.array(self.Current_RobotPose[:2])
-        nearest_turkey = min(self.Turkeys, key=lambda t: np.linalg.norm(np.array(t[:2]) - robot_pos))
-        await self.MotionCommand_Publisher.publish({"Id": "Move", "Cmd": nearest_turkey})
+        last_published_xy = None
 
-        while True:
-            # Recompute each iteration so TurkeyNear stays current
-            robot_pos     = np.array(self.Current_RobotPose[:2])
-            distance_away = np.linalg.norm(np.array(nearest_turkey[:2]) - robot_pos)
-            TurkeyNear    = distance_away <= 5
+        async def _update_goal():
+            nonlocal last_published_xy
+            while True:
+                if self.Turkeys:
+                    robot_pos      = np.array(self.Current_RobotPose[:2])
+                    nearest_turkey = min(
+                        self.Turkeys,
+                        key=lambda t: np.linalg.norm(np.array(t[:2]) - robot_pos)
+                    )
+                    goal_xy = np.array(nearest_turkey[:2])
 
-            if not TurkeyNear:
-                if self.Verbose:
-                    print("[StatePlannerReceiver] Chase — GrowlAndChase")
-                await self._module_chase._growl_and_chase()
+                    moved = (
+                        last_published_xy is None
+                        or np.linalg.norm(goal_xy - last_published_xy) >= self.CHASE_GOAL_THRESHOLD_M
+                    )
 
-                if self.Verbose:
-                    print("[StatePlannerReceiver] Chase — AggressivePursuit")
-                await self._module_chase._aggressive_pursuit()
-            else:
-                if self.Verbose:
-                    print("[StatePlannerReceiver] Chase — BurstAttack")
-                await self._module_chase._burst_attack()
+                    if moved:
+                        # Send to A* (or directly to MPC if no A*).
+                        # A* receives this, replans around obstacles, and
+                        # forwards a full waypoint path as {"Id": "Move", ...}.
+                        await self.MotionCommand_Publisher.publish(
+                            {"Id": "Move", "Cmd": nearest_turkey}
+                        )
+                        last_published_xy = goal_xy.copy()
+                        if self.Verbose:
+                            print(f"[StatePlanner] Chase Move → "
+                                  f"({goal_xy[0]:.2f}, {goal_xy[1]:.2f})")
+
+                await asyncio.sleep(self.CHASE_GOAL_UPDATE_RATE)
+
+        goal_task = asyncio.get_event_loop().create_task(_update_goal())
+
+        try:
+            while True:
+                robot_pos      = np.array(self.Current_RobotPose[:2])
+                nearest_turkey = min(self.Turkeys, key=lambda t: np.linalg.norm(np.array(t[:2]) - robot_pos))
+                distance_away  = np.linalg.norm(np.array(nearest_turkey[:2]) - robot_pos)
+                TurkeyNear     = distance_away <= 5
+
+                if not TurkeyNear:
+                    if self.Verbose:
+                        print("[StatePlannerReceiver] Chase — GrowlAndChase")
+                    await self._module_chase._growl_and_chase()
+
+                    if self.Verbose:
+                        print("[StatePlannerReceiver] Chase — AggressivePursuit")
+                    await self._module_chase._aggressive_pursuit()
+                else:
+                    if self.Verbose:
+                        print("[StatePlannerReceiver] Chase — BurstAttack")
+                    await self._module_chase._burst_attack()
+        finally:
+            goal_task.cancel()
+            try:
+                await goal_task
+            except asyncio.CancelledError:
+                pass
 
     async def Alert_Routine(self):
-        # Set guard so arbitration doesn't interrupt us mid-sequence
         self._alert_running = True
         try:
             await self.MacroState_Publisher.publish({"Id": "Alert"})
             if self.Verbose:
                 print("[StatePlannerReceiver] Starting Alert Routine")
 
-            if self.Turkeys:
-                EndOfChase = True
-            else:
-                EndOfChase = False
+            EndOfChase = bool(self.Turkeys)
 
             if EndOfChase:
                 if self.Verbose:
@@ -327,13 +358,10 @@ class StatePlannerReceiver:
                 else:
                     await self._module_alert._short_warning_burst()
                     await self._module_alert._watchful_dog()
-
         finally:
-            # Always clear the guard, even if the task is cancelled
             self._alert_running    = False
-            self._active_auto_mode = None  # Reset so arbitration picks correct next mode
+            self._active_auto_mode = None
 
-        # Transition to scan once alert sequence is fully complete
         await self._switch_to(self.Scan_Routine())
 
     # ------------------------------------------------------------------
@@ -378,4 +406,4 @@ class StatePlannerReceiver:
         if self.IsManualMode:
             await self.Canine_Publisher.publish({"Id": "UI",     "Type": "Servo", "Name": servoname, "Data": angle})
         else:
-            await self.Canine_Publisher.publish({"Id": "System", "Type": "Servo", "Name": servoname, "Data": angle})    
+            await self.Canine_Publisher.publish({"Id": "System", "Type": "Servo", "Name": servoname, "Data": angle})

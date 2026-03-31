@@ -12,6 +12,8 @@ Usage in main.py (unchanged):
 Controls:
     WASD  — move turkey around the 0-100 coordinate space (1 unit = 1 m)
     SPACE — toggle cloak (publishes Turkeys: [])
+
+Starts cloaked. Dot is orange when visible, blue when cloaked.
 """
 
 import asyncio
@@ -31,10 +33,13 @@ class Vision:
     IMAGE_FILES     = ["turkey1.jpg", "turkey2.jpg", "turkey3.jpg"]
 
     # --- controller config ---
-    GRID_SIZE    = 100      # coordinate space 0-100 (1 unit = 1 m)
-    CELL_PX      = 6        # pixels per unit
-    TURKEY_SPEED = 0.5      # m per tick (0.5 * 20 hz = 10 m/s)
-    PUBLISH_HZ   = 20
+    GRID_SIZE       = 100       # coordinate space 0-100 (1 unit = 1 m)
+    CELL_PX         = 6         # pixels per unit
+    TURKEY_SPEED    = 0.175       # m per tick (0.5 * 20 hz = 10 m/s)
+    PUBLISH_HZ      = 20
+
+    COLOR_VISIBLE   = "#EF9F27"  # orange — turkey is visible to backend
+    COLOR_CLOAKED   = "#378ADD"  # blue   — turkey is hidden (Turkeys: [])
 
     def __init__(self, video_publisher, visionobject_publisher):
         self._publisher        = video_publisher
@@ -42,9 +47,9 @@ class Vision:
         self._frames           = []
         self._index            = 0
 
-        self._tx      = 50.0
-        self._ty      = 50.0
-        self._cloaked = False
+        self._tx      = 20.0
+        self._ty      = 20.0
+        self._cloaked = True      # start cloaked
         self._keys    = {"w": False, "a": False, "s": False, "d": False}
         self._ui_done = False
 
@@ -112,14 +117,16 @@ class Vision:
         tk.Label(root, textvariable=status_var, font=("Courier", 10),
                  fg="#aaa", bg="#111").pack(pady=(4, 8))
 
-        turkey_dot = canvas.create_oval(0, 0, 10, 10, fill="#EF9F27", outline="")
+        turkey_dot = canvas.create_oval(0, 0, 10, 10,
+                                        fill=self.COLOR_CLOAKED, outline="")
 
         def update():
             cx, cy = self._tx * PX, self._ty * PX
             canvas.coords(turkey_dot, cx - 5, cy - 5, cx + 5, cy + 5)
-            canvas.itemconfig(turkey_dot, fill="#5a4010" if self._cloaked else "#EF9F27")
-            cloak_str = "  [CLOAKED]" if self._cloaked else ""
-            status_var.set(f"x: {self._tx:5.1f}  y: {self._ty:5.1f}{cloak_str}")
+            color = self.COLOR_CLOAKED if self._cloaked else self.COLOR_VISIBLE
+            canvas.itemconfig(turkey_dot, fill=color)
+            cloak_str = "CLOAKED" if self._cloaked else "VISIBLE"
+            status_var.set(f"x: {self._tx:5.1f}  y: {self._ty:5.1f}  [{cloak_str}]")
 
         def key_press(e):
             k = e.keysym.lower()

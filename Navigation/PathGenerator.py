@@ -4,9 +4,16 @@ import heapq
 def heuristic(a, b):
     return np.hypot(a[0] - b[0], a[1] - b[1])
 
+_prev_path_set = set()  # nodes from the last plan, used to bias replanning
+
 def GenerateTrajectory(map, current_state, desired_state):
+    global _prev_path_set
+
     neighbors = [(-1,0),(1,0),(0,-1),(0,1),
                  (-1,-1),(-1,1),(1,-1),(1,1)]
+
+    CONSISTENCY_BONUS = 0.6   # cost discount for staying on previous path
+                               # higher = smoother but slower to replan around obstacles
 
     desired_state = np.array(desired_state)
     current_state = tuple(np.array(current_state[0:2]).round().astype(int))
@@ -67,6 +74,10 @@ def GenerateTrajectory(map, current_state, desired_state):
                 if curr_is_diag != new_is_diag:
                     tentative_g += 0.5
 
+            # Consistency bonus — prefer nodes that were on the previous path
+            if neighbor in _prev_path_set:
+                tentative_g -= CONSISTENCY_BONUS
+
             if neighbor not in gscore or tentative_g < gscore[neighbor]:
                 came_from[neighbor] = current
                 gscore[neighbor]    = tentative_g
@@ -75,6 +86,7 @@ def GenerateTrajectory(map, current_state, desired_state):
                 heapq.heappush(open_heap, (fscore[neighbor], neighbor))
 
     if best_node not in came_from and best_node != current_state:
+        _prev_path_set = set()
         return None
 
     path = [best_node]
@@ -83,4 +95,9 @@ def GenerateTrajectory(map, current_state, desired_state):
         path.append(best_node)
 
     path.reverse()
-    return [(int(x), int(y)) for (x, y) in path]
+    path = [(int(x), int(y)) for (x, y) in path]
+
+    # Store this plan for next call
+    _prev_path_set = set(path)
+
+    return path
