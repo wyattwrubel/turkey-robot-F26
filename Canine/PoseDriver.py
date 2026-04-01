@@ -7,13 +7,7 @@ import ServoController as SC
 import asyncio
 
 class PoseDriver():
-    # TODO Revise With RPi Wiring
-    # Front_Left_Pin = 12
-    # Front_Right_Pin = 13
-    # Rear_Left_Pin = 18
-    # Rear_Right_Pin = 19
-    # Head_Pin = 24
-
+    
     Front_Left_Pin = 0
     Front_Right_Pin = 1
     Rear_Left_Pin = 2

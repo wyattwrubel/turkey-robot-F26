@@ -46,7 +46,7 @@ class Servo:
         self.Verbose = Verbose
         self.IsFlipped = IsFlipped
         self.Offset = Offset
-        self.Simulated = Simulated  # store it for use in other methods
+        self.Simulated = Simulated
 
         if ServoType == "Leg":
             self.Motor_Max_Angle = self.Leg_Motor_Max_Angle
