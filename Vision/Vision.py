@@ -37,7 +37,7 @@ class VisionObject:
     VIDEO_PUB_FPS_CAP = 10
     INFERENCE_FPS_CAP = 10
 
-    def __init__(self, VideoFeed_Vision_pub, VisionObject_Vision_pub, Verbose=False, debug_draw=False, debug_print=False):
+    def __init__(self, VideoFeed_Vision_pub, VisionObject_Vision_pub, Simulated=False, Verbose=False, debug_draw=False, debug_print=False):
         self.VideoFeed_Vision_pub    = VideoFeed_Vision_pub
         self.VisionObject_Vision_pub = VisionObject_Vision_pub
 
@@ -76,6 +76,9 @@ class VisionObject:
         self._inference_thread = None
         self._event_loop       = None
         self._loop_thread      = None
+
+        if Simulated == False:
+            self.start()
 
     # ------------------------------------------------------------------
     # RobotPose Receiver

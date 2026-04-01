@@ -7,9 +7,9 @@ import random
 
 class ServoController:
 
-    def __init__(self, Name, ServoType, Channel_Pin, Offset, IsFlipped, Verbose=False):
+    def __init__(self, Name, ServoType, Channel_Pin, Offset, IsFlipped, Simulated, Verbose=False):
         if(ServoType == "Leg" or ServoType == "Head"):
-            self.servo = SD.Servo(Name, ServoType, Channel_Pin, Offset, IsFlipped, Verbose)
+            self.servo = SD.Servo(Name, ServoType, Channel_Pin, Offset, IsFlipped, Simulated, Verbose)
         else:
             print("ServoController: Invalid 'ServoType' Received ", ServoType)
         

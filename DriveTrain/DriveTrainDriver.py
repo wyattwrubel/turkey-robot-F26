@@ -46,12 +46,12 @@ class MotorDriver:
         self._StallDebounceLimit    = 5
         self._stall_debounce        = 0
 
-        self._SlipWarnThreshold = 0.3
-        self._SlipStopThreshold = 0.5
+        self._SlipWarnThreshold = 0.4
+        self._SlipStopThreshold = 0.7
         self._SlipDeadband      = 0.05
 
         self._SlipNormal = 1.0
-        self._SlipWarn   = 0.5
+        self._SlipWarn   = 0.7
         self._SlipStop   = 0.0
         self._SlipModifier = self._SlipNormal
 

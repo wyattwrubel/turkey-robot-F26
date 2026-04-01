@@ -293,6 +293,7 @@ function onServoSlide(servoId, el) {
   document.getElementById(`sv-${servoId}`).textContent = `${angle}°`
   send({ type: 'servo_angle', servo: servoId, angle })
 }
+
 function updateSliderBg(el) {
   const pct = ((parseFloat(el.value) - parseFloat(el.min)) /
                (parseFloat(el.max)  - parseFloat(el.min))) * 100

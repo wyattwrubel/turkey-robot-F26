@@ -28,16 +28,16 @@ class PoseDriver():
 
     Default_Angle_Delay = 0.5 # Seconds
  
-    def __init__(self, ServoAnglePublisher, Verbose):
+    def __init__(self, ServoAnglePublisher, Simulated, Verbose):
         self.servos = {}
         self.Verbose = Verbose
 
         #Name, ServoType, GPIO_PIN, Offset, IsFlipped, Verbose
-        self.servos["FrontLeft"] = SC.ServoController("FrontLeft", "Leg", self.Front_Left_Pin, self.Front_Left_Offset, True, Verbose)
-        self.servos["FrontRight"] = SC.ServoController("FrontRight", "Leg", self.Front_Right_Pin, self.Front_Right_Offset, False, Verbose)
-        self.servos["RearLeft"] = SC.ServoController("RearLeft", "Leg", self.Rear_Left_Pin, self.Rear_Left_Offset, False, Verbose)
-        self.servos["RearRight"] = SC.ServoController("RearRight", "Leg", self.Rear_Right_Pin, self.Rear_Right_Offset, False, Verbose)
-        self.servos["Head"] = SC.ServoController("Head", "Head", self.Head_Pin, self.Head_Offset, False, Verbose)
+        self.servos["FrontLeft"] = SC.ServoController("FrontLeft", "Leg", self.Front_Left_Pin, self.Front_Left_Offset, True, Simulated, Verbose)
+        self.servos["FrontRight"] = SC.ServoController("FrontRight", "Leg", self.Front_Right_Pin, self.Front_Right_Offset, False, Simulated, Verbose)
+        self.servos["RearLeft"] = SC.ServoController("RearLeft", "Leg", self.Rear_Left_Pin, self.Rear_Left_Offset, False, Simulated, Verbose)
+        self.servos["RearRight"] = SC.ServoController("RearRight", "Leg", self.Rear_Right_Pin, self.Rear_Right_Offset, False, Simulated, Verbose)
+        self.servos["Head"] = SC.ServoController("Head", "Head", self.Head_Pin, self.Head_Offset, False, Simulated, Verbose)
         self.ServoAnglePublisher = ServoAnglePublisher
 
     async def CanineMotor_Receiver(self, data):

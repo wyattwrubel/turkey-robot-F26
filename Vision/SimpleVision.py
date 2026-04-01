@@ -23,7 +23,7 @@ import tkinter as tk
 import cv2
 
 
-class Vision:
+class FakeVision:
 
     # --- carousel config ---
     CAPTURE_RATE_HZ = 0.02
