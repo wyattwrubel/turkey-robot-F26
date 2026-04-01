@@ -7,9 +7,9 @@ import random
 
 class ServoController:
 
-    def __init__(self, Name, ServoType, GPIO_PIN, Offset, IsFlipped, Verbose=False):
+    def __init__(self, Name, ServoType, Channel_Pin, Offset, IsFlipped, Verbose=False):
         if(ServoType == "Leg" or ServoType == "Head"):
-            self.servo = SD.Servo(Name, ServoType, GPIO_PIN, Offset, IsFlipped, Verbose)
+            self.servo = SD.Servo(Name, ServoType, Channel_Pin, Offset, IsFlipped, Verbose)
         else:
             print("ServoController: Invalid 'ServoType' Received ", ServoType)
         
@@ -43,14 +43,29 @@ class ServoController:
         self.servo.SetAngle(angle)
 
     async def _Oscillate_Command(self, angle1, angle2, period):
-        mid = (angle1 + angle2) // 2
-        waypoints = [angle1, mid, angle2, mid]
-        step_time = period / len(waypoints)
+        if self.Verbose:
+            print(f"ServoController: Oscillate {angle1} <-> {angle2} over {period}s")
+
+        resolution = 1
+        total_steps = abs(angle2 - angle1) / resolution
+        step_time = (period / 2) / total_steps
+
+        current = float(angle1)
+        target = float(angle2)
+        next_fire = asyncio.get_event_loop().time()
 
         while True:
-            for waypoint in waypoints:
-                self.servo.SetAngle(waypoint)
-                await asyncio.sleep(step_time)
+            self.servo.SetAngle(int(current))
+
+            current += resolution * (1 if target > current else -1)
+            current = max(min(angle1, angle2), min(max(angle1, angle2), current))
+            if int(current) == int(target):
+                target = angle2 if target == angle1 else angle1
+
+            next_fire += step_time
+            sleep_dur = next_fire - asyncio.get_event_loop().time()
+            if sleep_dur > 0:
+                await asyncio.sleep(sleep_dur)
 
     async def _Random_Command(self, angle1, angle2, period):
         """ Selects random angle from [angle1 to angle2) every period seconds """
