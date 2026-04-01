@@ -14,16 +14,25 @@ class PoseDriver():
     Rear_Right_Pin = 19
     Head_Pin = 24
 
+    Front_Left_Offset = -62
+    Front_Right_Offset = 0
+    Rear_Left_Offset = 0
+    Rear_Right_Offset = 0
+    Head_Offset = 0
+
+
     Default_Angle_Delay = 0.5 # Seconds
  
     def __init__(self, ServoAnglePublisher, Verbose):
         self.servos = {}
         self.Verbose = Verbose
-        self.servos["FrontLeft"] = SC.ServoController("FrontLeft", "Leg", self.Front_Left_Pin, 0, Verbose)
-        self.servos["FrontRight"] = SC.ServoController("FrontRight", "Leg", self.Front_Right_Pin, 0, Verbose)
-        self.servos["RearLeft"] = SC.ServoController("RearLeft", "Leg", self.Rear_Left_Pin, 0, Verbose)
-        self.servos["RearRight"] = SC.ServoController("RearRight", "Leg", self.Rear_Right_Pin, 0, Verbose)
-        self.servos["Head"] = SC.ServoController("Head", "Head", self.Head_Pin, 0, Verbose)
+
+        #Name, ServoType, GPIO_PIN, Offset, IsFlipped, Verbose
+        self.servos["FrontLeft"] = SC.ServoController("FrontLeft", "Leg", self.Front_Left_Pin, self.Front_Left_Offset, False, Verbose)
+        self.servos["FrontRight"] = SC.ServoController("FrontRight", "Leg", self.Front_Right_Pin, self.Front_Right_Offset, False, Verbose)
+        self.servos["RearLeft"] = SC.ServoController("RearLeft", "Leg", self.Rear_Left_Pin, self.Rear_Left_Offset, False, Verbose)
+        self.servos["RearRight"] = SC.ServoController("RearRight", "Leg", self.Rear_Right_Pin, self.Rear_Right_Offset, False, Verbose)
+        self.servos["Head"] = SC.ServoController("Head", "Head", self.Head_Pin, self.Head_Offset, False, Verbose)
         self.ServoAnglePublisher = ServoAnglePublisher
 
     async def CanineMotor_Receiver(self, data):
@@ -126,20 +135,20 @@ class PoseDriver():
     
     async def _WalkGait_Command(self):
         
-        # Motor Initialization
-        if(self.Verbose): print("PoseDriver: Activating WalkGait Initialization")
-        await asyncio.gather(
-            self.servos["FrontLeft"].servo_control_receiver("Fixed", 15),
-            self.servos["FrontRight"].servo_control_receiver("Fixed", -15),
-            self.servos["RearLeft"].servo_control_receiver("Fixed", 15),
-            self.servos["RearRight"].servo_control_receiver("Fixed", -15),
-            asyncio.sleep(self.Default_Angle_Delay)
-        )
+        # # Motor Initialization
+        # if(self.Verbose): print("PoseDriver: Activating WalkGait Initialization")
+        # await asyncio.gather(
+        #     self.servos["FrontLeft"].servo_control_receiver("Fixed", 15),
+        #     self.servos["FrontRight"].servo_control_receiver("Fixed", -15),
+        #     self.servos["RearLeft"].servo_control_receiver("Fixed", 15),
+        #     self.servos["RearRight"].servo_control_receiver("Fixed", -15),
+        #     asyncio.sleep(self.Default_Angle_Delay)
+        # )
 
         # Motor Oscillation
         if(self.Verbose): print("PoseDriver: Activating WalkGait Oscillation")
         await asyncio.gather(
-            self.servos["FrontLeft"].servo_control_receiver("Oscillate", 25, -25, 2),
+            self.servos["FrontLeft"].servo_control_receiver("Oscillate", 25, -25, 4),
             self.servos["FrontRight"].servo_control_receiver("Oscillate", -25, 25, 2),
             self.servos["RearLeft"].servo_control_receiver("Oscillate", 25, -25, 2),
             self.servos["RearRight"].servo_control_receiver("Oscillate", -25, 25, 2),
