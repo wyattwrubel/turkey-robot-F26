@@ -101,7 +101,6 @@ class PanelDiagnostics:
           Id="Alert"    → sys_state = "Alert"
           Id="UnlockUI" → sys_state = "Scanning"  (auto mode restored)
         """
-        print("UI RECEIVED ", data)
 
         mainstates = {
             "Scan":     "Scanning",
@@ -168,7 +167,7 @@ class PanelDiagnostics:
 
         if id == "Move":
             target = np.asarray(cmd, dtype=float).flatten()
-            self._robot.set_target(target[0], target[1], target[2], nav_type="Move")
+            self._robot.set_target(target[0], target[1], 0, nav_type="Move")
         elif id == "Orient":
             target = np.asarray(cmd, dtype=float).flatten()
             self._robot.set_target(target[0], target[1], target[2], nav_type="Orient")
@@ -200,3 +199,15 @@ class PanelDiagnostics:
             self._robot.clear_trajectories()
         else:
             print(f"[UI TrajectoryTracker_Receiver] Unknown Id '{id}'")
+
+    async def DriveCommand_Receiver(self, data:dict) -> None: 
+        """
+        Receives drive commands for display on UI
+        Id: "System"
+        Cmd: 1 x 2 numpy array [Left Motor Speed, Right Motor Speed]        
+        """
+
+        cmd = data.get("Cmd", None)
+        if cmd: 
+            self._robot.cmd_left = cmd[0]
+            self._robot.cmd_right = cmd[1]

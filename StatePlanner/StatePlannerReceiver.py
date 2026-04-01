@@ -244,6 +244,7 @@ class StatePlannerReceiver:
                 target = self._next_target()
                 await self._orient_toward(target)
                 await self.MotionCommand_Publisher.publish({"Id": "Move", "Cmd": target[:2].tolist()})
+                print("SENDING ", ({"Id": "Move", "Cmd": target[:2].tolist()}))
                 await self._module_scan._travel_to_waypoint()
             else:
                 await asyncio.sleep(0.5)
@@ -294,9 +295,7 @@ class StatePlannerReceiver:
                         # Send to A* (or directly to MPC if no A*).
                         # A* receives this, replans around obstacles, and
                         # forwards a full waypoint path as {"Id": "Move", ...}.
-                        await self.MotionCommand_Publisher.publish(
-                            {"Id": "Move", "Cmd": nearest_turkey}
-                        )
+                        await self.MotionCommand_Publisher.publish({"Id": "Move", "Cmd": nearest_turkey.toList()})
                         last_published_xy = goal_xy.copy()
                         if self.Verbose:
                             print(f"[StatePlanner] Chase Move → "

@@ -133,6 +133,7 @@ async def main():
 
     """DriveCommand"""
     DriveCommand_Navigation_pub.subscribe(Drivetrain.MotorCommandReceiver)
+    DriveCommand_Navigation_pub.subscribe(UserInterface.diagnostics.DriveCommand_Receiver)
     DriveCommand_UI_pub.subscribe(Drivetrain.MotorCommandReceiver)
  
     """SlipFeedback"""
@@ -172,7 +173,7 @@ async def main():
         Canine.PoseDriver.MotorPositions_Runner(),
         Canine.Audio._monitor(),
         # TestVision.VisionRunner(),
-        # Navigation.MPC.DriveTrain_Sender(),
+        Navigation.MPC.DriveTrain_Sender(),
         #  
     )
 

@@ -319,7 +319,7 @@ class MPC_loop:
         dist  = np.linalg.norm(state[:2] - final[:2])
 
         if self._ref_idx >= len(self._ref_traj) - 1 and dist < ARRIVAL_DIST:
-            # print(f"[MPC] Arrived at ({final[0]:.2f}, {final[1]:.2f}), err={dist:.3f} m")
+            print(f"[MPC] Arrived at ({final[0]:.2f}, {final[1]:.2f}), err={dist:.3f} m")
             self._mode       = "idle"
             self._init_guess = None   # clean cold start for next mission
             await self._send(np.zeros(2))
@@ -359,7 +359,7 @@ class MPC_loop:
         lookahead     = self._ref_traj[self._ref_idx:]
         dists         = np.linalg.norm(lookahead[:, :2] - state[:2], axis=1)
         closest       = int(np.argmin(dists))
-        self._ref_idx = min(self._ref_idx + max(1, closest), len(self._ref_traj) - 1)
+        self._ref_idx = min(self._ref_idx + closest, len(self._ref_traj) - 1)
 
         await self._send(u)
         await self._proto_6_2_mpc_feedback(xref)

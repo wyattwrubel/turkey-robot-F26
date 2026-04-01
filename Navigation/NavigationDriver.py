@@ -76,7 +76,6 @@ class TrajectoryTracker:
     # From state planner: Desired commands
     async def TrajectoryCMD_Receiver(self, data):
         if self.Verbose: (f"Processing TrajectoryCMD {data}" )
-        print("RECEIVED ", data)
 
         try:
             input_id = data["Id"]
