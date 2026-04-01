@@ -1,12 +1,20 @@
 // ═══════════════════════════════════════════════
 // CONFIG
 // ═══════════════════════════════════════════════
+// const SERVO_DEFS = [
+//   { id: 'FrontLeft',  name: 'Front Left',  min: -45, max: 45, val: 0 },
+//   { id: 'FrontRight', name: 'Front Right', min: -45, max: 45, val: 0 },
+//   { id: 'RearLeft',   name: 'Rear Left',   min: -45, max: 45, val: 0 },
+//   { id: 'RearRight',  name: 'Rear Right',  min: -45, max: 45, val: 0 },
+//   { id: 'Head',       name: 'Head',        min: -60, max: 60, val: 0 },
+// ]
+
 const SERVO_DEFS = [
-  { id: 'FrontLeft',  name: 'Front Left',  min: -45, max: 45, val: 0 },
-  { id: 'FrontRight', name: 'Front Right', min: -45, max: 45, val: 0 },
-  { id: 'RearLeft',   name: 'Rear Left',   min: -45, max: 45, val: 0 },
-  { id: 'RearRight',  name: 'Rear Right',  min: -45, max: 45, val: 0 },
-  { id: 'Head',       name: 'Head',        min: -60, max: 60, val: 0 },
+  { id: 'FrontLeft',  name: 'Front Left',  min: -180, max: 180, val: 0 },
+  { id: 'FrontRight', name: 'Front Right', min: -180, max: 180, val: 0 },
+  { id: 'RearLeft',   name: 'Rear Left',   min: -180, max: 180, val: 0 },
+  { id: 'RearRight',  name: 'Rear Right',  min: -180, max: 180, val: 0 },
+  { id: 'Head',       name: 'Head',        min: -180, max: 180, val: 0 },
 ]
 
 const AUDIO_DEFS = [
@@ -285,7 +293,6 @@ function onServoSlide(servoId, el) {
   document.getElementById(`sv-${servoId}`).textContent = `${angle}°`
   send({ type: 'servo_angle', servo: servoId, angle })
 }
-
 function updateSliderBg(el) {
   const pct = ((parseFloat(el.value) - parseFloat(el.min)) /
                (parseFloat(el.max)  - parseFloat(el.min))) * 100

@@ -8,8 +8,8 @@ from typing import Dict, List
 @dataclass
 class CameraConfig:
     device_index: int = 0          # USB camera index
-    width: int = 1920              # target width
-    height: int = 1080             # target height
+    width: int = 640              # target width
+    height: int = 480             # target height
     fps: int = 30                  # target fps
     fourcc: str = "MJPG"           # MJPG recommended for USB2.0 cameras
     backend: str = "v4l2"          # "auto", "dshow", "v4l2"
@@ -18,13 +18,14 @@ class CameraConfig:
 @dataclass
 class ModelConfig:
     # model_path: str = "/home/turkeysquad/ME450/MainDesign/Vision/weights/turkey_1280.pt"
-    model_path: str = "/home/turkeysquad/ME450/MainDesign/Vision/weights/turkey_640.pt"
+    model_path: str = "/home/turkeysquad/ME450/MainDesign/Vision/weights/turkey_640.hef"
+    # model_path: str = "/home/turkeysquad/ME450/MainDesign/Vision/weights/turkey_640.pt"
     conf_thresh: float = 0.3
     iou_thresh: float = 0.50
     imgsz: int = 640
     # max_det: int = 10
     max_det: int = 5
-    device: str = "cpu" #"cuda:0"   # "cpu" / "cuda:0"
+    device: str = "cpu" # "hailo" #"cpu" #"hailo"  #"cuda:0" "cuda:0"   # "cpu" / "cuda:0"
     # half: bool = True
     half: bool = False
 

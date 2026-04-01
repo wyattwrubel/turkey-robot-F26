@@ -210,7 +210,7 @@ async def main():
         UserInterface.serve(),
 
         # TODO FAKE VISION
-        vision.VisionRunner(),
+        # vision.VisionRunner(),
 
         # SIMULATED MODULES
         Drivetrain.DriveTrainDriver_Runner(),

@@ -45,13 +45,13 @@ class ServoController:
 
         step_time = angle_resolution / max_speed  # seconds per step
 
-        current = self.servo.Current_Angle or 0
-        direction = 1 if angle > current else -1
+        # current = self.servo.Current_Angle or 0
+        # direction = 1 if angle > current else -1
 
-        while abs(angle - self.servo.Current_Angle) > angle_resolution:
-            next_angle = self.servo.Current_Angle + direction * angle_resolution
-            self.servo.SetAngle(next_angle)
-            await asyncio.sleep(step_time)
+        # while abs(angle - self.servo.Current_Angle) > angle_resolution:
+        #     next_angle = self.servo.Current_Angle + direction * angle_resolution
+        #     self.servo.SetAngle(next_angle)
+        #     await asyncio.sleep(step_time)
 
         self.servo.SetAngle(angle)
 

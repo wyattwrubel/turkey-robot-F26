@@ -29,9 +29,13 @@ class VisionObject:
         vision.stop()
     """
 
-    CAMERA_FPS_CAP    = 3
-    VIDEO_PUB_FPS_CAP = 2
-    INFERENCE_FPS_CAP = 0.5
+    # CAMERA_FPS_CAP    = 3
+    # VIDEO_PUB_FPS_CAP = 2
+    # INFERENCE_FPS_CAP = 0.5
+
+    CAMERA_FPS_CAP    = 30
+    VIDEO_PUB_FPS_CAP = 10
+    INFERENCE_FPS_CAP = 10
 
     def __init__(self, VideoFeed_Vision_pub, VisionObject_Vision_pub, Verbose=False, debug_draw=False, debug_print=False):
         self.VideoFeed_Vision_pub    = VideoFeed_Vision_pub

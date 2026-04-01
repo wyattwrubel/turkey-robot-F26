@@ -434,3 +434,13 @@
     letter-spacing: .04em;
     color: var(--success);
   }
+
+.srange:focus {
+  outline: none;
+}
+.srange:focus::-webkit-slider-thumb {
+  box-shadow: 0 0 0 2px var(--bg-panel), 0 0 0 4px var(--accent);
+}
+.srange:focus::-moz-range-thumb {
+  box-shadow: 0 0 0 2px var(--bg-panel), 0 0 0 4px var(--accent);
+}
