@@ -14,8 +14,8 @@ class MotorDriver:
         self.SimulatedData  = Simulated
         self.Verbose        = Verbose
         self.SkipUKFUpdates = SkipUKFUpdates
-
-        initial_state = np.array([18.0, 32.0, 0.0])
+        
+        initial_state = np.array([20.0, 65.0, 0.0])
         P0    = np.diag([0.5, 0.5, 0.1])
         Q     = np.diag([0.00025, 0.00025, 0.0017])
         R_uwb = np.diag([0.02, 0.02])
@@ -64,6 +64,14 @@ class MotorDriver:
         self._state_lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
+    # Angle utility
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _wrap(a: float) -> float:
+        """Wrap angle to (-π, π] — safe across any wrap boundary."""
+        return np.arctan2(np.sin(a), np.cos(a))
+
+    # ------------------------------------------------------------------
     # Dead-reckoning integrator (no UKF, no covariance)
     # ------------------------------------------------------------------
     def _dr_predict(self, v_l, v_r, dt):
@@ -77,7 +85,7 @@ class MotorDriver:
         omega = (v_r - v_l) / self.WheelBase
         self._dr_state[0] = x  + v * np.cos(th) * dt
         self._dr_state[1] = y  - v * np.sin(th) * dt
-        self._dr_state[2] = th + omega * dt
+        self._dr_state[2] = self._wrap(th + omega * dt)
 
     @property
     def _current_state(self):

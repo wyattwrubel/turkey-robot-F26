@@ -348,11 +348,11 @@ class MPC_loop:
         ey = state[1] - xref[0, 1]
         et = np.degrees(wrap(state[2] - xref[0, 2]))
 
-        # print(f"[MPC] idx={self._ref_idx:04d} | "
-        #       f"state=({state[0]:6.2f}, {state[1]:6.2f}, {np.degrees(state[2]):7.2f}°) | "
-        #       f"ref=  ({xref[0,0]:6.2f}, {xref[0,1]:6.2f}, {np.degrees(xref[0,2]):7.2f}°) | "
-        #       f"err=({ex:6.3f}, {ey:6.3f}, {et:6.2f}°) | "
-        #       f"u=[{u[0]:5.2f}, {u[1]:5.2f}]")
+        print(f"[MPC] idx={self._ref_idx:04d} | "
+              f"state=({state[0]:6.2f}, {state[1]:6.2f}, {np.degrees(state[2]):7.2f}°) | "
+              f"ref=  ({xref[0,0]:6.2f}, {xref[0,1]:6.2f}, {np.degrees(xref[0,2]):7.2f}°) | "
+              f"err=({ex:6.3f}, {ey:6.3f}, {et:6.2f}°) | "
+              f"u=[{u[0]:5.2f}, {u[1]:5.2f}]")
 
         self._init_guess = _shift_warm_start(sol_flat, ns, nu, cs)
 

@@ -229,16 +229,19 @@ class StatePlannerReceiver:
             dist      = np.linalg.norm(target[:2] - robot_pos[:2])
 
             if dist < 0.5:
+                base_heading = np.array(self.Current_RobotPose[2])  # snapshot once
                 for i in range(1, 5):
-                    robot_pos = np.array(self.Current_RobotPose[:3])
-
                     if i % 4 == 0:
                         await self._module_scan._stationary_scan()
                     elif i % 4 == 2:
                         await self._module_scan._stationary_crouch()
 
-                    robot_pos[2] = ((robot_pos[2] + np.pi / 2) + np.pi) % (2 * np.pi) - np.pi
-                    await self.MotionCommand_Publisher.publish({"Id": "Orient", "Cmd": robot_pos[:3].tolist()})
+                    robot_pos = np.array(self.Current_RobotPose[:3])  # fresh pose each spin
+                    target_heading = ((base_heading + i * np.pi / 2) + np.pi) % (2 * np.pi) - np.pi
+                    await self.MotionCommand_Publisher.publish({
+                        "Id": "Orient",
+                        "Cmd": [robot_pos[0], robot_pos[1], target_heading]
+                    })
                     await asyncio.sleep(1)
 
                 target = self._next_target()
