@@ -14,10 +14,10 @@ class PoseDriver():
     Rear_Right_Pin = 3
     Head_Pin = 4
 
-    Front_Left_Offset = 0 # Subtract off to be at 0
-    Front_Right_Offset = 0
+    Front_Left_Offset = -41 # Subtract off to be at 0
+    Front_Right_Offset = 44
     Rear_Left_Offset = 0
-    Rear_Right_Offset = 0
+    Rear_Right_Offset = -18
     Head_Offset = 0
 
     Default_Angle_Delay = 0.5 # Seconds
