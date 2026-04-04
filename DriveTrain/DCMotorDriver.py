@@ -23,14 +23,14 @@ class DC_Driver:
     so no software sign-flip is needed anywhere in this driver.
     """
 
-    # Serial ports -- one per motor controller TODO update to real ports
+    # Serial ports
     port_fl  = "/dev/ttyACM0"
     port_fr  = "/dev/ttyACM1"
     port_rl  = "/dev/ttyACM2"
     port_rr  = "/dev/ttyACM3"
 
     baudrate = 115200
-    timeout  = 0.05   # seconds -- keep short for real-time control
+    timeout  = 0.05   # seconds
 
     # Physical parameters -- TODO update for your platform
     max_linear_speed = 4.0   # m/s (hard clip, both directions)
@@ -65,8 +65,6 @@ class DC_Driver:
         """
         left_v, right_v = MotorSpeed[0], MotorSpeed[1]
 
-        # Encoder direction is inverted in Motion Studio firmware for the
-        # right-side units, so no software negation is needed here.
         self._DriveMotor(self._ser_fl, left_v)
         self._DriveMotor(self._ser_fr, right_v)
         self._DriveMotor(self._ser_rl, left_v)
@@ -85,8 +83,6 @@ class DC_Driver:
         rl = self._ReadMotorSpeed(self._ser_rl)
         rr = self._ReadMotorSpeed(self._ser_rr)
 
-        # No negation needed -- encoder direction inversion is handled
-        # in Motion Studio firmware for the right-side units.
         left_speed  = (fl + rl) / 2.0 if (fl is not None and rl is not None) else None
         right_speed = (fr + rr) / 2.0 if (fr is not None and rr is not None) else None
 
@@ -167,7 +163,6 @@ class DC_Driver:
             print(f"[DC_Driver] Short read (speed) on port {ser.port}: got {len(response)} bytes")
             return None
 
-        # FIX: CRC covers the request addr+cmd bytes AND the response data bytes
         recv_crc = int.from_bytes(response[5:7], byteorder='big')
         calc_crc = self._crc16(req_bytes + response[:5])
         if recv_crc != calc_crc:
@@ -179,8 +174,6 @@ class DC_Driver:
 
         rev_per_sec  = pulses_per_sec / self.encoder_CPR
         linear_speed = rev_per_sec * (2.0 * math.pi * self.wheel_radius)
-
-    
 
         return linear_speed
 
@@ -213,7 +206,6 @@ class DC_Driver:
             print(f"[DC_Driver] Short read (current) on port {ser.port}: got {len(response)} bytes")
             return None
 
-        # FIX: CRC covers the request addr+cmd bytes AND the response data bytes
         recv_crc = int.from_bytes(response[4:6], byteorder='big')
         calc_crc = self._crc16(req_bytes + response[:4])
         if recv_crc != calc_crc:

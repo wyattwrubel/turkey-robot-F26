@@ -70,10 +70,7 @@ class UKF:
         A small diagonal nugget (_P_NUGGET * I) is added to guarantee
         positive-definiteness during extended UWB dropouts.
         """
-        # FIX: enforce symmetry and positive-definiteness before Cholesky.
-        # Without this, accumulated floating-point drift during a UWB dropout
-        # (many predict steps, no correction) causes LinAlgError and crashes
-        # the async runner.
+
         P_safe = (self.P + self.P.T) / 2.0
         P_safe += self._P_NUGGET * np.eye(self.L)
 
@@ -105,7 +102,7 @@ class UKF:
           w = (v_r - v_l) / wheelbase       (CCW positive: right faster -> left turn)
         """
         v = (v_r + v_l) / 2.0
-        w = (v_r - v_l) / wheel_base   # FIX: corrected comment (was wrongly written as v_l - v_r)
+        w = (v_r - v_l) / wheel_base
 
         sp = self._sigma_points()
 

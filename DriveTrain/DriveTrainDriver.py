@@ -32,7 +32,8 @@ class MotorDriver:
 
         self.MotorSpeeds = np.array([0.0, 0.0], dtype=np.float64)
 
-        self.WheelBase            = 0.7
+        self.WheelBase            = 0.7 # UPDATE THIS!
+
         self.PosePeriod           = 0.01
         self.UWBSamplePeriod      = 0.5
         self.ReadMotorDataPeriod  = 0.05
