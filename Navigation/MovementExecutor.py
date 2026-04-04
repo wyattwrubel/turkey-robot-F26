@@ -8,7 +8,6 @@ if 'casadi' in sys.modules:
 import casadi as ca
 from scipy.interpolate import interp1d
 
-
 # ─────────────────────────────────────────────
 # Config
 # ─────────────────────────────────────────────
