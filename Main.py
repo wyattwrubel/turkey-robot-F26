@@ -8,7 +8,7 @@ from Navigation.NavigationDriver  import TrajectoryTracker
 from Canine.CanineDriver import CanineDriver
 from DriveTrain.DriveTrainDriver import MotorDriver
 from Sensors.AccelPublisher import IMUDriver
-from Sensors.UWBPublisher import UWB
+from Sensors.PositioningPublisher import PositioningDriver
 from StatePlanner.StatePlannerReceiver import StatePlannerReceiver
 
 from Vision.Vision import VisionObject
@@ -97,7 +97,7 @@ async def main():
 
     StatePlanner = StatePlannerReceiver(MacroState_StatePlanner, Canine_StatePlanner_pub, MotionCommand_StatePlanner_pub, Verbose=False)
 
-    UWB_Anchors = UWB(UWB_UWBPublisher_pub)
+    PositionDriver = PositioningDriver(UWB_UWBPublisher_pub, Mode="GPS", Simulation=True)
 
     Accelerometer = IMUDriver(Accelerometer_AccelPublisher_pub, Simulation=True)
 
@@ -175,6 +175,7 @@ async def main():
         TestVision.VisionRunner(),
         Navigation.MPC.DriveTrain_Sender(),
         Accelerometer.Runner(),
+        PositionDriver.Runner(),
         #  
     )
 
