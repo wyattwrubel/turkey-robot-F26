@@ -89,7 +89,7 @@ async def main():
 
     TestVision = FakeVision(TESTING_VideoFeed_Vision_pub, TESTING_VisionObject_Vision_pub)
 
-    Canine = CanineDriver(ServoFeedback_Canine_pub, Canine_Canine_pub, Simulated=False, Verbose=False)
+    Canine = CanineDriver(ServoFeedback_Canine_pub, Canine_Canine_pub, Simulated=True, Verbose=False)
 
     Drivetrain = MotorDriver(RobotPose_Drivetrain_pub, SlipFeedback_Drivetrain_pub, Simulated=True, SkipUKFUpdates=True)
 
@@ -99,7 +99,7 @@ async def main():
 
     UWB_Anchors = UWB(UWB_UWBPublisher_pub)
 
-    Accelerometer = IMUDriver(Accelerometer_AccelPublisher_pub, Simulation=True)
+    Accelerometer = IMUDriver(Accelerometer_AccelPublisher_pub, Simulation=False)
 
     UserInterface = CDSControlServer(DriveCommand_UI_pub, Canine_UI_pub, MacroState_UI_pub, MotionCommand_UI_pub)
 
@@ -174,6 +174,7 @@ async def main():
         Canine.Audio._monitor(),
         TestVision.VisionRunner(),
         Navigation.MPC.DriveTrain_Sender(),
+        Accelerometer.Runner(),
         #  
     )
 
