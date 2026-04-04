@@ -488,3 +488,370 @@
 [2026-04-02 14:26:30.139] [192212] [HailoRT] [info] [vdevice.cpp:780] [configure] Configuring HEF on VDevice took 43.908778 milliseconds
 [2026-04-02 14:26:30.140] [192212] [HailoRT] [info] [hef.cpp:1994] [get_network_group_and_network_name] No name was given. Addressing all networks of default network_group: turkey_640
 [2026-04-02 14:26:30.140] [192212] [HailoRT] [info] [hef.cpp:1994] [get_network_group_and_network_name] No name was given. Addressing all networks of default network_group: turkey_640
+[2026-04-03 17:48:43.819] [6047] [HailoRT] [info] [vdevice.cpp:535] [create] Creating vdevice with params: device_count: 1, scheduling_algorithm: NONE, multi_process_service: false
+[2026-04-03 17:48:43.836] [6047] [HailoRT] [info] [device.cpp:51] [Device] OS Version: Linux 6.12.75+rpt-rpi-2712 #1 SMP PREEMPT Debian 1:6.12.75-1+rpt1 (2026-03-11) aarch64
+[2026-04-03 17:48:43.837] [6047] [HailoRT] [info] [control.cpp:113] [control__parse_identify_results] firmware_version is: 4.23.0
+[2026-04-03 17:48:43.837] [6047] [HailoRT] [info] [vdevice.cpp:682] [create] VDevice Infos: 0001:01:00.0
+[2026-04-03 17:48:43.851] [6047] [HailoRT] [info] [internal_buffer_manager.cpp:77] [print_execution_results] Planned internal buffer memory: CMA=0 CMA-Desc=1245184 Pinned=1743872. memory to edge layer usage factor is 0.73818815
+[2026-04-03 17:48:43.851] [6047] [HailoRT] [info] [internal_buffer_manager.cpp:86] [print_execution_results] Default Internal buffer planner executed successfully
+[2026-04-03 17:48:43.875] [6047] [HailoRT] [info] [device_internal.cpp:57] [configure] Configuring HEF took 37.681823 milliseconds
+[2026-04-03 17:48:43.875] [6047] [HailoRT] [info] [vdevice.cpp:780] [configure] Configuring HEF on VDevice took 38.360971 milliseconds
+[2026-04-03 17:48:43.875] [6047] [HailoRT] [info] [hef.cpp:1994] [get_network_group_and_network_name] No name was given. Addressing all networks of default network_group: best640
+[2026-04-03 17:48:43.875] [6047] [HailoRT] [info] [core_op.cpp:156] [activate] Activating best640 took 0.209271 milliseconds. Note that the function is asynchronous and thus the network is not fully activated yet.
+[2026-04-03 17:48:43.875] [6047] [HailoRT] [info] [core_op.cpp:156] [activate] Activating best640 took 0.218123 milliseconds. Note that the function is asynchronous and thus the network is not fully activated yet.
+[2026-04-03 17:48:43.879] [6047] [HailoRT] [info] [edge_elements.cpp:52] [create] Created (HwWriteEl1best640/input_layer1 | hw_frame_size: 1228800)
+[2026-04-03 17:48:43.880] [6047] [HailoRT] [info] [queue_elements.cpp:284] [create] Created (PushQEl1best640/input_layer1 | timeout: 10s)
+[2026-04-03 17:48:43.880] [6047] [HailoRT] [info] [filter_elements.cpp:101] [create] Created (PreInferEl1best640/input_layer1 | Reorder - src_order: NHWC, src_shape: (640, 640, 3), dst_order: NHCW, dst_shape: (640, 640, 3))
+[2026-04-03 17:48:43.880] [6047] [HailoRT] [info] [vstream.cpp:754] [InputVStreamImpl] Creating best640/input_layer1...
+[2026-04-03 17:48:43.880] [6047] [HailoRT] [info] [vstream_builder.cpp:102] [create_inputs] Input pipeline 'best640/input_layer1': (PreInferEl1best640/input_layer1 | Reorder - src_order: NHWC, src_shape: (640, 640, 3), dst_order: NHCW, dst_shape: (640, 640, 3)) >> (PushQEl1best640/input_layer1 | timeout: 10s) >> (HwWriteEl1best640/input_layer1 | hw_frame_size: 1228800) >> HW
+[2026-04-03 17:48:43.880] [6047] [HailoRT] [info] [edge_elements.cpp:287] [create] Created (HwReadEl0best640/format_conversion13 | hw_frame_size: 50400)
+[2026-04-03 17:48:43.880] [6047] [HailoRT] [info] [queue_elements.cpp:800] [create] Created (UserBuffQEl0best640/format_conversion13 | timeout: 10s)
+[2026-04-03 17:48:43.880] [6047] [HailoRT] [info] [vstream.cpp:1114] [OutputVStreamImpl] Creating best640/format_conversion13...
+[2026-04-03 17:48:43.880] [6047] [HailoRT] [info] [vstream_builder.cpp:220] [create_outputs] Output pipeline 'best640/format_conversion13': HW >> (HwReadEl0best640/format_conversion13 | hw_frame_size: 50400) >> (UserBuffQEl0best640/format_conversion13 | timeout: 10s)
+[2026-04-03 17:48:43.903] [6538] [HailoRT] [info] [queue_elements.cpp:855] [run_in_thread] Shutdown event was signaled in dequeue of UserBuffQEl0best640/format_conversion13!
+[2026-04-03 17:48:43.903] [6538] [HailoRT] [info] [queue_elements.cpp:68] [operator()] Thread in element UserBuffQEl0best640/format_conversion13 is not running anymore, exiting..
+[2026-04-03 17:48:43.903] [6047] [HailoRT] [info] [queue_elements.cpp:46] [~BaseQueueElement] Queue element UserBuffQEl0best640/format_conversion13 has 0 frames in his Queue on destruction
+[2026-04-03 17:48:43.912] [6537] [HailoRT] [info] [queue_elements.cpp:68] [operator()] Thread in element PushQEl1best640/input_layer1 is not running anymore, exiting..
+[2026-04-03 17:48:43.912] [6047] [HailoRT] [info] [queue_elements.cpp:46] [~BaseQueueElement] Queue element PushQEl1best640/input_layer1 has 0 frames in his Queue on destruction
+[2026-04-03 17:48:43.913] [6047] [HailoRT] [info] [core_op.cpp:186] [deactivate] Deactivating took 0.648962 ms
+[2026-04-03 17:48:43.913] [6047] [HailoRT] [info] [core_op.cpp:186] [deactivate] Deactivating took 0.659574 ms
+[2026-04-03 17:51:29.969] [10003] [HailoRT] [info] [vdevice.cpp:535] [create] Creating vdevice with params: device_count: 1, scheduling_algorithm: NONE, multi_process_service: false
+[2026-04-03 17:51:29.980] [10003] [HailoRT] [info] [device.cpp:51] [Device] OS Version: Linux 6.12.75+rpt-rpi-2712 #1 SMP PREEMPT Debian 1:6.12.75-1+rpt1 (2026-03-11) aarch64
+[2026-04-03 17:51:29.980] [10003] [HailoRT] [info] [control.cpp:113] [control__parse_identify_results] firmware_version is: 4.23.0
+[2026-04-03 17:51:29.980] [10003] [HailoRT] [info] [vdevice.cpp:682] [create] VDevice Infos: 0001:01:00.0
+[2026-04-03 17:51:29.987] [10003] [HailoRT] [info] [internal_buffer_manager.cpp:77] [print_execution_results] Planned internal buffer memory: CMA=0 CMA-Desc=1245184 Pinned=1743872. memory to edge layer usage factor is 0.73818815
+[2026-04-03 17:51:29.987] [10003] [HailoRT] [info] [internal_buffer_manager.cpp:86] [print_execution_results] Default Internal buffer planner executed successfully
+[2026-04-03 17:51:30.017] [10003] [HailoRT] [info] [device_internal.cpp:57] [configure] Configuring HEF took 36.472523 milliseconds
+[2026-04-03 17:51:30.017] [10003] [HailoRT] [info] [vdevice.cpp:780] [configure] Configuring HEF on VDevice took 36.797344 milliseconds
+[2026-04-03 17:51:30.017] [10003] [HailoRT] [info] [hef.cpp:1994] [get_network_group_and_network_name] No name was given. Addressing all networks of default network_group: best640
+[2026-04-03 17:51:30.018] [10003] [HailoRT] [info] [core_op.cpp:156] [activate] Activating best640 took 0.275969 milliseconds. Note that the function is asynchronous and thus the network is not fully activated yet.
+[2026-04-03 17:51:30.018] [10003] [HailoRT] [info] [core_op.cpp:156] [activate] Activating best640 took 0.294839 milliseconds. Note that the function is asynchronous and thus the network is not fully activated yet.
+[2026-04-03 17:51:30.018] [10003] [HailoRT] [info] [edge_elements.cpp:52] [create] Created (HwWriteEl1best640/input_layer1 | hw_frame_size: 1228800)
+[2026-04-03 17:51:30.018] [10003] [HailoRT] [info] [queue_elements.cpp:284] [create] Created (PushQEl1best640/input_layer1 | timeout: 10s)
+[2026-04-03 17:51:30.018] [10003] [HailoRT] [info] [filter_elements.cpp:101] [create] Created (PreInferEl1best640/input_layer1 | Reorder - src_order: NHWC, src_shape: (640, 640, 3), dst_order: NHCW, dst_shape: (640, 640, 3))
+[2026-04-03 17:51:30.018] [10003] [HailoRT] [info] [vstream.cpp:754] [InputVStreamImpl] Creating best640/input_layer1...
+[2026-04-03 17:51:30.018] [10003] [HailoRT] [info] [vstream_builder.cpp:102] [create_inputs] Input pipeline 'best640/input_layer1': (PreInferEl1best640/input_layer1 | Reorder - src_order: NHWC, src_shape: (640, 640, 3), dst_order: NHCW, dst_shape: (640, 640, 3)) >> (PushQEl1best640/input_layer1 | timeout: 10s) >> (HwWriteEl1best640/input_layer1 | hw_frame_size: 1228800) >> HW
+[2026-04-03 17:51:30.018] [10003] [HailoRT] [info] [edge_elements.cpp:287] [create] Created (HwReadEl0best640/format_conversion13 | hw_frame_size: 50400)
+[2026-04-03 17:51:30.018] [10003] [HailoRT] [info] [queue_elements.cpp:657] [create] Created (PullQEl_hw_read0best640/format_conversion13)
+[2026-04-03 17:51:30.018] [10003] [HailoRT] [info] [filter_elements.cpp:372] [create] Created (PostInferEl0best640/format_conversion13 | Quantization - src_type: UINT8, dst_type FLOAT32, limvals_min: -59.2463, limvals_max: 780.076)
+[2026-04-03 17:51:30.019] [10003] [HailoRT] [info] [queue_elements.cpp:800] [create] Created (UserBuffQEl0best640/format_conversion13 | timeout: 10s)
+[2026-04-03 17:51:30.019] [10003] [HailoRT] [info] [vstream.cpp:1114] [OutputVStreamImpl] Creating best640/format_conversion13...
+[2026-04-03 17:51:30.019] [10003] [HailoRT] [info] [vstream_builder.cpp:220] [create_outputs] Output pipeline 'best640/format_conversion13': HW >> (HwReadEl0best640/format_conversion13 | hw_frame_size: 50400) >> (PullQEl_hw_read0best640/format_conversion13) >> (PostInferEl0best640/format_conversion13 | Quantization - src_type: UINT8, dst_type FLOAT32, limvals_min: -59.2463, limvals_max: 780.076) >> (UserBuffQEl0best640/format_conversion13 | timeout: 10s)
+[2026-04-03 17:51:30.043] [10126] [HailoRT] [info] [queue_elements.cpp:855] [run_in_thread] Shutdown event was signaled in dequeue of UserBuffQEl0best640/format_conversion13!
+[2026-04-03 17:51:30.043] [10125] [HailoRT] [info] [vdevice_native_stream.cpp:331] [read_impl] Failed read from stream HAILO_STREAM_ABORT(63) (device: 0001:01:00.0)
+[2026-04-03 17:51:30.043] [10125] [HailoRT] [info] [edge_elements.cpp:396] [run_pull] Reading from stream was aborted!
+[2026-04-03 17:51:30.043] [10125] [HailoRT] [info] [queue_elements.cpp:738] [run_in_thread] run_pull of queue element PullQEl_hw_read0best640/format_conversion13 was aborted!
+[2026-04-03 17:51:30.043] [10125] [HailoRT] [info] [queue_elements.cpp:68] [operator()] Thread in element PullQEl_hw_read0best640/format_conversion13 is not running anymore, exiting..
+[2026-04-03 17:51:30.043] [10003] [HailoRT] [info] [queue_elements.cpp:46] [~BaseQueueElement] Queue element PullQEl_hw_read0best640/format_conversion13 has 0 frames in his Queue on destruction
+[2026-04-03 17:51:30.043] [10126] [HailoRT] [info] [queue_elements.cpp:68] [operator()] Thread in element UserBuffQEl0best640/format_conversion13 is not running anymore, exiting..
+[2026-04-03 17:51:30.043] [10003] [HailoRT] [info] [queue_elements.cpp:46] [~BaseQueueElement] Queue element UserBuffQEl0best640/format_conversion13 has 0 frames in his Queue on destruction
+[2026-04-03 17:51:30.043] [10124] [HailoRT] [info] [queue_elements.cpp:68] [operator()] Thread in element PushQEl1best640/input_layer1 is not running anymore, exiting..
+[2026-04-03 17:51:30.043] [10003] [HailoRT] [info] [queue_elements.cpp:46] [~BaseQueueElement] Queue element PushQEl1best640/input_layer1 has 0 frames in his Queue on destruction
+[2026-04-03 17:51:30.044] [10003] [HailoRT] [info] [core_op.cpp:186] [deactivate] Deactivating took 0.67392 ms
+[2026-04-03 17:51:30.044] [10003] [HailoRT] [info] [core_op.cpp:186] [deactivate] Deactivating took 0.683161 ms
+[2026-04-03 17:52:20.432] [11167] [HailoRT] [info] [vdevice.cpp:535] [create] Creating vdevice with params: device_count: 1, scheduling_algorithm: NONE, multi_process_service: false
+[2026-04-03 17:52:20.444] [11167] [HailoRT] [info] [device.cpp:51] [Device] OS Version: Linux 6.12.75+rpt-rpi-2712 #1 SMP PREEMPT Debian 1:6.12.75-1+rpt1 (2026-03-11) aarch64
+[2026-04-03 17:52:20.444] [11167] [HailoRT] [info] [control.cpp:113] [control__parse_identify_results] firmware_version is: 4.23.0
+[2026-04-03 17:52:20.444] [11167] [HailoRT] [info] [vdevice.cpp:682] [create] VDevice Infos: 0001:01:00.0
+[2026-04-03 17:52:20.453] [11167] [HailoRT] [info] [internal_buffer_manager.cpp:77] [print_execution_results] Planned internal buffer memory: CMA=0 CMA-Desc=1245184 Pinned=1743872. memory to edge layer usage factor is 0.73818815
+[2026-04-03 17:52:20.453] [11167] [HailoRT] [info] [internal_buffer_manager.cpp:86] [print_execution_results] Default Internal buffer planner executed successfully
+[2026-04-03 17:52:20.483] [11167] [HailoRT] [info] [device_internal.cpp:57] [configure] Configuring HEF took 38.297626 milliseconds
+[2026-04-03 17:52:20.483] [11167] [HailoRT] [info] [vdevice.cpp:780] [configure] Configuring HEF on VDevice took 38.549093 milliseconds
+[2026-04-03 17:52:20.483] [11167] [HailoRT] [info] [hef.cpp:1994] [get_network_group_and_network_name] No name was given. Addressing all networks of default network_group: best640
+[2026-04-03 17:52:20.483] [11167] [HailoRT] [info] [core_op.cpp:156] [activate] Activating best640 took 0.213411 milliseconds. Note that the function is asynchronous and thus the network is not fully activated yet.
+[2026-04-03 17:52:20.483] [11167] [HailoRT] [info] [core_op.cpp:156] [activate] Activating best640 took 0.224504 milliseconds. Note that the function is asynchronous and thus the network is not fully activated yet.
+[2026-04-03 17:52:20.484] [11167] [HailoRT] [info] [edge_elements.cpp:52] [create] Created (HwWriteEl1best640/input_layer1 | hw_frame_size: 1228800)
+[2026-04-03 17:52:20.487] [11167] [HailoRT] [info] [queue_elements.cpp:284] [create] Created (PushQEl1best640/input_layer1 | timeout: 10s)
+[2026-04-03 17:52:20.487] [11167] [HailoRT] [info] [filter_elements.cpp:101] [create] Created (PreInferEl1best640/input_layer1 | Reorder - src_order: NHWC, src_shape: (640, 640, 3), dst_order: NHCW, dst_shape: (640, 640, 3))
+[2026-04-03 17:52:20.487] [11167] [HailoRT] [info] [vstream.cpp:754] [InputVStreamImpl] Creating best640/input_layer1...
+[2026-04-03 17:52:20.487] [11167] [HailoRT] [info] [vstream_builder.cpp:102] [create_inputs] Input pipeline 'best640/input_layer1': (PreInferEl1best640/input_layer1 | Reorder - src_order: NHWC, src_shape: (640, 640, 3), dst_order: NHCW, dst_shape: (640, 640, 3)) >> (PushQEl1best640/input_layer1 | timeout: 10s) >> (HwWriteEl1best640/input_layer1 | hw_frame_size: 1228800) >> HW
+[2026-04-03 17:52:20.487] [11167] [HailoRT] [info] [edge_elements.cpp:287] [create] Created (HwReadEl0best640/format_conversion13 | hw_frame_size: 50400)
+[2026-04-03 17:52:20.487] [11167] [HailoRT] [info] [queue_elements.cpp:657] [create] Created (PullQEl_hw_read0best640/format_conversion13)
+[2026-04-03 17:52:20.488] [11167] [HailoRT] [info] [filter_elements.cpp:372] [create] Created (PostInferEl0best640/format_conversion13 | Quantization - src_type: UINT8, dst_type FLOAT32, limvals_min: -59.2463, limvals_max: 780.076)
+[2026-04-03 17:52:20.488] [11167] [HailoRT] [info] [queue_elements.cpp:800] [create] Created (UserBuffQEl0best640/format_conversion13 | timeout: 10s)
+[2026-04-03 17:52:20.488] [11167] [HailoRT] [info] [vstream.cpp:1114] [OutputVStreamImpl] Creating best640/format_conversion13...
+[2026-04-03 17:52:20.488] [11167] [HailoRT] [info] [vstream_builder.cpp:220] [create_outputs] Output pipeline 'best640/format_conversion13': HW >> (HwReadEl0best640/format_conversion13 | hw_frame_size: 50400) >> (PullQEl_hw_read0best640/format_conversion13) >> (PostInferEl0best640/format_conversion13 | Quantization - src_type: UINT8, dst_type FLOAT32, limvals_min: -59.2463, limvals_max: 780.076) >> (UserBuffQEl0best640/format_conversion13 | timeout: 10s)
+[2026-04-03 17:52:20.512] [11284] [HailoRT] [info] [vdevice_native_stream.cpp:331] [read_impl] Failed read from stream HAILO_STREAM_ABORT(63) (device: 0001:01:00.0)
+[2026-04-03 17:52:20.512] [11284] [HailoRT] [info] [edge_elements.cpp:396] [run_pull] Reading from stream was aborted!
+[2026-04-03 17:52:20.512] [11284] [HailoRT] [info] [queue_elements.cpp:738] [run_in_thread] run_pull of queue element PullQEl_hw_read0best640/format_conversion13 was aborted!
+[2026-04-03 17:52:20.512] [11285] [HailoRT] [info] [queue_elements.cpp:855] [run_in_thread] Shutdown event was signaled in dequeue of UserBuffQEl0best640/format_conversion13!
+[2026-04-03 17:52:20.512] [11284] [HailoRT] [info] [queue_elements.cpp:68] [operator()] Thread in element PullQEl_hw_read0best640/format_conversion13 is not running anymore, exiting..
+[2026-04-03 17:52:20.512] [11167] [HailoRT] [info] [queue_elements.cpp:46] [~BaseQueueElement] Queue element PullQEl_hw_read0best640/format_conversion13 has 0 frames in his Queue on destruction
+[2026-04-03 17:52:20.512] [11285] [HailoRT] [info] [queue_elements.cpp:68] [operator()] Thread in element UserBuffQEl0best640/format_conversion13 is not running anymore, exiting..
+[2026-04-03 17:52:20.512] [11167] [HailoRT] [info] [queue_elements.cpp:46] [~BaseQueueElement] Queue element UserBuffQEl0best640/format_conversion13 has 0 frames in his Queue on destruction
+[2026-04-03 17:52:20.512] [11283] [HailoRT] [info] [queue_elements.cpp:68] [operator()] Thread in element PushQEl1best640/input_layer1 is not running anymore, exiting..
+[2026-04-03 17:52:20.512] [11167] [HailoRT] [info] [queue_elements.cpp:46] [~BaseQueueElement] Queue element PushQEl1best640/input_layer1 has 0 frames in his Queue on destruction
+[2026-04-03 17:52:20.513] [11167] [HailoRT] [info] [core_op.cpp:186] [deactivate] Deactivating took 0.682179 ms
+[2026-04-03 17:52:20.513] [11167] [HailoRT] [info] [core_op.cpp:186] [deactivate] Deactivating took 0.691327 ms
+[2026-04-03 17:54:19.727] [13750] [HailoRT] [info] [vdevice.cpp:535] [create] Creating vdevice with params: device_count: 1, scheduling_algorithm: NONE, multi_process_service: false
+[2026-04-03 17:54:19.739] [13750] [HailoRT] [info] [device.cpp:51] [Device] OS Version: Linux 6.12.75+rpt-rpi-2712 #1 SMP PREEMPT Debian 1:6.12.75-1+rpt1 (2026-03-11) aarch64
+[2026-04-03 17:54:19.740] [13750] [HailoRT] [info] [control.cpp:113] [control__parse_identify_results] firmware_version is: 4.23.0
+[2026-04-03 17:54:19.740] [13750] [HailoRT] [info] [vdevice.cpp:682] [create] VDevice Infos: 0001:01:00.0
+[2026-04-03 17:54:19.747] [13750] [HailoRT] [info] [internal_buffer_manager.cpp:77] [print_execution_results] Planned internal buffer memory: CMA=0 CMA-Desc=1245184 Pinned=1743872. memory to edge layer usage factor is 0.73818815
+[2026-04-03 17:54:19.747] [13750] [HailoRT] [info] [internal_buffer_manager.cpp:86] [print_execution_results] Default Internal buffer planner executed successfully
+[2026-04-03 17:54:19.782] [13750] [HailoRT] [info] [device_internal.cpp:57] [configure] Configuring HEF took 42.173233 milliseconds
+[2026-04-03 17:54:19.782] [13750] [HailoRT] [info] [vdevice.cpp:780] [configure] Configuring HEF on VDevice took 42.483777 milliseconds
+[2026-04-03 17:54:19.783] [13750] [HailoRT] [info] [hef.cpp:1994] [get_network_group_and_network_name] No name was given. Addressing all networks of default network_group: best640
+[2026-04-03 17:54:19.783] [13750] [HailoRT] [info] [core_op.cpp:156] [activate] Activating best640 took 0.242689 milliseconds. Note that the function is asynchronous and thus the network is not fully activated yet.
+[2026-04-03 17:54:19.783] [13750] [HailoRT] [info] [core_op.cpp:156] [activate] Activating best640 took 0.254098 milliseconds. Note that the function is asynchronous and thus the network is not fully activated yet.
+[2026-04-03 17:54:19.783] [13750] [HailoRT] [info] [edge_elements.cpp:52] [create] Created (HwWriteEl1best640/input_layer1 | hw_frame_size: 1228800)
+[2026-04-03 17:54:19.783] [13750] [HailoRT] [info] [queue_elements.cpp:284] [create] Created (PushQEl1best640/input_layer1 | timeout: 10s)
+[2026-04-03 17:54:19.783] [13750] [HailoRT] [info] [filter_elements.cpp:101] [create] Created (PreInferEl1best640/input_layer1 | Reorder - src_order: NHWC, src_shape: (640, 640, 3), dst_order: NHCW, dst_shape: (640, 640, 3))
+[2026-04-03 17:54:19.783] [13750] [HailoRT] [info] [vstream.cpp:754] [InputVStreamImpl] Creating best640/input_layer1...
+[2026-04-03 17:54:19.783] [13750] [HailoRT] [info] [vstream_builder.cpp:102] [create_inputs] Input pipeline 'best640/input_layer1': (PreInferEl1best640/input_layer1 | Reorder - src_order: NHWC, src_shape: (640, 640, 3), dst_order: NHCW, dst_shape: (640, 640, 3)) >> (PushQEl1best640/input_layer1 | timeout: 10s) >> (HwWriteEl1best640/input_layer1 | hw_frame_size: 1228800) >> HW
+[2026-04-03 17:54:19.783] [13750] [HailoRT] [info] [edge_elements.cpp:287] [create] Created (HwReadEl0best640/format_conversion13 | hw_frame_size: 50400)
+[2026-04-03 17:54:19.783] [13750] [HailoRT] [info] [queue_elements.cpp:657] [create] Created (PullQEl_hw_read0best640/format_conversion13)
+[2026-04-03 17:54:19.783] [13750] [HailoRT] [info] [filter_elements.cpp:372] [create] Created (PostInferEl0best640/format_conversion13 | Quantization - src_type: UINT8, dst_type FLOAT32, limvals_min: -59.2463, limvals_max: 780.076)
+[2026-04-03 17:54:19.783] [13750] [HailoRT] [info] [queue_elements.cpp:800] [create] Created (UserBuffQEl0best640/format_conversion13 | timeout: 10s)
+[2026-04-03 17:54:19.783] [13750] [HailoRT] [info] [vstream.cpp:1114] [OutputVStreamImpl] Creating best640/format_conversion13...
+[2026-04-03 17:54:19.783] [13750] [HailoRT] [info] [vstream_builder.cpp:220] [create_outputs] Output pipeline 'best640/format_conversion13': HW >> (HwReadEl0best640/format_conversion13 | hw_frame_size: 50400) >> (PullQEl_hw_read0best640/format_conversion13) >> (PostInferEl0best640/format_conversion13 | Quantization - src_type: UINT8, dst_type FLOAT32, limvals_min: -59.2463, limvals_max: 780.076) >> (UserBuffQEl0best640/format_conversion13 | timeout: 10s)
+[2026-04-03 17:54:19.808] [13881] [HailoRT] [info] [vdevice_native_stream.cpp:331] [read_impl] Failed read from stream HAILO_STREAM_ABORT(63) (device: 0001:01:00.0)
+[2026-04-03 17:54:19.808] [13881] [HailoRT] [info] [edge_elements.cpp:396] [run_pull] Reading from stream was aborted!
+[2026-04-03 17:54:19.808] [13881] [HailoRT] [info] [queue_elements.cpp:738] [run_in_thread] run_pull of queue element PullQEl_hw_read0best640/format_conversion13 was aborted!
+[2026-04-03 17:54:19.808] [13882] [HailoRT] [info] [queue_elements.cpp:855] [run_in_thread] Shutdown event was signaled in dequeue of UserBuffQEl0best640/format_conversion13!
+[2026-04-03 17:54:19.808] [13881] [HailoRT] [info] [queue_elements.cpp:68] [operator()] Thread in element PullQEl_hw_read0best640/format_conversion13 is not running anymore, exiting..
+[2026-04-03 17:54:19.808] [13750] [HailoRT] [info] [queue_elements.cpp:46] [~BaseQueueElement] Queue element PullQEl_hw_read0best640/format_conversion13 has 0 frames in his Queue on destruction
+[2026-04-03 17:54:19.808] [13882] [HailoRT] [info] [queue_elements.cpp:68] [operator()] Thread in element UserBuffQEl0best640/format_conversion13 is not running anymore, exiting..
+[2026-04-03 17:54:19.808] [13750] [HailoRT] [info] [queue_elements.cpp:46] [~BaseQueueElement] Queue element UserBuffQEl0best640/format_conversion13 has 0 frames in his Queue on destruction
+[2026-04-03 17:54:19.808] [13880] [HailoRT] [info] [queue_elements.cpp:68] [operator()] Thread in element PushQEl1best640/input_layer1 is not running anymore, exiting..
+[2026-04-03 17:54:19.808] [13750] [HailoRT] [info] [queue_elements.cpp:46] [~BaseQueueElement] Queue element PushQEl1best640/input_layer1 has 0 frames in his Queue on destruction
+[2026-04-03 17:54:19.809] [13750] [HailoRT] [info] [core_op.cpp:186] [deactivate] Deactivating took 0.69705 ms
+[2026-04-03 17:54:19.809] [13750] [HailoRT] [info] [core_op.cpp:186] [deactivate] Deactivating took 0.710124 ms
+[2026-04-03 17:55:21.574] [15129] [HailoRT] [info] [vdevice.cpp:535] [create] Creating vdevice with params: device_count: 1, scheduling_algorithm: NONE, multi_process_service: false
+[2026-04-03 17:55:21.584] [15129] [HailoRT] [info] [device.cpp:51] [Device] OS Version: Linux 6.12.75+rpt-rpi-2712 #1 SMP PREEMPT Debian 1:6.12.75-1+rpt1 (2026-03-11) aarch64
+[2026-04-03 17:55:21.585] [15129] [HailoRT] [info] [control.cpp:113] [control__parse_identify_results] firmware_version is: 4.23.0
+[2026-04-03 17:55:21.585] [15129] [HailoRT] [info] [vdevice.cpp:682] [create] VDevice Infos: 0001:01:00.0
+[2026-04-03 17:55:21.591] [15129] [HailoRT] [info] [internal_buffer_manager.cpp:77] [print_execution_results] Planned internal buffer memory: CMA=0 CMA-Desc=1245184 Pinned=1743872. memory to edge layer usage factor is 0.73818815
+[2026-04-03 17:55:21.591] [15129] [HailoRT] [info] [internal_buffer_manager.cpp:86] [print_execution_results] Default Internal buffer planner executed successfully
+[2026-04-03 17:55:21.621] [15129] [HailoRT] [info] [device_internal.cpp:57] [configure] Configuring HEF took 36.015233 milliseconds
+[2026-04-03 17:55:21.621] [15129] [HailoRT] [info] [vdevice.cpp:780] [configure] Configuring HEF on VDevice took 36.327716 milliseconds
+[2026-04-03 17:55:21.621] [15129] [HailoRT] [info] [hef.cpp:1994] [get_network_group_and_network_name] No name was given. Addressing all networks of default network_group: best640
+[2026-04-03 17:55:21.622] [15129] [HailoRT] [info] [core_op.cpp:156] [activate] Activating best640 took 0.241357 milliseconds. Note that the function is asynchronous and thus the network is not fully activated yet.
+[2026-04-03 17:55:21.622] [15129] [HailoRT] [info] [core_op.cpp:156] [activate] Activating best640 took 0.254857 milliseconds. Note that the function is asynchronous and thus the network is not fully activated yet.
+[2026-04-03 17:55:21.622] [15129] [HailoRT] [info] [edge_elements.cpp:52] [create] Created (HwWriteEl1best640/input_layer1 | hw_frame_size: 1228800)
+[2026-04-03 17:55:21.622] [15129] [HailoRT] [info] [queue_elements.cpp:284] [create] Created (PushQEl1best640/input_layer1 | timeout: 10s)
+[2026-04-03 17:55:21.622] [15129] [HailoRT] [info] [filter_elements.cpp:101] [create] Created (PreInferEl1best640/input_layer1 | Reorder - src_order: NHWC, src_shape: (640, 640, 3), dst_order: NHCW, dst_shape: (640, 640, 3))
+[2026-04-03 17:55:21.622] [15129] [HailoRT] [info] [vstream.cpp:754] [InputVStreamImpl] Creating best640/input_layer1...
+[2026-04-03 17:55:21.622] [15129] [HailoRT] [info] [vstream_builder.cpp:102] [create_inputs] Input pipeline 'best640/input_layer1': (PreInferEl1best640/input_layer1 | Reorder - src_order: NHWC, src_shape: (640, 640, 3), dst_order: NHCW, dst_shape: (640, 640, 3)) >> (PushQEl1best640/input_layer1 | timeout: 10s) >> (HwWriteEl1best640/input_layer1 | hw_frame_size: 1228800) >> HW
+[2026-04-03 17:55:21.622] [15129] [HailoRT] [info] [edge_elements.cpp:287] [create] Created (HwReadEl0best640/format_conversion13 | hw_frame_size: 50400)
+[2026-04-03 17:55:21.622] [15129] [HailoRT] [info] [queue_elements.cpp:657] [create] Created (PullQEl_hw_read0best640/format_conversion13)
+[2026-04-03 17:55:21.622] [15129] [HailoRT] [info] [filter_elements.cpp:372] [create] Created (PostInferEl0best640/format_conversion13 | Quantization - src_type: UINT8, dst_type FLOAT32, limvals_min: -59.2463, limvals_max: 780.076)
+[2026-04-03 17:55:21.622] [15129] [HailoRT] [info] [queue_elements.cpp:800] [create] Created (UserBuffQEl0best640/format_conversion13 | timeout: 10s)
+[2026-04-03 17:55:21.622] [15129] [HailoRT] [info] [vstream.cpp:1114] [OutputVStreamImpl] Creating best640/format_conversion13...
+[2026-04-03 17:55:21.622] [15129] [HailoRT] [info] [vstream_builder.cpp:220] [create_outputs] Output pipeline 'best640/format_conversion13': HW >> (HwReadEl0best640/format_conversion13 | hw_frame_size: 50400) >> (PullQEl_hw_read0best640/format_conversion13) >> (PostInferEl0best640/format_conversion13 | Quantization - src_type: UINT8, dst_type FLOAT32, limvals_min: -59.2463, limvals_max: 780.076) >> (UserBuffQEl0best640/format_conversion13 | timeout: 10s)
+[2026-04-03 17:55:21.646] [15267] [HailoRT] [info] [queue_elements.cpp:855] [run_in_thread] Shutdown event was signaled in dequeue of UserBuffQEl0best640/format_conversion13!
+[2026-04-03 17:55:21.646] [15266] [HailoRT] [info] [vdevice_native_stream.cpp:331] [read_impl] Failed read from stream HAILO_STREAM_ABORT(63) (device: 0001:01:00.0)
+[2026-04-03 17:55:21.646] [15266] [HailoRT] [info] [edge_elements.cpp:396] [run_pull] Reading from stream was aborted!
+[2026-04-03 17:55:21.646] [15266] [HailoRT] [info] [queue_elements.cpp:738] [run_in_thread] run_pull of queue element PullQEl_hw_read0best640/format_conversion13 was aborted!
+[2026-04-03 17:55:21.646] [15266] [HailoRT] [info] [queue_elements.cpp:68] [operator()] Thread in element PullQEl_hw_read0best640/format_conversion13 is not running anymore, exiting..
+[2026-04-03 17:55:21.646] [15129] [HailoRT] [info] [queue_elements.cpp:46] [~BaseQueueElement] Queue element PullQEl_hw_read0best640/format_conversion13 has 0 frames in his Queue on destruction
+[2026-04-03 17:55:21.647] [15267] [HailoRT] [info] [queue_elements.cpp:68] [operator()] Thread in element UserBuffQEl0best640/format_conversion13 is not running anymore, exiting..
+[2026-04-03 17:55:21.647] [15129] [HailoRT] [info] [queue_elements.cpp:46] [~BaseQueueElement] Queue element UserBuffQEl0best640/format_conversion13 has 0 frames in his Queue on destruction
+[2026-04-03 17:55:21.647] [15265] [HailoRT] [info] [queue_elements.cpp:68] [operator()] Thread in element PushQEl1best640/input_layer1 is not running anymore, exiting..
+[2026-04-03 17:55:21.647] [15129] [HailoRT] [info] [queue_elements.cpp:46] [~BaseQueueElement] Queue element PushQEl1best640/input_layer1 has 0 frames in his Queue on destruction
+[2026-04-03 17:55:21.647] [15129] [HailoRT] [info] [core_op.cpp:186] [deactivate] Deactivating took 0.709054 ms
+[2026-04-03 17:55:21.647] [15129] [HailoRT] [info] [core_op.cpp:186] [deactivate] Deactivating took 0.722368 ms
+[2026-04-03 17:56:42.408] [16937] [HailoRT] [info] [vdevice.cpp:535] [create] Creating vdevice with params: device_count: 1, scheduling_algorithm: NONE, multi_process_service: false
+[2026-04-03 17:56:42.420] [16937] [HailoRT] [info] [device.cpp:51] [Device] OS Version: Linux 6.12.75+rpt-rpi-2712 #1 SMP PREEMPT Debian 1:6.12.75-1+rpt1 (2026-03-11) aarch64
+[2026-04-03 17:56:42.420] [16937] [HailoRT] [info] [control.cpp:113] [control__parse_identify_results] firmware_version is: 4.23.0
+[2026-04-03 17:56:42.420] [16937] [HailoRT] [info] [vdevice.cpp:682] [create] VDevice Infos: 0001:01:00.0
+[2026-04-03 17:56:42.427] [16937] [HailoRT] [info] [internal_buffer_manager.cpp:77] [print_execution_results] Planned internal buffer memory: CMA=0 CMA-Desc=1245184 Pinned=1743872. memory to edge layer usage factor is 0.73818815
+[2026-04-03 17:56:42.427] [16937] [HailoRT] [info] [internal_buffer_manager.cpp:86] [print_execution_results] Default Internal buffer planner executed successfully
+[2026-04-03 17:56:42.456] [16937] [HailoRT] [info] [device_internal.cpp:57] [configure] Configuring HEF took 34.788455 milliseconds
+[2026-04-03 17:56:42.456] [16937] [HailoRT] [info] [vdevice.cpp:780] [configure] Configuring HEF on VDevice took 35.04256 milliseconds
+[2026-04-03 17:56:42.456] [16937] [HailoRT] [info] [hef.cpp:1994] [get_network_group_and_network_name] No name was given. Addressing all networks of default network_group: best640
+[2026-04-03 17:56:42.456] [16937] [HailoRT] [info] [core_op.cpp:156] [activate] Activating best640 took 0.209643 milliseconds. Note that the function is asynchronous and thus the network is not fully activated yet.
+[2026-04-03 17:56:42.456] [16937] [HailoRT] [info] [core_op.cpp:156] [activate] Activating best640 took 0.218532 milliseconds. Note that the function is asynchronous and thus the network is not fully activated yet.
+[2026-04-03 17:56:42.456] [16937] [HailoRT] [info] [edge_elements.cpp:52] [create] Created (HwWriteEl1best640/input_layer1 | hw_frame_size: 1228800)
+[2026-04-03 17:56:42.456] [16937] [HailoRT] [info] [queue_elements.cpp:284] [create] Created (PushQEl1best640/input_layer1 | timeout: 10s)
+[2026-04-03 17:56:42.456] [16937] [HailoRT] [info] [filter_elements.cpp:101] [create] Created (PreInferEl1best640/input_layer1 | Reorder - src_order: NHWC, src_shape: (640, 640, 3), dst_order: NHCW, dst_shape: (640, 640, 3))
+[2026-04-03 17:56:42.456] [16937] [HailoRT] [info] [vstream.cpp:754] [InputVStreamImpl] Creating best640/input_layer1...
+[2026-04-03 17:56:42.456] [16937] [HailoRT] [info] [vstream_builder.cpp:102] [create_inputs] Input pipeline 'best640/input_layer1': (PreInferEl1best640/input_layer1 | Reorder - src_order: NHWC, src_shape: (640, 640, 3), dst_order: NHCW, dst_shape: (640, 640, 3)) >> (PushQEl1best640/input_layer1 | timeout: 10s) >> (HwWriteEl1best640/input_layer1 | hw_frame_size: 1228800) >> HW
+[2026-04-03 17:56:42.456] [16937] [HailoRT] [info] [edge_elements.cpp:287] [create] Created (HwReadEl0best640/format_conversion13 | hw_frame_size: 50400)
+[2026-04-03 17:56:42.456] [16937] [HailoRT] [info] [queue_elements.cpp:657] [create] Created (PullQEl_hw_read0best640/format_conversion13)
+[2026-04-03 17:56:42.456] [16937] [HailoRT] [info] [filter_elements.cpp:372] [create] Created (PostInferEl0best640/format_conversion13 | Quantization - src_type: UINT8, dst_type FLOAT32, limvals_min: -59.2463, limvals_max: 780.076)
+[2026-04-03 17:56:42.456] [16937] [HailoRT] [info] [queue_elements.cpp:800] [create] Created (UserBuffQEl0best640/format_conversion13 | timeout: 10s)
+[2026-04-03 17:56:42.456] [16937] [HailoRT] [info] [vstream.cpp:1114] [OutputVStreamImpl] Creating best640/format_conversion13...
+[2026-04-03 17:56:42.456] [16937] [HailoRT] [info] [vstream_builder.cpp:220] [create_outputs] Output pipeline 'best640/format_conversion13': HW >> (HwReadEl0best640/format_conversion13 | hw_frame_size: 50400) >> (PullQEl_hw_read0best640/format_conversion13) >> (PostInferEl0best640/format_conversion13 | Quantization - src_type: UINT8, dst_type FLOAT32, limvals_min: -59.2463, limvals_max: 780.076) >> (UserBuffQEl0best640/format_conversion13 | timeout: 10s)
+[2026-04-03 17:56:42.481] [17059] [HailoRT] [info] [vdevice_native_stream.cpp:331] [read_impl] Failed read from stream HAILO_STREAM_ABORT(63) (device: 0001:01:00.0)
+[2026-04-03 17:56:42.481] [17059] [HailoRT] [info] [edge_elements.cpp:396] [run_pull] Reading from stream was aborted!
+[2026-04-03 17:56:42.481] [17059] [HailoRT] [info] [queue_elements.cpp:738] [run_in_thread] run_pull of queue element PullQEl_hw_read0best640/format_conversion13 was aborted!
+[2026-04-03 17:56:42.481] [17060] [HailoRT] [info] [queue_elements.cpp:855] [run_in_thread] Shutdown event was signaled in dequeue of UserBuffQEl0best640/format_conversion13!
+[2026-04-03 17:56:42.481] [17059] [HailoRT] [info] [queue_elements.cpp:68] [operator()] Thread in element PullQEl_hw_read0best640/format_conversion13 is not running anymore, exiting..
+[2026-04-03 17:56:42.481] [16937] [HailoRT] [info] [queue_elements.cpp:46] [~BaseQueueElement] Queue element PullQEl_hw_read0best640/format_conversion13 has 0 frames in his Queue on destruction
+[2026-04-03 17:56:42.481] [17060] [HailoRT] [info] [queue_elements.cpp:68] [operator()] Thread in element UserBuffQEl0best640/format_conversion13 is not running anymore, exiting..
+[2026-04-03 17:56:42.481] [16937] [HailoRT] [info] [queue_elements.cpp:46] [~BaseQueueElement] Queue element UserBuffQEl0best640/format_conversion13 has 0 frames in his Queue on destruction
+[2026-04-03 17:56:42.481] [17058] [HailoRT] [info] [queue_elements.cpp:68] [operator()] Thread in element PushQEl1best640/input_layer1 is not running anymore, exiting..
+[2026-04-03 17:56:42.481] [16937] [HailoRT] [info] [queue_elements.cpp:46] [~BaseQueueElement] Queue element PushQEl1best640/input_layer1 has 0 frames in his Queue on destruction
+[2026-04-03 17:56:42.482] [16937] [HailoRT] [info] [core_op.cpp:186] [deactivate] Deactivating took 0.676502 ms
+[2026-04-03 17:56:42.482] [16937] [HailoRT] [info] [core_op.cpp:186] [deactivate] Deactivating took 0.689094 ms
+[2026-04-03 17:57:13.466] [17649] [HailoRT] [info] [vdevice.cpp:535] [create] Creating vdevice with params: device_count: 1, scheduling_algorithm: NONE, multi_process_service: false
+[2026-04-03 17:57:13.479] [17649] [HailoRT] [info] [device.cpp:51] [Device] OS Version: Linux 6.12.75+rpt-rpi-2712 #1 SMP PREEMPT Debian 1:6.12.75-1+rpt1 (2026-03-11) aarch64
+[2026-04-03 17:57:13.479] [17649] [HailoRT] [info] [control.cpp:113] [control__parse_identify_results] firmware_version is: 4.23.0
+[2026-04-03 17:57:13.479] [17649] [HailoRT] [info] [vdevice.cpp:682] [create] VDevice Infos: 0001:01:00.0
+[2026-04-03 17:57:13.485] [17649] [HailoRT] [info] [internal_buffer_manager.cpp:77] [print_execution_results] Planned internal buffer memory: CMA=0 CMA-Desc=1245184 Pinned=1743872. memory to edge layer usage factor is 0.73818815
+[2026-04-03 17:57:13.485] [17649] [HailoRT] [info] [internal_buffer_manager.cpp:86] [print_execution_results] Default Internal buffer planner executed successfully
+[2026-04-03 17:57:13.518] [17649] [HailoRT] [info] [device_internal.cpp:57] [configure] Configuring HEF took 38.175152 milliseconds
+[2026-04-03 17:57:13.518] [17649] [HailoRT] [info] [vdevice.cpp:780] [configure] Configuring HEF on VDevice took 38.490831 milliseconds
+[2026-04-03 17:57:13.518] [17649] [HailoRT] [info] [hef.cpp:1994] [get_network_group_and_network_name] No name was given. Addressing all networks of default network_group: best640
+[2026-04-03 17:57:13.518] [17649] [HailoRT] [info] [core_op.cpp:156] [activate] Activating best640 took 0.244051 milliseconds. Note that the function is asynchronous and thus the network is not fully activated yet.
+[2026-04-03 17:57:13.518] [17649] [HailoRT] [info] [core_op.cpp:156] [activate] Activating best640 took 0.255996 milliseconds. Note that the function is asynchronous and thus the network is not fully activated yet.
+[2026-04-03 17:57:13.518] [17649] [HailoRT] [info] [edge_elements.cpp:52] [create] Created (HwWriteEl1best640/input_layer1 | hw_frame_size: 1228800)
+[2026-04-03 17:57:13.519] [17649] [HailoRT] [info] [queue_elements.cpp:284] [create] Created (PushQEl1best640/input_layer1 | timeout: 10s)
+[2026-04-03 17:57:13.519] [17649] [HailoRT] [info] [filter_elements.cpp:101] [create] Created (PreInferEl1best640/input_layer1 | Reorder - src_order: NHWC, src_shape: (640, 640, 3), dst_order: NHCW, dst_shape: (640, 640, 3))
+[2026-04-03 17:57:13.519] [17649] [HailoRT] [info] [vstream.cpp:754] [InputVStreamImpl] Creating best640/input_layer1...
+[2026-04-03 17:57:13.519] [17649] [HailoRT] [info] [vstream_builder.cpp:102] [create_inputs] Input pipeline 'best640/input_layer1': (PreInferEl1best640/input_layer1 | Reorder - src_order: NHWC, src_shape: (640, 640, 3), dst_order: NHCW, dst_shape: (640, 640, 3)) >> (PushQEl1best640/input_layer1 | timeout: 10s) >> (HwWriteEl1best640/input_layer1 | hw_frame_size: 1228800) >> HW
+[2026-04-03 17:57:13.519] [17649] [HailoRT] [info] [edge_elements.cpp:287] [create] Created (HwReadEl0best640/format_conversion13 | hw_frame_size: 50400)
+[2026-04-03 17:57:13.519] [17649] [HailoRT] [info] [queue_elements.cpp:657] [create] Created (PullQEl_hw_read0best640/format_conversion13)
+[2026-04-03 17:57:13.519] [17649] [HailoRT] [info] [filter_elements.cpp:372] [create] Created (PostInferEl0best640/format_conversion13 | Quantization - src_type: UINT8, dst_type FLOAT32, limvals_min: -59.2463, limvals_max: 780.076)
+[2026-04-03 17:57:13.519] [17649] [HailoRT] [info] [queue_elements.cpp:800] [create] Created (UserBuffQEl0best640/format_conversion13 | timeout: 10s)
+[2026-04-03 17:57:13.519] [17649] [HailoRT] [info] [vstream.cpp:1114] [OutputVStreamImpl] Creating best640/format_conversion13...
+[2026-04-03 17:57:13.519] [17649] [HailoRT] [info] [vstream_builder.cpp:220] [create_outputs] Output pipeline 'best640/format_conversion13': HW >> (HwReadEl0best640/format_conversion13 | hw_frame_size: 50400) >> (PullQEl_hw_read0best640/format_conversion13) >> (PostInferEl0best640/format_conversion13 | Quantization - src_type: UINT8, dst_type FLOAT32, limvals_min: -59.2463, limvals_max: 780.076) >> (UserBuffQEl0best640/format_conversion13 | timeout: 10s)
+[2026-04-03 17:57:13.543] [17782] [HailoRT] [info] [queue_elements.cpp:855] [run_in_thread] Shutdown event was signaled in dequeue of UserBuffQEl0best640/format_conversion13!
+[2026-04-03 17:57:13.543] [17781] [HailoRT] [info] [vdevice_native_stream.cpp:331] [read_impl] Failed read from stream HAILO_STREAM_ABORT(63) (device: 0001:01:00.0)
+[2026-04-03 17:57:13.543] [17781] [HailoRT] [info] [edge_elements.cpp:396] [run_pull] Reading from stream was aborted!
+[2026-04-03 17:57:13.543] [17781] [HailoRT] [info] [queue_elements.cpp:738] [run_in_thread] run_pull of queue element PullQEl_hw_read0best640/format_conversion13 was aborted!
+[2026-04-03 17:57:13.543] [17781] [HailoRT] [info] [queue_elements.cpp:68] [operator()] Thread in element PullQEl_hw_read0best640/format_conversion13 is not running anymore, exiting..
+[2026-04-03 17:57:13.543] [17649] [HailoRT] [info] [queue_elements.cpp:46] [~BaseQueueElement] Queue element PullQEl_hw_read0best640/format_conversion13 has 0 frames in his Queue on destruction
+[2026-04-03 17:57:13.543] [17782] [HailoRT] [info] [queue_elements.cpp:68] [operator()] Thread in element UserBuffQEl0best640/format_conversion13 is not running anymore, exiting..
+[2026-04-03 17:57:13.543] [17649] [HailoRT] [info] [queue_elements.cpp:46] [~BaseQueueElement] Queue element UserBuffQEl0best640/format_conversion13 has 0 frames in his Queue on destruction
+[2026-04-03 17:57:13.543] [17780] [HailoRT] [info] [queue_elements.cpp:68] [operator()] Thread in element PushQEl1best640/input_layer1 is not running anymore, exiting..
+[2026-04-03 17:57:13.543] [17649] [HailoRT] [info] [queue_elements.cpp:46] [~BaseQueueElement] Queue element PushQEl1best640/input_layer1 has 0 frames in his Queue on destruction
+[2026-04-03 17:57:13.544] [17649] [HailoRT] [info] [core_op.cpp:186] [deactivate] Deactivating took 0.724764 ms
+[2026-04-03 17:57:13.544] [17649] [HailoRT] [info] [core_op.cpp:186] [deactivate] Deactivating took 0.738857 ms
+[2026-04-03 17:57:59.843] [18715] [HailoRT] [info] [vdevice.cpp:535] [create] Creating vdevice with params: device_count: 1, scheduling_algorithm: NONE, multi_process_service: false
+[2026-04-03 17:57:59.855] [18715] [HailoRT] [info] [device.cpp:51] [Device] OS Version: Linux 6.12.75+rpt-rpi-2712 #1 SMP PREEMPT Debian 1:6.12.75-1+rpt1 (2026-03-11) aarch64
+[2026-04-03 17:57:59.856] [18715] [HailoRT] [info] [control.cpp:113] [control__parse_identify_results] firmware_version is: 4.23.0
+[2026-04-03 17:57:59.856] [18715] [HailoRT] [info] [vdevice.cpp:682] [create] VDevice Infos: 0001:01:00.0
+[2026-04-03 17:57:59.862] [18715] [HailoRT] [info] [internal_buffer_manager.cpp:77] [print_execution_results] Planned internal buffer memory: CMA=0 CMA-Desc=1245184 Pinned=1743872. memory to edge layer usage factor is 0.73818815
+[2026-04-03 17:57:59.862] [18715] [HailoRT] [info] [internal_buffer_manager.cpp:86] [print_execution_results] Default Internal buffer planner executed successfully
+[2026-04-03 17:57:59.889] [18715] [HailoRT] [info] [device_internal.cpp:57] [configure] Configuring HEF took 32.819259 milliseconds
+[2026-04-03 17:57:59.889] [18715] [HailoRT] [info] [vdevice.cpp:780] [configure] Configuring HEF on VDevice took 33.071756 milliseconds
+[2026-04-03 17:57:59.889] [18715] [HailoRT] [info] [hef.cpp:1994] [get_network_group_and_network_name] No name was given. Addressing all networks of default network_group: best640
+[2026-04-03 17:57:59.889] [18715] [HailoRT] [info] [core_op.cpp:156] [activate] Activating best640 took 0.215276 milliseconds. Note that the function is asynchronous and thus the network is not fully activated yet.
+[2026-04-03 17:57:59.889] [18715] [HailoRT] [info] [core_op.cpp:156] [activate] Activating best640 took 0.224646 milliseconds. Note that the function is asynchronous and thus the network is not fully activated yet.
+[2026-04-03 17:57:59.889] [18715] [HailoRT] [info] [edge_elements.cpp:52] [create] Created (HwWriteEl1best640/input_layer1 | hw_frame_size: 1228800)
+[2026-04-03 17:57:59.889] [18715] [HailoRT] [info] [queue_elements.cpp:284] [create] Created (PushQEl1best640/input_layer1 | timeout: 10s)
+[2026-04-03 17:57:59.889] [18715] [HailoRT] [info] [filter_elements.cpp:101] [create] Created (PreInferEl1best640/input_layer1 | Reorder - src_order: NHWC, src_shape: (640, 640, 3), dst_order: NHCW, dst_shape: (640, 640, 3))
+[2026-04-03 17:57:59.889] [18715] [HailoRT] [info] [vstream.cpp:754] [InputVStreamImpl] Creating best640/input_layer1...
+[2026-04-03 17:57:59.889] [18715] [HailoRT] [info] [vstream_builder.cpp:102] [create_inputs] Input pipeline 'best640/input_layer1': (PreInferEl1best640/input_layer1 | Reorder - src_order: NHWC, src_shape: (640, 640, 3), dst_order: NHCW, dst_shape: (640, 640, 3)) >> (PushQEl1best640/input_layer1 | timeout: 10s) >> (HwWriteEl1best640/input_layer1 | hw_frame_size: 1228800) >> HW
+[2026-04-03 17:57:59.889] [18715] [HailoRT] [info] [edge_elements.cpp:287] [create] Created (HwReadEl0best640/format_conversion13 | hw_frame_size: 50400)
+[2026-04-03 17:57:59.890] [18715] [HailoRT] [info] [queue_elements.cpp:657] [create] Created (PullQEl_hw_read0best640/format_conversion13)
+[2026-04-03 17:57:59.890] [18715] [HailoRT] [info] [filter_elements.cpp:372] [create] Created (PostInferEl0best640/format_conversion13 | Quantization - src_type: UINT8, dst_type FLOAT32, limvals_min: -59.2463, limvals_max: 780.076)
+[2026-04-03 17:57:59.890] [18715] [HailoRT] [info] [queue_elements.cpp:800] [create] Created (UserBuffQEl0best640/format_conversion13 | timeout: 10s)
+[2026-04-03 17:57:59.890] [18715] [HailoRT] [info] [vstream.cpp:1114] [OutputVStreamImpl] Creating best640/format_conversion13...
+[2026-04-03 17:57:59.890] [18715] [HailoRT] [info] [vstream_builder.cpp:220] [create_outputs] Output pipeline 'best640/format_conversion13': HW >> (HwReadEl0best640/format_conversion13 | hw_frame_size: 50400) >> (PullQEl_hw_read0best640/format_conversion13) >> (PostInferEl0best640/format_conversion13 | Quantization - src_type: UINT8, dst_type FLOAT32, limvals_min: -59.2463, limvals_max: 780.076) >> (UserBuffQEl0best640/format_conversion13 | timeout: 10s)
+[2026-04-03 17:57:59.914] [18830] [HailoRT] [info] [vdevice_native_stream.cpp:331] [read_impl] Failed read from stream HAILO_STREAM_ABORT(63) (device: 0001:01:00.0)
+[2026-04-03 17:57:59.914] [18830] [HailoRT] [info] [edge_elements.cpp:396] [run_pull] Reading from stream was aborted!
+[2026-04-03 17:57:59.914] [18830] [HailoRT] [info] [queue_elements.cpp:738] [run_in_thread] run_pull of queue element PullQEl_hw_read0best640/format_conversion13 was aborted!
+[2026-04-03 17:57:59.914] [18831] [HailoRT] [info] [queue_elements.cpp:855] [run_in_thread] Shutdown event was signaled in dequeue of UserBuffQEl0best640/format_conversion13!
+[2026-04-03 17:57:59.914] [18830] [HailoRT] [info] [queue_elements.cpp:68] [operator()] Thread in element PullQEl_hw_read0best640/format_conversion13 is not running anymore, exiting..
+[2026-04-03 17:57:59.914] [18715] [HailoRT] [info] [queue_elements.cpp:46] [~BaseQueueElement] Queue element PullQEl_hw_read0best640/format_conversion13 has 0 frames in his Queue on destruction
+[2026-04-03 17:57:59.914] [18831] [HailoRT] [info] [queue_elements.cpp:68] [operator()] Thread in element UserBuffQEl0best640/format_conversion13 is not running anymore, exiting..
+[2026-04-03 17:57:59.914] [18715] [HailoRT] [info] [queue_elements.cpp:46] [~BaseQueueElement] Queue element UserBuffQEl0best640/format_conversion13 has 0 frames in his Queue on destruction
+[2026-04-03 17:57:59.914] [18829] [HailoRT] [info] [queue_elements.cpp:68] [operator()] Thread in element PushQEl1best640/input_layer1 is not running anymore, exiting..
+[2026-04-03 17:57:59.914] [18715] [HailoRT] [info] [queue_elements.cpp:46] [~BaseQueueElement] Queue element PushQEl1best640/input_layer1 has 0 frames in his Queue on destruction
+[2026-04-03 17:57:59.915] [18715] [HailoRT] [info] [core_op.cpp:186] [deactivate] Deactivating took 0.73477 ms
+[2026-04-03 17:57:59.915] [18715] [HailoRT] [info] [core_op.cpp:186] [deactivate] Deactivating took 0.748918 ms
+[2026-04-03 17:59:25.059] [20569] [HailoRT] [info] [vdevice.cpp:535] [create] Creating vdevice with params: device_count: 1, scheduling_algorithm: NONE, multi_process_service: false
+[2026-04-03 17:59:25.072] [20569] [HailoRT] [info] [device.cpp:51] [Device] OS Version: Linux 6.12.75+rpt-rpi-2712 #1 SMP PREEMPT Debian 1:6.12.75-1+rpt1 (2026-03-11) aarch64
+[2026-04-03 17:59:25.072] [20569] [HailoRT] [info] [control.cpp:113] [control__parse_identify_results] firmware_version is: 4.23.0
+[2026-04-03 17:59:25.072] [20569] [HailoRT] [info] [vdevice.cpp:682] [create] VDevice Infos: 0001:01:00.0
+[2026-04-03 17:59:25.078] [20569] [HailoRT] [info] [internal_buffer_manager.cpp:77] [print_execution_results] Planned internal buffer memory: CMA=0 CMA-Desc=1245184 Pinned=1743872. memory to edge layer usage factor is 0.73818815
+[2026-04-03 17:59:25.078] [20569] [HailoRT] [info] [internal_buffer_manager.cpp:86] [print_execution_results] Default Internal buffer planner executed successfully
+[2026-04-03 17:59:25.103] [20569] [HailoRT] [info] [device_internal.cpp:57] [configure] Configuring HEF took 30.758509 milliseconds
+[2026-04-03 17:59:25.103] [20569] [HailoRT] [info] [vdevice.cpp:780] [configure] Configuring HEF on VDevice took 31.015878 milliseconds
+[2026-04-03 17:59:25.103] [20569] [HailoRT] [info] [hef.cpp:1994] [get_network_group_and_network_name] No name was given. Addressing all networks of default network_group: best640
+[2026-04-03 17:59:25.103] [20569] [HailoRT] [info] [core_op.cpp:156] [activate] Activating best640 took 0.215907 milliseconds. Note that the function is asynchronous and thus the network is not fully activated yet.
+[2026-04-03 17:59:25.103] [20569] [HailoRT] [info] [core_op.cpp:156] [activate] Activating best640 took 0.225518 milliseconds. Note that the function is asynchronous and thus the network is not fully activated yet.
+[2026-04-03 17:59:25.104] [20569] [HailoRT] [info] [edge_elements.cpp:52] [create] Created (HwWriteEl1best640/input_layer1 | hw_frame_size: 1228800)
+[2026-04-03 17:59:25.104] [20569] [HailoRT] [info] [queue_elements.cpp:284] [create] Created (PushQEl1best640/input_layer1 | timeout: 10s)
+[2026-04-03 17:59:25.104] [20569] [HailoRT] [info] [filter_elements.cpp:101] [create] Created (PreInferEl1best640/input_layer1 | Reorder - src_order: NHWC, src_shape: (640, 640, 3), dst_order: NHCW, dst_shape: (640, 640, 3))
+[2026-04-03 17:59:25.104] [20569] [HailoRT] [info] [vstream.cpp:754] [InputVStreamImpl] Creating best640/input_layer1...
+[2026-04-03 17:59:25.104] [20569] [HailoRT] [info] [vstream_builder.cpp:102] [create_inputs] Input pipeline 'best640/input_layer1': (PreInferEl1best640/input_layer1 | Reorder - src_order: NHWC, src_shape: (640, 640, 3), dst_order: NHCW, dst_shape: (640, 640, 3)) >> (PushQEl1best640/input_layer1 | timeout: 10s) >> (HwWriteEl1best640/input_layer1 | hw_frame_size: 1228800) >> HW
+[2026-04-03 17:59:25.104] [20569] [HailoRT] [info] [edge_elements.cpp:287] [create] Created (HwReadEl0best640/format_conversion13 | hw_frame_size: 50400)
+[2026-04-03 17:59:25.104] [20569] [HailoRT] [info] [queue_elements.cpp:657] [create] Created (PullQEl_hw_read0best640/format_conversion13)
+[2026-04-03 17:59:25.104] [20569] [HailoRT] [info] [filter_elements.cpp:372] [create] Created (PostInferEl0best640/format_conversion13 | Quantization - src_type: UINT8, dst_type FLOAT32, limvals_min: -59.2463, limvals_max: 780.076)
+[2026-04-03 17:59:25.104] [20569] [HailoRT] [info] [queue_elements.cpp:800] [create] Created (UserBuffQEl0best640/format_conversion13 | timeout: 10s)
+[2026-04-03 17:59:25.104] [20569] [HailoRT] [info] [vstream.cpp:1114] [OutputVStreamImpl] Creating best640/format_conversion13...
+[2026-04-03 17:59:25.104] [20569] [HailoRT] [info] [vstream_builder.cpp:220] [create_outputs] Output pipeline 'best640/format_conversion13': HW >> (HwReadEl0best640/format_conversion13 | hw_frame_size: 50400) >> (PullQEl_hw_read0best640/format_conversion13) >> (PostInferEl0best640/format_conversion13 | Quantization - src_type: UINT8, dst_type FLOAT32, limvals_min: -59.2463, limvals_max: 780.076) >> (UserBuffQEl0best640/format_conversion13 | timeout: 10s)
+[2026-04-03 17:59:25.127] [20693] [HailoRT] [info] [queue_elements.cpp:855] [run_in_thread] Shutdown event was signaled in dequeue of UserBuffQEl0best640/format_conversion13!
+[2026-04-03 17:59:25.127] [20692] [HailoRT] [info] [vdevice_native_stream.cpp:331] [read_impl] Failed read from stream HAILO_STREAM_ABORT(63) (device: 0001:01:00.0)
+[2026-04-03 17:59:25.128] [20692] [HailoRT] [info] [edge_elements.cpp:396] [run_pull] Reading from stream was aborted!
+[2026-04-03 17:59:25.128] [20692] [HailoRT] [info] [queue_elements.cpp:738] [run_in_thread] run_pull of queue element PullQEl_hw_read0best640/format_conversion13 was aborted!
+[2026-04-03 17:59:25.128] [20692] [HailoRT] [info] [queue_elements.cpp:68] [operator()] Thread in element PullQEl_hw_read0best640/format_conversion13 is not running anymore, exiting..
+[2026-04-03 17:59:25.128] [20569] [HailoRT] [info] [queue_elements.cpp:46] [~BaseQueueElement] Queue element PullQEl_hw_read0best640/format_conversion13 has 0 frames in his Queue on destruction
+[2026-04-03 17:59:25.128] [20693] [HailoRT] [info] [queue_elements.cpp:68] [operator()] Thread in element UserBuffQEl0best640/format_conversion13 is not running anymore, exiting..
+[2026-04-03 17:59:25.128] [20569] [HailoRT] [info] [queue_elements.cpp:46] [~BaseQueueElement] Queue element UserBuffQEl0best640/format_conversion13 has 0 frames in his Queue on destruction
+[2026-04-03 17:59:25.128] [20691] [HailoRT] [info] [queue_elements.cpp:68] [operator()] Thread in element PushQEl1best640/input_layer1 is not running anymore, exiting..
+[2026-04-03 17:59:25.128] [20569] [HailoRT] [info] [queue_elements.cpp:46] [~BaseQueueElement] Queue element PushQEl1best640/input_layer1 has 0 frames in his Queue on destruction
+[2026-04-03 17:59:25.128] [20569] [HailoRT] [info] [core_op.cpp:186] [deactivate] Deactivating took 0.677295 ms
+[2026-04-03 17:59:25.128] [20569] [HailoRT] [info] [core_op.cpp:186] [deactivate] Deactivating took 0.686758 ms
+[2026-04-03 18:00:30.653] [22057] [HailoRT] [info] [vdevice.cpp:535] [create] Creating vdevice with params: device_count: 1, scheduling_algorithm: NONE, multi_process_service: false
+[2026-04-03 18:00:30.664] [22057] [HailoRT] [info] [device.cpp:51] [Device] OS Version: Linux 6.12.75+rpt-rpi-2712 #1 SMP PREEMPT Debian 1:6.12.75-1+rpt1 (2026-03-11) aarch64
+[2026-04-03 18:00:30.665] [22057] [HailoRT] [info] [control.cpp:113] [control__parse_identify_results] firmware_version is: 4.23.0
+[2026-04-03 18:00:30.665] [22057] [HailoRT] [info] [vdevice.cpp:682] [create] VDevice Infos: 0001:01:00.0
+[2026-04-03 18:00:30.671] [22057] [HailoRT] [info] [internal_buffer_manager.cpp:77] [print_execution_results] Planned internal buffer memory: CMA=0 CMA-Desc=1245184 Pinned=1743872. memory to edge layer usage factor is 0.73818815
+[2026-04-03 18:00:30.671] [22057] [HailoRT] [info] [internal_buffer_manager.cpp:86] [print_execution_results] Default Internal buffer planner executed successfully
+[2026-04-03 18:00:30.705] [22057] [HailoRT] [info] [device_internal.cpp:57] [configure] Configuring HEF took 39.655298 milliseconds
+[2026-04-03 18:00:30.705] [22057] [HailoRT] [info] [vdevice.cpp:780] [configure] Configuring HEF on VDevice took 39.916761 milliseconds
+[2026-04-03 18:00:30.705] [22057] [HailoRT] [info] [hef.cpp:1994] [get_network_group_and_network_name] No name was given. Addressing all networks of default network_group: best640
+[2026-04-03 18:00:30.705] [22057] [HailoRT] [info] [core_op.cpp:156] [activate] Activating best640 took 0.222278 milliseconds. Note that the function is asynchronous and thus the network is not fully activated yet.
+[2026-04-03 18:00:30.705] [22057] [HailoRT] [info] [core_op.cpp:156] [activate] Activating best640 took 0.236704 milliseconds. Note that the function is asynchronous and thus the network is not fully activated yet.
+[2026-04-03 18:00:30.705] [22057] [HailoRT] [info] [edge_elements.cpp:52] [create] Created (HwWriteEl1best640/input_layer1 | hw_frame_size: 1228800)
+[2026-04-03 18:00:30.706] [22057] [HailoRT] [info] [queue_elements.cpp:284] [create] Created (PushQEl1best640/input_layer1 | timeout: 10s)
+[2026-04-03 18:00:30.706] [22057] [HailoRT] [info] [filter_elements.cpp:101] [create] Created (PreInferEl1best640/input_layer1 | Reorder - src_order: NHWC, src_shape: (640, 640, 3), dst_order: NHCW, dst_shape: (640, 640, 3))
+[2026-04-03 18:00:30.706] [22057] [HailoRT] [info] [vstream.cpp:754] [InputVStreamImpl] Creating best640/input_layer1...
+[2026-04-03 18:00:30.706] [22057] [HailoRT] [info] [vstream_builder.cpp:102] [create_inputs] Input pipeline 'best640/input_layer1': (PreInferEl1best640/input_layer1 | Reorder - src_order: NHWC, src_shape: (640, 640, 3), dst_order: NHCW, dst_shape: (640, 640, 3)) >> (PushQEl1best640/input_layer1 | timeout: 10s) >> (HwWriteEl1best640/input_layer1 | hw_frame_size: 1228800) >> HW
+[2026-04-03 18:00:30.706] [22057] [HailoRT] [info] [edge_elements.cpp:287] [create] Created (HwReadEl0best640/format_conversion13 | hw_frame_size: 50400)
+[2026-04-03 18:00:30.707] [22057] [HailoRT] [info] [queue_elements.cpp:657] [create] Created (PullQEl_hw_read0best640/format_conversion13)
+[2026-04-03 18:00:30.707] [22057] [HailoRT] [info] [filter_elements.cpp:372] [create] Created (PostInferEl0best640/format_conversion13 | Quantization - src_type: UINT8, dst_type FLOAT32, limvals_min: -59.2463, limvals_max: 780.076)
+[2026-04-03 18:00:30.707] [22057] [HailoRT] [info] [queue_elements.cpp:800] [create] Created (UserBuffQEl0best640/format_conversion13 | timeout: 10s)
+[2026-04-03 18:00:30.707] [22057] [HailoRT] [info] [vstream.cpp:1114] [OutputVStreamImpl] Creating best640/format_conversion13...
+[2026-04-03 18:00:30.707] [22057] [HailoRT] [info] [vstream_builder.cpp:220] [create_outputs] Output pipeline 'best640/format_conversion13': HW >> (HwReadEl0best640/format_conversion13 | hw_frame_size: 50400) >> (PullQEl_hw_read0best640/format_conversion13) >> (PostInferEl0best640/format_conversion13 | Quantization - src_type: UINT8, dst_type FLOAT32, limvals_min: -59.2463, limvals_max: 780.076) >> (UserBuffQEl0best640/format_conversion13 | timeout: 10s)
+[2026-04-03 18:00:30.732] [22209] [HailoRT] [info] [queue_elements.cpp:855] [run_in_thread] Shutdown event was signaled in dequeue of UserBuffQEl0best640/format_conversion13!
+[2026-04-03 18:00:30.732] [22208] [HailoRT] [info] [vdevice_native_stream.cpp:331] [read_impl] Failed read from stream HAILO_STREAM_ABORT(63) (device: 0001:01:00.0)
+[2026-04-03 18:00:30.732] [22208] [HailoRT] [info] [edge_elements.cpp:396] [run_pull] Reading from stream was aborted!
+[2026-04-03 18:00:30.732] [22208] [HailoRT] [info] [queue_elements.cpp:738] [run_in_thread] run_pull of queue element PullQEl_hw_read0best640/format_conversion13 was aborted!
+[2026-04-03 18:00:30.732] [22208] [HailoRT] [info] [queue_elements.cpp:68] [operator()] Thread in element PullQEl_hw_read0best640/format_conversion13 is not running anymore, exiting..
+[2026-04-03 18:00:30.732] [22057] [HailoRT] [info] [queue_elements.cpp:46] [~BaseQueueElement] Queue element PullQEl_hw_read0best640/format_conversion13 has 0 frames in his Queue on destruction
+[2026-04-03 18:00:30.732] [22209] [HailoRT] [info] [queue_elements.cpp:68] [operator()] Thread in element UserBuffQEl0best640/format_conversion13 is not running anymore, exiting..
+[2026-04-03 18:00:30.732] [22057] [HailoRT] [info] [queue_elements.cpp:46] [~BaseQueueElement] Queue element UserBuffQEl0best640/format_conversion13 has 0 frames in his Queue on destruction
+[2026-04-03 18:00:30.732] [22207] [HailoRT] [info] [queue_elements.cpp:68] [operator()] Thread in element PushQEl1best640/input_layer1 is not running anymore, exiting..
+[2026-04-03 18:00:30.732] [22057] [HailoRT] [info] [queue_elements.cpp:46] [~BaseQueueElement] Queue element PushQEl1best640/input_layer1 has 0 frames in his Queue on destruction
+[2026-04-03 18:00:30.733] [22057] [HailoRT] [info] [core_op.cpp:186] [deactivate] Deactivating took 0.699334 ms
+[2026-04-03 18:00:30.733] [22057] [HailoRT] [info] [core_op.cpp:186] [deactivate] Deactivating took 0.711427 ms
+[2026-04-03 18:00:54.700] [22697] [HailoRT] [info] [vdevice.cpp:535] [create] Creating vdevice with params: device_count: 1, scheduling_algorithm: NONE, multi_process_service: false
+[2026-04-03 18:00:54.712] [22697] [HailoRT] [info] [device.cpp:51] [Device] OS Version: Linux 6.12.75+rpt-rpi-2712 #1 SMP PREEMPT Debian 1:6.12.75-1+rpt1 (2026-03-11) aarch64
+[2026-04-03 18:00:54.713] [22697] [HailoRT] [info] [control.cpp:113] [control__parse_identify_results] firmware_version is: 4.23.0
+[2026-04-03 18:00:54.713] [22697] [HailoRT] [info] [vdevice.cpp:682] [create] VDevice Infos: 0001:01:00.0
+[2026-04-03 18:00:54.722] [22697] [HailoRT] [info] [internal_buffer_manager.cpp:77] [print_execution_results] Planned internal buffer memory: CMA=0 CMA-Desc=1245184 Pinned=1743872. memory to edge layer usage factor is 0.73818815
+[2026-04-03 18:00:54.722] [22697] [HailoRT] [info] [internal_buffer_manager.cpp:86] [print_execution_results] Default Internal buffer planner executed successfully
+[2026-04-03 18:00:54.756] [22697] [HailoRT] [info] [device_internal.cpp:57] [configure] Configuring HEF took 42.815564 milliseconds
+[2026-04-03 18:00:54.756] [22697] [HailoRT] [info] [vdevice.cpp:780] [configure] Configuring HEF on VDevice took 43.085898 milliseconds
+[2026-04-03 18:00:54.756] [22697] [HailoRT] [info] [hef.cpp:1994] [get_network_group_and_network_name] No name was given. Addressing all networks of default network_group: best640
+[2026-04-03 18:00:54.756] [22697] [HailoRT] [info] [core_op.cpp:156] [activate] Activating best640 took 0.261797 milliseconds. Note that the function is asynchronous and thus the network is not fully activated yet.
+[2026-04-03 18:00:54.756] [22697] [HailoRT] [info] [core_op.cpp:156] [activate] Activating best640 took 0.272686 milliseconds. Note that the function is asynchronous and thus the network is not fully activated yet.
+[2026-04-03 18:00:54.756] [22697] [HailoRT] [info] [edge_elements.cpp:52] [create] Created (HwWriteEl1best640/input_layer1 | hw_frame_size: 1228800)
+[2026-04-03 18:00:54.757] [22697] [HailoRT] [info] [queue_elements.cpp:284] [create] Created (PushQEl1best640/input_layer1 | timeout: 10s)
+[2026-04-03 18:00:54.757] [22697] [HailoRT] [info] [filter_elements.cpp:101] [create] Created (PreInferEl1best640/input_layer1 | Reorder - src_order: NHWC, src_shape: (640, 640, 3), dst_order: NHCW, dst_shape: (640, 640, 3))
+[2026-04-03 18:00:54.757] [22697] [HailoRT] [info] [vstream.cpp:754] [InputVStreamImpl] Creating best640/input_layer1...
+[2026-04-03 18:00:54.757] [22697] [HailoRT] [info] [vstream_builder.cpp:102] [create_inputs] Input pipeline 'best640/input_layer1': (PreInferEl1best640/input_layer1 | Reorder - src_order: NHWC, src_shape: (640, 640, 3), dst_order: NHCW, dst_shape: (640, 640, 3)) >> (PushQEl1best640/input_layer1 | timeout: 10s) >> (HwWriteEl1best640/input_layer1 | hw_frame_size: 1228800) >> HW
+[2026-04-03 18:00:54.757] [22697] [HailoRT] [info] [edge_elements.cpp:287] [create] Created (HwReadEl0best640/format_conversion13 | hw_frame_size: 50400)
+[2026-04-03 18:00:54.757] [22697] [HailoRT] [info] [queue_elements.cpp:657] [create] Created (PullQEl_hw_read0best640/format_conversion13)
+[2026-04-03 18:00:54.757] [22697] [HailoRT] [info] [filter_elements.cpp:372] [create] Created (PostInferEl0best640/format_conversion13 | Quantization - src_type: UINT8, dst_type FLOAT32, limvals_min: -59.2463, limvals_max: 780.076)
+[2026-04-03 18:00:54.757] [22697] [HailoRT] [info] [queue_elements.cpp:800] [create] Created (UserBuffQEl0best640/format_conversion13 | timeout: 10s)
+[2026-04-03 18:00:54.757] [22697] [HailoRT] [info] [vstream.cpp:1114] [OutputVStreamImpl] Creating best640/format_conversion13...
+[2026-04-03 18:00:54.757] [22697] [HailoRT] [info] [vstream_builder.cpp:220] [create_outputs] Output pipeline 'best640/format_conversion13': HW >> (HwReadEl0best640/format_conversion13 | hw_frame_size: 50400) >> (PullQEl_hw_read0best640/format_conversion13) >> (PostInferEl0best640/format_conversion13 | Quantization - src_type: UINT8, dst_type FLOAT32, limvals_min: -59.2463, limvals_max: 780.076) >> (UserBuffQEl0best640/format_conversion13 | timeout: 10s)
+[2026-04-03 18:00:54.783] [22830] [HailoRT] [info] [queue_elements.cpp:855] [run_in_thread] Shutdown event was signaled in dequeue of UserBuffQEl0best640/format_conversion13!
+[2026-04-03 18:00:54.783] [22829] [HailoRT] [info] [vdevice_native_stream.cpp:331] [read_impl] Failed read from stream HAILO_STREAM_ABORT(63) (device: 0001:01:00.0)
+[2026-04-03 18:00:54.783] [22829] [HailoRT] [info] [edge_elements.cpp:396] [run_pull] Reading from stream was aborted!
+[2026-04-03 18:00:54.783] [22829] [HailoRT] [info] [queue_elements.cpp:738] [run_in_thread] run_pull of queue element PullQEl_hw_read0best640/format_conversion13 was aborted!
+[2026-04-03 18:00:54.783] [22829] [HailoRT] [info] [queue_elements.cpp:68] [operator()] Thread in element PullQEl_hw_read0best640/format_conversion13 is not running anymore, exiting..
+[2026-04-03 18:00:54.783] [22697] [HailoRT] [info] [queue_elements.cpp:46] [~BaseQueueElement] Queue element PullQEl_hw_read0best640/format_conversion13 has 0 frames in his Queue on destruction
+[2026-04-03 18:00:54.783] [22830] [HailoRT] [info] [queue_elements.cpp:68] [operator()] Thread in element UserBuffQEl0best640/format_conversion13 is not running anymore, exiting..
+[2026-04-03 18:00:54.783] [22697] [HailoRT] [info] [queue_elements.cpp:46] [~BaseQueueElement] Queue element UserBuffQEl0best640/format_conversion13 has 0 frames in his Queue on destruction
+[2026-04-03 18:00:54.783] [22828] [HailoRT] [info] [queue_elements.cpp:68] [operator()] Thread in element PushQEl1best640/input_layer1 is not running anymore, exiting..
+[2026-04-03 18:00:54.783] [22697] [HailoRT] [info] [queue_elements.cpp:46] [~BaseQueueElement] Queue element PushQEl1best640/input_layer1 has 0 frames in his Queue on destruction
+[2026-04-03 18:00:54.784] [22697] [HailoRT] [info] [core_op.cpp:186] [deactivate] Deactivating took 0.702427 ms
+[2026-04-03 18:00:54.784] [22697] [HailoRT] [info] [core_op.cpp:186] [deactivate] Deactivating took 0.717353 ms
