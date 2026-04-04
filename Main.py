@@ -99,7 +99,7 @@ async def main():
 
     UWB_Anchors = UWB(UWB_UWBPublisher_pub)
 
-    Accelerometer = IMUDriver(Accelerometer_AccelPublisher_pub, Simulation=False)
+    Accelerometer = IMUDriver(Accelerometer_AccelPublisher_pub, Simulation=True)
 
     UserInterface = CDSControlServer(DriveCommand_UI_pub, Canine_UI_pub, MacroState_UI_pub, MotionCommand_UI_pub)
 

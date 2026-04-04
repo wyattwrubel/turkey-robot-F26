@@ -16,6 +16,7 @@ class IMUDriver:
     MODE_NDOF       = 0x0C
 
     def __init__(self, AccelPublisher, Simulation=False):
+        self.Simulation = Simulation
         if not Simulation:
             self.bus = smbus2.SMBus(3)
             self._init_sensor()
@@ -54,6 +55,9 @@ class IMUDriver:
         Continuously reads heading at PUBLISH_RATE_HZ (100 Hz) and
         publishes to all subscribers.
         """
+        if(self.Simulation):
+            return
+
         while True:
             heading = self._get_heading()
 
