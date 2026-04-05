@@ -1,33 +1,3 @@
-"""
-main.py — CDS Control Server entry point
-
-Wires the UI server to your real system modules.
-Search for ── FILL IN ── to find every placeholder that needs a real import.
-
-Usage:
-    python main.py
-    Open http://localhost:8000
-
-Publisher / Receiver wiring summary
-─────────────────────────────────────────────────────────────────────
-  INBOUND  (system → UI)
-    robot_pose_pub   → ui.diagnostics.RobotPose_Receiver     [X, Y, theta]
-    uwb_pub          → ui.diagnostics.UWB_Sensors_Receiver   [UWB_X, UWB_Y]
-    imu_pub          → ui.diagnostics.Accelerometer_Receiver [theta]
-    vision_pub       → ui.VisionObject_Receiver               {Turkeys, Humans}
-    macrostate_pub   → ui.diagnostics.MacroState_Receiver     {Id}
-    navigation_pub   → ui.map.Navigation_Receiver             {Id, Cmd}
-    canine_pub       → ui.controls.Canine_Receiver            {Id, Type, Data}
-    video_pub        → ui.VideoFeed_Receiver                  JPEG bytes
-
-  OUTBOUND (UI → system)
-    drivetrain_pub   → your drivetrain driver receiver
-    canine_pub_out   → your canine driver receiver
-    macrostate_pub_out → your state planner receiver
-    navigation_pub_out → your trajectory tracker receiver
-─────────────────────────────────────────────────────────────────────
-"""
-
 import asyncio
 import sys
 import os
@@ -38,15 +8,11 @@ from Navigation.NavigationDriver  import TrajectoryTracker
 from Canine.CanineDriver import CanineDriver
 from DriveTrain.DriveTrainDriver import MotorDriver
 from Sensors.AccelPublisher import IMUDriver
-from Sensors.UWBPublisher import UWB
-
-# STATE PLANNER IMPORT TODO
+from Sensors.PositioningPublisher import PositioningDriver
 from StatePlanner.StatePlannerReceiver import StatePlannerReceiver
 
-
-# TODO REPLACE WITH REAL VISION
-from Vision.SimpleVision import Vision
-# VISION IMPORT NEEDED TODO
+from Vision.Vision import VisionObject
+from Vision.SimpleVision import FakeVision
 
 class AsyncPublisher:
     def __init__(self, name: str = ""):
@@ -64,20 +30,23 @@ class AsyncPublisher:
                 print(f"[{self._name}] Subscriber error: {e}")
 
 async def main():
-
-    # ── Inbound publishers (system → UI) ──────────────────────────────────────
-    # These are owned by your hardware/algorithm modules and published into.
-    # Subscribe the UI receivers below so the UI stays in sync.
     
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # ASYNC PUBLISHERS
+    # ─────────────────────────────────────────────────────────────────────────
+
     # VisionObject Protocol
-    VisionObject_Vision_pub = AsyncPublisher("VideoObject") # Not passed into module TODO
+    VisionObject_Vision_pub = AsyncPublisher("VideoObject")
+    TESTING_VisionObject_Vision_pub = AsyncPublisher("TestVideoObject")
 
     # VideoFeed Protocol
     VideoFeed_Vision_pub = AsyncPublisher("VideoFeed")
+    TESTING_VideoFeed_Vision_pub = AsyncPublisher("TestVideoFeed")
 
     # Canine Protocol
     Canine_UI_pub = AsyncPublisher("UI_Canine")
-    Canine_StatePlanner_pub = AsyncPublisher("StatePlanner_Canine") # Not passed into module TODO
+    Canine_StatePlanner_pub = AsyncPublisher("StatePlanner_Canine")
     Canine_Canine_pub = AsyncPublisher("Canine_Canine")
     
     # ServoFeedback Protocol
@@ -102,44 +71,56 @@ async def main():
     MotionCommand_StatePlanner_pub = AsyncPublisher("StatePlanner_MotionCommand")
     MotionCommand_UI_pub = AsyncPublisher("UI_MotionCommand")
 
+    # MPCFeedback
+    MPCFeedback_Navigation_pub = AsyncPublisher("Nav_MPC")
+
     # UWB
     UWB_UWBPublisher_pub = AsyncPublisher("UWB")
     
     # Accelerometer
     Accelerometer_AccelPublisher_pub = AsyncPublisher("IMU")
     
-    # ── Instantiate Modules ───────────────
-    # VISION OBJECT TODO ADD HERE
 
-    # REPLACE WITH REAL VIDEOFEED TODO
-    vision = Vision(VideoFeed_Vision_pub, VisionObject_Vision_pub)
-    
-    # REAL MODULES TODO REPLACE THIS HEADER
-    Canine = CanineDriver(ServoFeedback_Canine_pub, Canine_Canine_pub, Verbose=False)
-    Drivetrain = MotorDriver(RobotPose_Drivetrain_pub, SlipFeedback_Drivetrain_pub, Simulated=True)
+    # ─────────────────────────────────────────────────────────────────────────
+    # SOFTWARE MODULES
+    # ─────────────────────────────────────────────────────────────────────────
 
-    Navigation = TrajectoryTracker(DriveCommand_Navigation_pub, MotionCommand_Navigation_pub, Verbose=False)
+    Vision = VisionObject(VideoFeed_Vision_pub, VisionObject_Vision_pub, Simulated=True)
 
-    # STATE PLANNER TODO
+    TestVision = FakeVision(TESTING_VideoFeed_Vision_pub, TESTING_VisionObject_Vision_pub)
+
+    Canine = CanineDriver(ServoFeedback_Canine_pub, Canine_Canine_pub, Simulated=True, Verbose=False)
+
+    Drivetrain = MotorDriver(RobotPose_Drivetrain_pub, SlipFeedback_Drivetrain_pub, Simulated=True, SkipUKFUpdates=True)
+
+    Navigation = TrajectoryTracker(DriveCommand_Navigation_pub, MotionCommand_Navigation_pub, MPCFeedback_Navigation_pub, Verbose=False)
+
     StatePlanner = StatePlannerReceiver(MacroState_StatePlanner, Canine_StatePlanner_pub, MotionCommand_StatePlanner_pub, Verbose=False)
 
-    # SENSORS
-    UWB_Anchors = UWB(UWB_UWBPublisher_pub)
+    PositionDriver = PositioningDriver(UWB_UWBPublisher_pub, Mode="GPS", Simulation=True)
+
     Accelerometer = IMUDriver(Accelerometer_AccelPublisher_pub, Simulation=True)
 
-    # User Interface
     UserInterface = CDSControlServer(DriveCommand_UI_pub, Canine_UI_pub, MacroState_UI_pub, MotionCommand_UI_pub)
 
 
     # ─────────────────────────────────────────────────────────────────────────
-    
+    # SUBSCRIPTION PATHS
+    # ─────────────────────────────────────────────────────────────────────────
+
     """VisionObject"""
     VisionObject_Vision_pub.subscribe(UserInterface.VisionObject_Receiver)
     VisionObject_Vision_pub.subscribe(Navigation.VisionObject_Receiver)
     VisionObject_Vision_pub.subscribe(StatePlanner.VisionObject_Receiver)
 
+    TESTING_VisionObject_Vision_pub.subscribe(UserInterface.VisionObject_Receiver)
+    TESTING_VisionObject_Vision_pub.subscribe(Navigation.VisionObject_Receiver)
+    TESTING_VisionObject_Vision_pub.subscribe(StatePlanner.VisionObject_Receiver)
+
     """VideoFeed"""
     VideoFeed_Vision_pub.subscribe(UserInterface.VideoFeed_Receiver)   
+    TESTING_VideoFeed_Vision_pub.subscribe(UserInterface.VideoFeed_Receiver)   
+
 
     """Canine"""
     Canine_UI_pub.subscribe(Canine.CanineDriver_Receiver)
@@ -152,6 +133,7 @@ async def main():
 
     """DriveCommand"""
     DriveCommand_Navigation_pub.subscribe(Drivetrain.MotorCommandReceiver)
+    DriveCommand_Navigation_pub.subscribe(UserInterface.diagnostics.DriveCommand_Receiver)
     DriveCommand_UI_pub.subscribe(Drivetrain.MotorCommandReceiver)
  
     """SlipFeedback"""
@@ -160,7 +142,7 @@ async def main():
     """RobotPose"""
     RobotPose_Drivetrain_pub.subscribe(Navigation.RobotPose_Receiver)
     RobotPose_Drivetrain_pub.subscribe(UserInterface.diagnostics.RobotPose_Receiver)
-    # Drivetrain_robotpose_pub.subscribe("VISION")
+    RobotPose_Drivetrain_pub.subscribe(Vision.RobotPose_Receiver)
     RobotPose_Drivetrain_pub.subscribe(StatePlanner.RobotPose_Receiver)
 
     """MacroState"""
@@ -172,6 +154,9 @@ async def main():
     MotionCommand_Navigation_pub.subscribe(UserInterface.diagnostics.MotionCommand_Receiver)
     MotionCommand_StatePlanner_pub.subscribe(Navigation.TrajectoryCMD_Receiver)
      
+    """ MPCFeedback"""
+    MPCFeedback_Navigation_pub.subscribe(UserInterface.diagnostics.TrajectoryTracker_Receiver)
+
     """UWB X,Y Values"""
     UWB_UWBPublisher_pub.subscribe(Drivetrain.Drivetrain_UWBReceiver)
     UWB_UWBPublisher_pub.subscribe(UserInterface.diagnostics.UWB_Sensors_Receiver)
@@ -180,35 +165,19 @@ async def main():
     Accelerometer_AccelPublisher_pub.subscribe(Drivetrain.Drivetrain_AccelReceiver)
     Accelerometer_AccelPublisher_pub.subscribe(UserInterface.diagnostics.Accelerometer_Receiver)
     
-    print("[MAIN] CDS Control Server starting")
-    print("[MAIN] UI → http://localhost:8000")
+    print("[MAIN] CDS Control Server Starting")
 
     await asyncio.gather(
         UserInterface.serve(),
-
-        # TODO FAKE VISION
-        vision.VisionRunner(),
-
-        # SIMULATED MODULES
         Drivetrain.DriveTrainDriver_Runner(),
         Canine.PoseDriver.MotorPositions_Runner(),
         Canine.Audio._monitor(),
-
-        # ── FILL IN: add your real module coroutines here ──────────────────
-        #
-        # ukf.run(),
-        # uwb_sensor.run(),
-        # imu_sensor.run(),
-        # detector.run(),
-        # planner.run(),
-        # tracker.run(),
-        # canine.run(),
-        # camera.run(),
-        # motor.run(),
-        #
-        # ──────────────────────────────────────────────────────────────────
+        TestVision.VisionRunner(),
+        Navigation.MPC.DriveTrain_Sender(),
+        Accelerometer.Runner(),
+        PositionDriver.Runner(),
+        #  
     )
-
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -1,22 +1,30 @@
 // ═══════════════════════════════════════════════
 // CONFIG
 // ═══════════════════════════════════════════════
+// const SERVO_DEFS = [
+//   { id: 'FrontLeft',  name: 'Front Left',  min: -45, max: 45, val: 0 },
+//   { id: 'FrontRight', name: 'Front Right', min: -45, max: 45, val: 0 },
+//   { id: 'RearLeft',   name: 'Rear Left',   min: -45, max: 45, val: 0 },
+//   { id: 'RearRight',  name: 'Rear Right',  min: -45, max: 45, val: 0 },
+//   { id: 'Head',       name: 'Head',        min: -60, max: 60, val: 0 },
+// ]
+
 const SERVO_DEFS = [
-  { id: 'FrontLeft',  name: 'Front Left',  min: -45, max: 45, val: 0 },
-  { id: 'FrontRight', name: 'Front Right', min: -45, max: 45, val: 0 },
-  { id: 'RearLeft',   name: 'Rear Left',   min: -45, max: 45, val: 0 },
-  { id: 'RearRight',  name: 'Rear Right',  min: -45, max: 45, val: 0 },
-  { id: 'Head',       name: 'Head',        min: -60, max: 60, val: 0 },
+  { id: 'FrontLeft',  name: 'Front Left',  min: -180, max: 180, val: 0 },
+  { id: 'FrontRight', name: 'Front Right', min: -180, max: 180, val: 0 },
+  { id: 'RearLeft',   name: 'Rear Left',   min: -180, max: 180, val: 0 },
+  { id: 'RearRight',  name: 'Rear Right',  min: -180, max: 180, val: 0 },
+  { id: 'Head',       name: 'Head',        min: -180, max: 180, val: 0 },
 ]
 
 const AUDIO_DEFS = [
-  { id: 'BarkShort',     label: '🔊 BarkShort'     },
-  { id: 'BarkBurst',     label: '🔊 BarkBurst'     },
-  { id: 'Growl',         label: '🔊 Growl'         },
-  { id: 'AggressiveBark',label: '🔊 AggressiveBark'},
-  { id: 'BarkShort_2x2',label: '🔊 BarkShort_2x2'},
-  { id: 'BarkShort_3x',label: '🔊 BarkShort_3x'},
-  { id: 'Stop',          label: 'Stop Audio'        },
+  { id: 'BarkShort',      label: '🔊 BarkShort'      },
+  { id: 'BarkBurst',      label: '🔊 BarkBurst'      },
+  { id: 'Growl',          label: '🔊 Growl'          },
+  { id: 'AggressiveBark', label: '🔊 AggressiveBark' },
+  { id: 'BarkShort_2x2',  label: '🔊 BarkShort_2x2' },
+  { id: 'BarkShort_3x',   label: '🔊 BarkShort_3x'  },
+  { id: 'Stop',           label: 'Stop Audio'         },
 ]
 
 // ═══════════════════════════════════════════════
@@ -24,16 +32,19 @@ const AUDIO_DEFS = [
 // ═══════════════════════════════════════════════
 let ws       = null
 let wsReady  = false
-let isManual = localStorage.getItem('isManual') === 'true'
+let isManual = false
 let isStopped= false
 
 // Map state
-let mapTurkeys   = []
-let mapHumans    = []
-let mapObstacles = []
+let mapTurkeys        = []
+let mapHumans         = []
+let mapObstacles      = []
 let mapWaypoints      = []
 let selectedWaypoint  = null
-let mapRobot     = { x: 0, y: 0, theta: 0 }
+let mapRobot          = { x: 0, y: 0, theta: 0 }
+let mapReferenceTraj  = []   // Protocol 6.1 — full reference path  [[x,y],...]
+let mapMPCHorizon     = []   // Protocol 6.2 — live lookahead       [[x,y],...]
+let _dashOffset       = 0    // animated dash phase for reference path
 
 // Camera state
 let camImg = null
@@ -70,25 +81,21 @@ function buildAudio() {
   const grid = document.getElementById('audio-grid')
   AUDIO_DEFS.forEach(a => {
     const btn = document.createElement('button')
-    btn.className    = 'btn pu'
-    btn.textContent  = a.label
+    btn.className       = 'btn pu'
+    btn.textContent     = a.label
     btn.dataset.audioId = a.id
-    btn.onclick      = () => playAudio(a.id, btn)
+    btn.onclick         = () => playAudio(a.id, btn)
     grid.appendChild(btn)
   })
 }
-
 
 // ═══════════════════════════════════════════════
 // WEBSOCKET
 // ═══════════════════════════════════════════════
 function connect() {
-  ws = new WebSocket('ws://localhost:8000/ws')
-  // ws = new WebSocket('ws://192.168.4.2:8000/ws')
-  // ws = new WebSocket('ws://100.67.22.116:8000/ws')
-  
-  ws.onopen    = ()  => { wsReady = true }
-  ws.onclose   = ()  => { wsReady = false; setTimeout(connect, 1500) }
+  ws = new WebSocket('ws://100.67.22.116:8000/ws')
+  ws.onopen    = ()  => { wsReady = true; _startHeartbeat()}
+  ws.onclose   = ()  => { wsReady = false; _stopHeartbeat(); setTimeout(connect, 1000) }
   ws.onmessage = (e) => {
     try   { handle(JSON.parse(e.data)) }
     catch (err) { console.error('handle() error:', err) }
@@ -119,8 +126,7 @@ function handle(m) {
     set('ukf-t', deg(m.theta))
     if (m.x != null) mapRobot = { x: m.x, y: m.y, theta: m.theta ?? 0, targetX: m.target?.x, targetY: m.target?.y }
 
-    // ── Drivetrain status dot ────────────────────────────────
-    // Protocol: drivetrain_status  0 = ok (green), 1 = warn (amber), 2 = error (red)
+    // Drivetrain status dot
     if (m.drivetrain_status != null) {
       applyDrivetrainStatus(m.drivetrain_status)
     }
@@ -142,6 +148,10 @@ function handle(m) {
       }
     }
 
+    if (m.is_estopped !== undefined) {
+     _applyEstopUI(m.is_estopped)
+    }
+
     // Current destination
     if (m.target != null) {
       set('dest-x', fmt(m.target.x, 2))
@@ -156,43 +166,46 @@ function handle(m) {
     // Servo sliders — always sync
     if (Array.isArray(m.servos)) syncServos(m.servos)
 
-    // // ── Blocked in manual mode ─────────────────────────────
-    // if (!isManual) {
+    // MacroState button highlights
+    if (m.macrostate !== undefined) {
+      _activeMacrostate = m.macrostate
+      _syncMacrostateButtons(_activeMacrostate)
+    }
 
-      // MacroState button highlights — state machine, authoritative from server in auto
+    if (m.substate !== undefined) {
+      _activeSubCmd = m.substate
+      _syncSubCmdButtons(_activeSubCmd)
+    }
 
-      if (m.macrostate !== undefined) {
-        _activeMacrostate = m.macrostate
-        _syncMacrostateButtons(_activeMacrostate)
-      }
+    // Speed slider
+    if (m.speed_ms != null) {
+      const sl = document.getElementById('spd-range')
+      if (sl) { sl.value = m.speed_ms; updateSliderBg(sl) }
+      set('spd-disp', m.speed_ms.toFixed(1))
+    }
 
-      if(m.substate !== undefined){
-        _activeSubCmd = m.substate
-        _syncSubCmdButtons(_activeSubCmd)
-      }
+    // Pose button highlight
+    if (m.active_pose !== undefined) {
+      _activePose = m.active_pose
+      _syncPoseButtons(_activePose)
+    }
 
-      // Speed slider
-      if (m.speed_ms != null) {
-        const sl = document.getElementById('spd-range')
-        if (sl) { sl.value = m.speed_ms; updateSliderBg(sl) }
-        set('spd-disp', m.speed_ms.toFixed(1))
-      }
+    // Audio button highlight
+    if (m.active_audio !== undefined) {
+      document.querySelectorAll('#audio-grid .btn').forEach(b => {
+        b.classList.toggle('lit', b.dataset.audioId === m.active_audio)
+      })
+    }
 
-      // Pose button highlight — persistent state machine
-      // active_pose from server is authoritative in auto mode
-      if (m.active_pose !== undefined) {
-        _activePose = m.active_pose
-        _syncPoseButtons(_activePose)
-      }
+    // ── Protocol 6.1 — Reference trajectory ──────────────────
+    if (m.reference_trajectory != null) {
+      mapReferenceTraj = m.reference_trajectory   // [[x,y], [x,y], ...]
+    }
 
-      // Audio button highlight
-      if (m.active_audio !== undefined) {
-        document.querySelectorAll('#audio-grid .btn').forEach(b => {
-          b.classList.toggle('lit', b.dataset.audioId === m.active_audio)
-        })
-      }
-
-    // } // end !isManual
+    // ── Protocol 6.2 — MPC horizon ────────────────────────────
+    if (m.mpc_horizon != null) {
+      mapMPCHorizon = m.mpc_horizon               // [[x,y], [x,y], ...]
+    }
   }
 
   // ── Camera frame ───────────────────────────────────────────
@@ -220,12 +233,9 @@ function handle(m) {
     if (sub) sub.textContent = `${MAP_W} × ${MAP_H} M · 10 HZ`
   }
 
-  // ── Mode state ──────────────────────────────────────────────
-  if (m.type === 'mode_state') {
-    if (m.is_manual !== isManual) {
-      isManual = m.is_manual
-      _applyModeUI()
-    }
+  if (m.type === 'state' && m.is_manual !== undefined) {
+  isManual = m.is_manual
+  _applyModeUI()
   }
 
   // ── Vision detections ────────────────────────────────────────
@@ -236,19 +246,12 @@ function handle(m) {
 }
 
 // ── Drivetrain status dot ─────────────────────────────────────
-/**
- * Protocol:
- *   0 — nominal  → green blinking dot   (class: default .dot)
- *   1 — warning  → amber blinking dot   (class: .dot.warn)
- *   2 — error    → red solid dot        (class: .dot.err)
- */
 function applyDrivetrainStatus(status) {
   const dot = document.getElementById('dt-dot')
   if (!dot) return
   dot.className = 'dot'
   if      (status === 1) dot.classList.add('warn')
   else if (status === 2) dot.classList.add('err')
-  // status 0 → plain .dot (green blinking, no extra class)
 }
 
 // ── Pose state machine ────────────────────────────────────────
@@ -303,7 +306,6 @@ function updateSliderBg(el) {
 // ═══════════════════════════════════════════════
 function playAudio(soundId, btn) {
   send({ type: 'audio_play', sound: soundId })
-  // flash(btn)
 }
 
 // ═══════════════════════════════════════════════
@@ -327,34 +329,16 @@ function setSpeed(v) {
 // ═══════════════════════════════════════════════
 // MACROSTATE COMMANDS
 // ═══════════════════════════════════════════════
-function sendMacrostate(state, el) {
+function sendMacrostate(state) {
   send({ type: 'macrostate_command', state })
-  _activeMacrostate = el.dataset.state   // use dataset.state (e.g. "Scanning") not the cmd string
-  _syncMacrostateButtons(_activeMacrostate)
 }
 
-/**
- * Send a macrostate sub-command.
- * Payload: { type: 'macrostate_sub_command', Id: 'UI', Cmd: <id> }
- * Only active in manual mode — buttons are disabled in auto mode.
- */
-function sendMacrostateSub(cmdId, btn) {
-  if (!isManual) return
+function sendMacrostateSub(cmdId) {
   send({ type: 'macrostate_sub_command', state: cmdId })
-  _activeSubCmd = cmdId
-  _syncSubCmdButtons(_activeSubCmd)
 }
 
-/**
- * Clear all macrostate and sub-command lit states and send a Stop command.
- * Sends: { type: 'macrostate_command', state: 'Stop' }
- */
 function stopMacrostate() {
   send({ type: 'macrostate_command', state: 'Stop' })
-  _activeMacrostate = null
-  _activeSubCmd     = null
-  _syncMacrostateButtons(null)
-  _syncSubCmdButtons(null)
 }
 
 // ═══════════════════════════════════════════════
@@ -368,7 +352,7 @@ const WASD_DRIVE_BTNS = {
 }
 
 function startDrive(key, btnId) {
-  if (!isManual || isStopped) return
+  if (!isManual) return
   document.getElementById(btnId)?.classList.add('lit')
   send({ type: 'key_command', key, state: 'press' })
 }
@@ -378,21 +362,13 @@ function stopDrive(key, btnId) {
   send({ type: 'key_command', key, state: 'release' })
 }
 
-/**
- * Pose command — persistent state machine.
- * Lights up the button immediately and keeps it lit until another pose is sent.
- */
 function sendPose(p, el) {
-  if (!isManual) return
   send({ type: 'pose_command', pose: p })
-  // Update local pose state and sync all pose buttons
-  _activePose = p
-  _syncPoseButtons(_activePose)
 }
 
 // ── WASD ──────────────────────────────────────────────────────
 function wasdPress(k) {
-  if (!isManual || isStopped) return
+  if (!isManual) return
   const keyEl = document.getElementById('key-' + k)
   if (keyEl) keyEl.classList.add('pressed')
   const btnId = WASD_DRIVE_BTNS[k]
@@ -421,39 +397,18 @@ document.addEventListener('keyup', e => {
 // E-STOP
 // ═══════════════════════════════════════════════
 function emergencyStop() {
-  isStopped = true
   send({ type: 'estop' })
-  const b = document.getElementById('estop-btn')
-  b.textContent      = '⬡ STOPPED — CLICK TO RESET'
-  b.style.background = 'rgba(255,34,51,.35)'
-  b.onclick          = resetEStop
 }
 
 function resetEStop() {
-  isStopped = false
   send({ type: 'estop_reset' })
-  const b = document.getElementById('estop-btn')
-  b.textContent      = '⬡ EMERGENCY STOP'
-  b.style.background = ''
-  b.onclick          = emergencyStop
 }
 
 // ═══════════════════════════════════════════════
 // MODE TOGGLE
 // ═══════════════════════════════════════════════
 function toggleMode() {
-  isManual = !isManual
-  localStorage.setItem('isManual', isManual)
-  _applyModeUI()
-  if (!isManual) {
-    Object.keys(WASD_DRIVE_BTNS).forEach(k => {
-      document.getElementById('key-' + k)?.classList.remove('pressed')
-      document.getElementById(WASD_DRIVE_BTNS[k])?.classList.remove('lit')
-    })
-    send({ type: 'unlock_ui' })
-  } else {
-    send({ type: 'lock_ui' })
-  }
+  send({ type: 'toggle_mode' })
 }
 
 function _applyModeUI() {
@@ -463,6 +418,7 @@ function _applyModeUI() {
   document.getElementById('mode-btn').className     = isManual ? 'modetog m' : 'modetog'
   document.getElementById('ctrl-tag').textContent   = isManual ? 'MODE: MANUAL — INPUTS ACTIVE' : 'MODE: AUTO — INPUTS LOCKED'
   applyModeToControls()
+
 }
 
 function applyModeToControls() {
@@ -481,8 +437,6 @@ function applyModeToControls() {
   document.querySelectorAll(selectors.join(',')).forEach(el => {
     el.disabled = locked
   })
-
-
 }
 
 // ═══════════════════════════════════════════════
@@ -491,7 +445,7 @@ function applyModeToControls() {
 function set(id, v) { const e = document.getElementById(id); if (e) e.textContent = v }
 function fmt(v, d)  { return v != null ? Number(v).toFixed(d) : '—' }
 function deg(r)     { return r != null ? (r * 180 / Math.PI).toFixed(1) : '—' }
-function flash(el, duration=1200)  {
+function flash(el, duration=1200) {
   if (!el) return
   el.classList.add('lit')
   setTimeout(() => el.classList.remove('lit'), duration)
@@ -591,17 +545,17 @@ function _updateGoToBtn() {
   const btn = document.getElementById('goto-btn')
   if (!btn) return
   if (selectedWaypoint && isManual) {
-    btn.textContent  = `⊕ Go To ${selectedWaypoint.label}`
-    btn.disabled     = false
-    btn.className    = 'btn ac'
+    btn.textContent = `⊕ Go To ${selectedWaypoint.label}`
+    btn.disabled    = false
+    btn.className   = 'btn ac'
   } else if (selectedWaypoint) {
-    btn.textContent  = `${selectedWaypoint.label} selected`
-    btn.disabled     = true
-    btn.className    = 'btn'
+    btn.textContent = `${selectedWaypoint.label} selected`
+    btn.disabled    = true
+    btn.className   = 'btn'
   } else {
-    btn.textContent  = 'Click waypoint'
-    btn.disabled     = true
-    btn.className    = 'btn'
+    btn.textContent = 'Click waypoint'
+    btn.disabled    = true
+    btn.className   = 'btn'
   }
 }
 
@@ -613,8 +567,10 @@ function sendWaypointMove() {
 }
 
 function _clampPan() {
-  mapPanX = Math.max(0, Math.min(MAP_W - MAP_W / mapZoom, mapPanX))
-  mapPanY = Math.max(0, Math.min(MAP_H - MAP_H / mapZoom, mapPanY))
+  const maxPanX = MAP_W - MAP_W / mapZoom
+  const maxPanY = MAP_H - MAP_H / mapZoom
+  mapPanX = Math.max(-MAP_W*2 / mapZoom, Math.min(maxPanX + MAP_W / mapZoom, mapPanX))
+  mapPanY = Math.max(-MAP_H*2 / mapZoom, Math.min(maxPanY + MAP_H / mapZoom, mapPanY))
 }
 
 function drawMap(canvas) {
@@ -644,6 +600,7 @@ function drawMap(canvas) {
   ctx.fillStyle = '#080e17'
   ctx.fillRect(fx0, fy0, fw, fh)
 
+  // Grid
   ctx.lineWidth   = 0.5
   ctx.strokeStyle = 'rgba(0,180,220,0.13)'
   for (let gx = 0; gx <= MAP_W; gx += 10) {
@@ -655,6 +612,7 @@ function drawMap(canvas) {
     ctx.beginPath(); ctx.moveTo(OX, y); ctx.lineTo(OX + fw, y); ctx.stroke()
   }
 
+  // Sweep line
   const sweepY   = OY + ((t * 0.18) % 1.0) * fh
   const sweepGrd = ctx.createLinearGradient(OX, sweepY, OX + fw, sweepY)
   const fade     = Math.sin(t * 0.57 * Math.PI) * 0.5 + 0.5
@@ -667,6 +625,7 @@ function drawMap(canvas) {
 
   const wallPulse = 0.75 + 0.25 * Math.sin(t * 1.4)
 
+  // Obstacles
   mapObstacles.filter(o => o.type === 'line').forEach(ob => {
     const [ax, ay] = proj(ob.x1, ob.y1)
     const [bx, by] = proj(ob.x2, ob.y2)
@@ -700,6 +659,7 @@ function drawMap(canvas) {
     ctx.fillText(String(ob.label ?? 'OBS'), px, py - 8)
   })
 
+  // Border
   ctx.strokeStyle = `rgba(0,212,255,${0.18 * wallPulse})`
   ctx.lineWidth   = 8
   ctx.shadowColor = '#00d4ff'; ctx.shadowBlur = 18
@@ -709,18 +669,18 @@ function drawMap(canvas) {
   ctx.lineWidth   = 1.5
   ctx.strokeRect(fx0, fy0, fw, fh)
 
+  // Detection boxes
   function drawDetectionBox(wx, wy, color, label, boxW, boxH, idx) {
-    const bx  = OX + (wx - boxW / 2) * S
-    const by  = OY + (wy - boxH / 2) * S
-    const bw  = boxW * S, bh = boxH * S
+    const bx    = OX + (wx - boxW / 2) * S
+    const by    = OY + (wy - boxH / 2) * S
+    const bw    = boxW * S, bh = boxH * S
     const pulse = 0.65 + 0.35 * Math.sin(t * 3.5 + idx * 1.7)
-    const col   = color.replace('ALPHA', String(pulse))
-    const colFill = color.replace('ALPHA', String(0.09 * pulse))
-
+    const col      = color.replace('ALPHA', String(pulse))
+    const colFill  = color.replace('ALPHA', String(0.09 * pulse))
     ctx.fillStyle   = colFill;                    ctx.fillRect(bx, by, bw, bh)
     ctx.strokeStyle = col; ctx.lineWidth = 1.2;   ctx.strokeRect(bx, by, bw, bh)
     ctx.fillStyle   = col
-    ctx.font        = `bold 9px Courier New`
+    ctx.font        = 'bold 9px Courier New'
     ctx.textAlign   = 'center'
     ctx.fillText(label, bx + bw / 2, by - 4)
   }
@@ -731,6 +691,7 @@ function drawMap(canvas) {
   mapHumans.forEach((hm, i) =>
     drawDetectionBox(hm[0], hm[1], 'rgba(255,30,60,ALPHA)', `HUMAN-${i+1}`, 1.5, 1.5, i + 100))
 
+  // Waypoints
   mapWaypoints.forEach(wp => {
     const [px, py]   = proj(wp.x, wp.y)
     const isActive   = mapRobot && Math.abs(wp.x - (mapRobot.targetX ?? -999)) < 0.5
@@ -770,9 +731,101 @@ function drawMap(canvas) {
     ctx.shadowBlur  = 0
   })
 
+  // ─── REFERENCE TRAJECTORY (Protocol 6.1) ─────────────────────
+    if (mapReferenceTraj.length > 1) {
+      ctx.save()
+      ctx.beginPath()
+      const [rsx, rsy] = proj(mapReferenceTraj[0][0], mapReferenceTraj[0][1])
+      ctx.moveTo(rsx, rsy)
+      mapReferenceTraj.slice(1).forEach(pt => {
+        const [rx, ry] = proj(pt[0], pt[1])
+        ctx.lineTo(rx, ry)
+      })
+      ctx.strokeStyle = 'rgba(0,212,255,0.3)'
+      ctx.lineWidth   = 0.8
+      ctx.setLineDash([4, 6])
+      ctx.stroke()
+      ctx.restore()
+      ctx.setLineDash([])
+
+      // Static dots at each waypoint node
+      mapReferenceTraj.forEach((pt, i) => {
+        const [px, py] = proj(pt[0], pt[1])
+        ctx.beginPath()
+        ctx.arc(px, py, 1.5, 0, Math.PI * 2)
+        ctx.fillStyle = 'rgba(0,212,255,0.3)'
+        ctx.fill()
+      })
+    }
+
+  // ─── MPC HORIZON (Protocol 6.2) ──────────────────────────────
+  if (mapMPCHorizon.length > 1) {
+    const [robX, robY] = proj(mapRobot.x, mapRobot.y)
+
+    // Glow underlay
+    ctx.save()
+    ctx.shadowColor = 'rgba(255,160,0,0.45)'
+    ctx.shadowBlur  = 8
+    ctx.beginPath()
+    ctx.moveTo(robX, robY)
+    mapMPCHorizon.forEach(pt => {
+      const [mx, my] = proj(pt[0], pt[1])
+      ctx.lineTo(mx, my)
+    })
+    ctx.strokeStyle = 'rgba(255,140,0,0.22)'
+    ctx.lineWidth   = 5
+    ctx.stroke()
+    ctx.restore()
+
+    // Main MPC line — tapers opacity toward tip
+    for (let i = 0; i < mapMPCHorizon.length; i++) {
+      const [ax, ay] = i === 0
+        ? [robX, robY]
+        : proj(mapMPCHorizon[i - 1][0], mapMPCHorizon[i - 1][1])
+      const [bx, by] = proj(mapMPCHorizon[i][0], mapMPCHorizon[i][1])
+      const alpha     = 1.0 - (i / mapMPCHorizon.length) * 0.55
+      ctx.beginPath()
+      ctx.moveTo(ax, ay)
+      ctx.lineTo(bx, by)
+      ctx.strokeStyle = `rgba(255,160,20,${alpha * 0.85})`
+      ctx.lineWidth   = Math.max(1, 2 - i * 0.12)
+      ctx.stroke()
+    }
+
+    // Tick dots along horizon
+    mapMPCHorizon.forEach((pt, i) => {
+      const [mx, my] = proj(pt[0], pt[1])
+      const alpha     = 1.0 - (i / mapMPCHorizon.length) * 0.7
+      ctx.beginPath()
+      ctx.arc(mx, my, Math.max(1.5, 2.5 - i * 0.15), 0, Math.PI * 2)
+      ctx.fillStyle = `rgba(255,180,40,${alpha})`
+      ctx.fill()
+    })
+
+    // Pulsing tip dot
+    const tip      = mapMPCHorizon[mapMPCHorizon.length - 1]
+    const [tx, ty] = proj(tip[0], tip[1])
+    const pulse    = 0.5 + 0.5 * Math.sin(t * 6)
+    ctx.save()
+    ctx.shadowColor = 'rgba(255,200,0,1)'
+    ctx.shadowBlur  = 12 * pulse
+    ctx.beginPath()
+    ctx.arc(tx, ty, 4 + pulse * 2, 0, Math.PI * 2)
+    ctx.fillStyle = `rgba(255,220,60,${0.8 + 0.2 * pulse})`
+    ctx.fill()
+    ctx.restore()
+
+    // Label at tip
+    ctx.fillStyle = 'rgba(255,180,40,0.7)'
+    ctx.font      = '7px Courier New'
+    ctx.textAlign = 'left'
+    ctx.fillText('MPC', tx + 6, ty + 3)
+  }
+
+  // ─── ROBOT ───────────────────────────────────────────────────
   const [rpx, rpy] = proj(mapRobot.x, mapRobot.y)
   const rth        = mapRobot.theta ?? 0
-  const rthDraw    = - rth
+  const rthDraw    = -rth
   const beamTipX   = rpx + Math.cos(rthDraw) * Math.max(30, S * 5)
   const beamTipY   = rpy + Math.sin(rthDraw) * Math.max(30, S * 5)
   const r          = Math.max(7, Math.min(13, S * 0.7))
@@ -794,7 +847,7 @@ function drawMap(canvas) {
   ctx.strokeStyle = '#00d4ff'; ctx.fillStyle = 'rgba(0,212,255,0.22)'
   ctx.lineWidth   = 2; ctx.shadowColor = '#00d4ff'; ctx.shadowBlur = 10
   ctx.beginPath()
-  ctx.moveTo( r, 0); ctx.lineTo(-r * 0.6,  r * 0.75)
+  ctx.moveTo(r, 0); ctx.lineTo(-r * 0.6,  r * 0.75)
   ctx.lineTo(-r * 0.25, 0); ctx.lineTo(-r * 0.6, -r * 0.75)
   ctx.closePath(); ctx.fill(); ctx.stroke()
   ctx.shadowBlur = 0; ctx.restore()
@@ -802,6 +855,7 @@ function drawMap(canvas) {
   ctx.fillStyle = '#00d4ff'; ctx.font = 'bold 8px Courier New'; ctx.textAlign = 'center'
   ctx.fillText('ROBOT', rpx, rpy - r - 6)
 
+  // Axis labels
   ctx.font = '7px Courier New'; ctx.fillStyle = 'rgba(0,180,220,0.3)'
   ctx.textAlign = 'center'
   for (let gx = 0; gx <= MAP_W; gx += 20)
@@ -810,12 +864,15 @@ function drawMap(canvas) {
   for (let gy = 0; gy <= MAP_H; gy += 20)
     ctx.fillText(`${gy}`, OX - 4, OY + gy * S + 3)
 
+  // Legend
   const legend = [
-    ['rgba(255,120,0,0.9)', '▣', 'Turkey'],
-    ['rgba(255,30,60,0.9)', '▣', 'Human'],
-    ['rgba(0,212,255,0.9)', '▶', 'Robot'],
-    ['rgba(255,200,0,0.8)', '◆', 'Waypoint'],
-    ['rgba(0,212,255,0.45)','—', 'Wall'],
+    ['rgba(255,120,0,0.9)',  '▣', 'Turkey'],
+    ['rgba(255,30,60,0.9)',  '▣', 'Human'],
+    ['rgba(0,212,255,0.9)',  '▶', 'Robot'],
+    ['rgba(255,200,0,0.8)',  '◆', 'Waypoint'],
+    ['rgba(0,212,255,0.65)', '╌', 'Ref Path'],
+    ['rgba(255,160,20,0.85)','—', 'MPC Horizon'],
+    ['rgba(0,212,255,0.45)', '—', 'Wall'],
   ]
   legend.forEach(([col, sym, lbl], i) => {
     const ly = 12 + i * 13
@@ -831,4 +888,34 @@ function drawMap(canvas) {
     : `scroll to zoom`, cw - 8, ch - 8)
 
   ctx.restore()
+}
+
+// ═══════════════════════════════════════════════
+// HEARTBEAT
+// ═══════════════════════════════════════════════
+let _heartbeatTimer = null
+
+function _startHeartbeat() {
+  _stopHeartbeat()
+  _heartbeatTimer = setInterval(() => {
+    send({ type: 'heartbeat' })
+  }, 500)
+}
+
+function _stopHeartbeat() {
+  if (_heartbeatTimer) { clearInterval(_heartbeatTimer); _heartbeatTimer = null }
+}
+
+function _applyEstopUI(estopped) {
+  const b = document.getElementById('estop-btn')
+  if (!b) return
+  if (estopped) {
+    b.textContent      = '⬡ STOPPED — CLICK TO RESET'
+    b.style.background = 'rgba(255,34,51,.35)'
+    b.onclick          = resetEStop
+  } else {
+    b.textContent      = '⬡ EMERGENCY STOP'
+    b.style.background = ''
+    b.onclick          = emergencyStop
+  }
 }

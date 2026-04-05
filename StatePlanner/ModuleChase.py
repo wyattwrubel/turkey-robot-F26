@@ -26,7 +26,7 @@ class ModuleChase:
         await self.parent._Pose_Publish("ExcitedGait")
         await self.parent._ServoCommand_Publish("Head", random.uniform(-40.0, 40.0))
         await self.parent._Audio_Publish("Stop")
-        await asyncio.sleep(1)
+        await asyncio.sleep(0.5)
         
         while True: 
             await self.parent._Audio_Publish("AggressiveBark")

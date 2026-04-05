@@ -7,23 +7,31 @@ import ServoController as SC
 import asyncio
 
 class PoseDriver():
-    # TODO Revise With RPi Wiring
-    Front_Left_Pin = 12
-    Front_Right_Pin = 13
-    Rear_Left_Pin = 18
-    Rear_Right_Pin = 19
-    Head_Pin = 24
+    
+    Front_Left_Pin = 0
+    Front_Right_Pin = 1
+    Rear_Left_Pin = 2
+    Rear_Right_Pin = 3
+    Head_Pin = 4
+
+    Front_Left_Offset = -41 # Subtract off to be at 0
+    Front_Right_Offset = 44
+    Rear_Left_Offset = 0
+    Rear_Right_Offset = -18
+    Head_Offset = 0
 
     Default_Angle_Delay = 0.5 # Seconds
  
-    def __init__(self, ServoAnglePublisher, Verbose):
+    def __init__(self, ServoAnglePublisher, Simulated, Verbose):
         self.servos = {}
         self.Verbose = Verbose
-        self.servos["FrontLeft"] = SC.ServoController("FrontLeft", "Leg", self.Front_Left_Pin, 0, Verbose)
-        self.servos["FrontRight"] = SC.ServoController("FrontRight", "Leg", self.Front_Right_Pin, 0, Verbose)
-        self.servos["RearLeft"] = SC.ServoController("RearLeft", "Leg", self.Rear_Left_Pin, 0, Verbose)
-        self.servos["RearRight"] = SC.ServoController("RearRight", "Leg", self.Rear_Right_Pin, 0, Verbose)
-        self.servos["Head"] = SC.ServoController("Head", "Head", self.Head_Pin, 0, Verbose)
+
+        #Name, ServoType, GPIO_PIN, Offset, IsFlipped, Verbose
+        self.servos["FrontLeft"] = SC.ServoController("FrontLeft", "Leg", self.Front_Left_Pin, self.Front_Left_Offset, True, Simulated, Verbose)
+        self.servos["FrontRight"] = SC.ServoController("FrontRight", "Leg", self.Front_Right_Pin, self.Front_Right_Offset, False, Simulated, Verbose)
+        self.servos["RearLeft"] = SC.ServoController("RearLeft", "Leg", self.Rear_Left_Pin, self.Rear_Left_Offset, True, Simulated, Verbose)
+        self.servos["RearRight"] = SC.ServoController("RearRight", "Leg", self.Rear_Right_Pin, self.Rear_Right_Offset, False, Simulated, Verbose)
+        self.servos["Head"] = SC.ServoController("Head", "Head", self.Head_Pin, self.Head_Offset, False, Simulated, Verbose)
         self.ServoAnglePublisher = ServoAnglePublisher
 
     async def CanineMotor_Receiver(self, data):

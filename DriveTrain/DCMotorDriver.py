@@ -23,14 +23,14 @@ class DC_Driver:
     so no software sign-flip is needed anywhere in this driver.
     """
 
-    # Serial ports -- one per motor controller TODO update to real ports
+    # Serial ports
     port_fl  = "/dev/ttyACM0"
     port_fr  = "/dev/ttyACM1"
     port_rl  = "/dev/ttyACM2"
     port_rr  = "/dev/ttyACM3"
 
     baudrate = 115200
-    timeout  = 0.05   # seconds -- keep short for real-time control
+    timeout  = 0.05   # seconds
 
     # Physical parameters -- TODO update for your platform
     max_linear_speed = 4.0   # m/s (hard clip, both directions)
@@ -65,8 +65,6 @@ class DC_Driver:
         """
         left_v, right_v = MotorSpeed[0], MotorSpeed[1]
 
-        # Encoder direction is inverted in Motion Studio firmware for the
-        # right-side units, so no software negation is needed here.
         self._DriveMotor(self._ser_fl, left_v)
         self._DriveMotor(self._ser_fr, right_v)
         self._DriveMotor(self._ser_rl, left_v)
@@ -85,12 +83,11 @@ class DC_Driver:
         rl = self._ReadMotorSpeed(self._ser_rl)
         rr = self._ReadMotorSpeed(self._ser_rr)
 
-        # No negation needed -- encoder direction inversion is handled
-        # in Motion Studio firmware for the right-side units.
         left_speed  = (fl + rl) / 2.0 if (fl is not None and rl is not None) else None
         right_speed = (fr + rr) / 2.0 if (fr is not None and rr is not None) else None
 
         return left_speed, right_speed
+
 
     def ReadMotorCurrent(self):
         """
@@ -145,14 +142,20 @@ class DC_Driver:
         Request packet:  [addr, 18, CRC16_BE]
         Response:        [speed_BE_signed_32 (4), status (1), CRC16_BE (2)]  = 7 bytes
 
-        The 4-byte speed value is a signed two's-complement integer — direction
+        The RoboClaw CRC for responses is computed over the address + command
+        bytes from the request, followed by the response data bytes (excluding
+        the trailing CRC bytes).
+
+        The 4-byte speed value is a signed two's-complement integer -- direction
         is already encoded in its sign. The status byte bit 0 indicates the motor
         is decelerating, NOT direction. No sign correction from status is needed.
         """
-        req_packet = bytes([self._ADR, self._CMD_M1_READ_SPEED])
-        crc        = self._crc16(req_packet)
-        full_req   = req_packet + bytes([crc >> 8, crc & 0xFF])
+        req_bytes  = bytes([self._ADR, self._CMD_M1_READ_SPEED])
+        crc        = self._crc16(req_bytes)
+        full_req   = req_bytes + bytes([crc >> 8, crc & 0xFF])
 
+        # Flush stale bytes before issuing the read request
+        ser.reset_input_buffer()
         ser.write(full_req)
 
         response = ser.read(7)
@@ -161,7 +164,7 @@ class DC_Driver:
             return None
 
         recv_crc = int.from_bytes(response[5:7], byteorder='big')
-        calc_crc = self._crc16(response[:5])
+        calc_crc = self._crc16(req_bytes + response[:5])
         if recv_crc != calc_crc:
             print(f"[DC_Driver] CRC mismatch (speed) on port {ser.port}")
             return None
@@ -181,15 +184,21 @@ class DC_Driver:
         Request packet:  [addr, 49, CRC16_BE]
         Response:        [M1_counts (2), M2_counts (2), CRC16_BE (2)]  = 6 bytes
 
+        The RoboClaw CRC for responses is computed over the address + command
+        bytes from the request, followed by the response data bytes (excluding
+        the trailing CRC bytes).
+
         The controller always returns both M1 and M2 counts; we take only M1.
         Units: counts / 100.0 = Amps.
 
         Returns M1 current in Amps, or None on failure.
         """
-        req_packet = bytes([self._ADR, self._CMD_READ_CURRENTS])
-        crc        = self._crc16(req_packet)
-        full_req   = req_packet + bytes([crc >> 8, crc & 0xFF])
+        req_bytes  = bytes([self._ADR, self._CMD_READ_CURRENTS])
+        crc        = self._crc16(req_bytes)
+        full_req   = req_bytes + bytes([crc >> 8, crc & 0xFF])
 
+        # Flush stale bytes before issuing the read request
+        ser.reset_input_buffer()
         ser.write(full_req)
 
         response = ser.read(6)
@@ -198,12 +207,13 @@ class DC_Driver:
             return None
 
         recv_crc = int.from_bytes(response[4:6], byteorder='big')
-        calc_crc = self._crc16(response[:4])
+        calc_crc = self._crc16(req_bytes + response[:4])
         if recv_crc != calc_crc:
             print(f"[DC_Driver] CRC mismatch (current) on port {ser.port}")
             return None
 
         m1_counts = int.from_bytes(response[0:2], byteorder='big')
+
         return m1_counts / 100.0
 
     # ------------------------------------------------------------------

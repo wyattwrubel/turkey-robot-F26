@@ -1,61 +1,61 @@
-from gpiozero import PWMOutputDevice
-from gpiozero.pins.lgpio import LGPIOFactory
+from datetime import datetime
+
+# Only import and initialize the kit if not in simulation mode
+_kit = None
+
+def _get_kit():
+    global _kit
+    if _kit is None:
+        from adafruit_servokit import ServoKit
+        _kit = ServoKit(channels=16)
+    return _kit
+
 
 class Servo:
 
-    #TODO REVISE THESE SPEEDS WITH TESTING
     # ------------------------------------------------------------------
     # Leg Specifications
     # ------------------------------------------------------------------
-    Leg_Motor_Max_Angle = 74 # degrees 
-    Leg_Motor_Min_Angle = -74 # degrees 
-    Leg_Motor_Max_Pulse = 2350 # microseconds 
-    Leg_Motor_Min_Pulse = 850 # microseconds 
-    Max_Leg_Command = 45 # degrees
-    Min_Leg_Command = -45 # degrees
+    Leg_Motor_Max_Angle = 135
+    Leg_Motor_Min_Angle = -135
+    Leg_Motor_Max_Pulse = 2500
+    Leg_Motor_Min_Pulse = 500
+
+    Max_Leg_Command = 180
+    Min_Leg_Command = -180
 
     # ------------------------------------------------------------------
     # Head Specifications
     # ------------------------------------------------------------------
-    Head_Motor_Max_Angle = 74 # degrees 
-    Head_Motor_Min_Angle = -74 # degrees
-    Head_Motor_Max_Pulse = 2350 # microseconds 
-    Head_Motor_Min_Pulse = 850 # microseconds 
-    Max_Head_Command = 60 # degrees
-    Min_Head_Command = -60 # degrees
+    Head_Motor_Max_Angle = 74
+    Head_Motor_Min_Angle = -74
+    Head_Motor_Max_Pulse = 2350
+    Head_Motor_Min_Pulse = 850
+    Max_Head_Command = 60
+    Min_Head_Command = -60
 
     Name = None
     Current_Angle = None
-    GPIO_PIN = None
+    Channel_Pin = None
     Verbose = False
 
-    def __init__(self, Name, ServoType, GPIO_PIN, Current_Angle, Verbose=False):
-        """
-        Parameters
-        ----------
-        Name             : Servo Name, One of 'FrontLeft' 'FrontRight' 'RearRight' 'RearLeft' or 'Head'
-        ServoType        : 'Leg' For One of Four Leg Servos or 'Head' For Head Servo
-        GPIO_PIN         : Hardware Servo Enable Pin on Raspberry Pin
-        Max_Command_Angle: Max Allowed Angle Command. If Above Will Send This Command
-        Min_Command_Angle: Min Allowed Angle Command If Below Will Send This Command
-        Verbose          : Optional Parameters to Enable Debugging Printouts
-        """
-
+    def __init__(self, Name, ServoType, Channel_Pin, Offset, IsFlipped, Simulated, Verbose=False):
         self.Name = Name
-        self.GPIO_PIN = GPIO_PIN
-        self.Current_Angle = Current_Angle
+        self.Channel_Pin = Channel_Pin
+        self.Current_Angle = 0
         self.Verbose = Verbose
-        factory = LGPIOFactory()
-        self.pwm = PWMOutputDevice(GPIO_PIN, frequency=50, pin_factory=factory)
+        self.IsFlipped = IsFlipped
+        self.Offset = Offset
+        self.Simulated = Simulated
 
-        if(ServoType == "Leg"):
+        if ServoType == "Leg":
             self.Motor_Max_Angle = self.Leg_Motor_Max_Angle
             self.Motor_Min_Angle = self.Leg_Motor_Min_Angle
             self.Motor_Max_Pulse = self.Leg_Motor_Max_Pulse
             self.Motor_Min_Pulse = self.Leg_Motor_Min_Pulse
             self.Max_Command_Angle = self.Max_Leg_Command
             self.Min_Command_Angle = self.Min_Leg_Command
-        elif(ServoType == "Head"):
+        elif ServoType == "Head":
             self.Motor_Max_Angle = self.Head_Motor_Max_Angle
             self.Motor_Min_Angle = self.Head_Motor_Min_Angle
             self.Motor_Max_Pulse = self.Head_Motor_Max_Pulse
@@ -63,18 +63,37 @@ class Servo:
             self.Max_Command_Angle = self.Max_Head_Command
             self.Min_Command_Angle = self.Min_Head_Command
         else:
-            print("ServoDriver: Invalid 'ServoType' Received ", ServoType)
+            print("ServoDriver: Invalid 'ServoType' Received", ServoType)
+            return
+
+        if not self.Simulated:
+            kit = _get_kit()
+            kit.servo[self.Channel_Pin].set_pulse_width_range(self.Motor_Min_Pulse, self.Motor_Max_Pulse)
+            kit.servo[self.Channel_Pin].actuation_range = self.Motor_Max_Angle - self.Motor_Min_Angle
+
+        self.SetAngle(0)
 
     def SetAngle(self, Angle):
-        # TODO Flip orientation of Left or Right motors
-        
-        motor_angle = max(self.Min_Command_Angle, min(self.Max_Command_Angle, Angle))
-        self.Current_Angle = motor_angle
-        t = (motor_angle - self.Motor_Min_Angle) / (self.Motor_Max_Angle - self.Motor_Min_Angle)
-        pulse_width = t * (self.Motor_Max_Pulse - self.Motor_Min_Pulse) + self.Motor_Min_Pulse
-        self._SendPulse(pulse_width)
+        clamped_angle = max(self.Min_Command_Angle, min(self.Max_Command_Angle, Angle))
+        self.Current_Angle = clamped_angle
 
-    def _SendPulse(self,pulse_width):
-        if self.Verbose: print("ServoDriver: ", self.Name, " Sending Pulsewidth: ", pulse_width)
-        duty_cycle = pulse_width / 20000
-        self.pwm.value = duty_cycle
+        if self.Simulated:
+            if self.Verbose:
+                print(f"[SIM] {self.Name}: angle set to {clamped_angle:.1f}°")
+            return
+
+        if self.IsFlipped:
+            clamped_angle = -clamped_angle
+
+        effective_angle = clamped_angle + self.Offset
+        effective_angle = max(self.Motor_Min_Angle, min(self.Motor_Max_Angle, effective_angle))
+
+        kit_angle = effective_angle - self.Motor_Min_Angle
+        _get_kit().servo[self.Channel_Pin].angle = kit_angle
+
+    def close(self):
+        if self.Simulated:
+            if self.Verbose:
+                print(f"[SIM] {self.Name}: close called")
+            return
+        _get_kit().servo[self.Channel_Pin].angle = 0
