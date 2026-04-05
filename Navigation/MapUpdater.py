@@ -1,69 +1,119 @@
 import numpy as np
 import csv
 
+
 class Map:
-    Zone_Map = []
-    _Human_List = []
-    _Turkey_List = []
+    # DEFINITIONS
+    # 0   Free space
+    # 1   Fixed obstacles (walls, trees, rocks)
+    # 2   Dynamic obstacles (humans, turkeys — written by vision system)
+    # >2  Penalised free space (near humans)
+
     _Map_File = "/home/turkeysquad/ME450/MainDesign/Navigation/Zone.csv"
 
-    _Human_Obstacle_Width = 1
-    _Human_Penalty_width = 2
+    _Human_Obstacle_Width  = 1
+    _Human_Penalty_Width   = 2
     _Turkey_Obstacle_Width = 1
 
-    # DEFINITIONS
-    # 1 Fixed obstacles
-    # 2 Dynamic Obstacles
-    # >2 penalized weight not default 0
-    
+    # -------------------------------------------------------------------------
+    # Hardcoded obstacle rectangle decomposition for the current placeholder map.
+    # Format: (x_min, x_max, y_min, y_max) in grid cells (== metres).
+    #
+    # These were derived by running a maximal-rectangle decomposition on the
+    # Zone.csv obstacle layer (cells == 1).  8 rectangles cover all 659
+    # obstacle cells exactly with zero overlap gaps.
+    #
+    # TODO: replace with automated decomposition once the final map is received.
+    #       See the decomposition script in the project notes.
+    # -------------------------------------------------------------------------
+    OBSTACLE_RECTS = [
+        # (x_min, x_max, y_min, y_max)
+        (36, 40, 12, 58),   # right interior wall segment
+        ( 0,  1,  0, 77),   # left boundary wall
+        ( 2, 40,  0,  1),   # top boundary wall
+        ( 2, 40, 76, 77),   # bottom boundary wall
+        ( 8, 14, 52, 58),   # 7×7 interior obstacle
+        (39, 40, 59, 75),   # right boundary lower segment
+        (39, 40,  2, 11),   # right boundary upper segment
+        (12, 14, 20, 22),   # 3×3 interior obstacle
+    ]
+
     def __init__(self):
+        self._Human_List  = []
+        self._Turkey_List = []
+
+        self.Zone_Map      = np.zeros((100, 100), dtype=int)
+        self.Obstacle_Rects = self.OBSTACLE_RECTS   # expose for MPC / PathGenerator
+
         self.LoadGrid()
+
+    # -------------------------------------------------------------------------
+    # Dynamic obstacle management
+    # -------------------------------------------------------------------------
 
     def ClearDynamicObstacles(self):
         for h_idx in self._Human_List:
-            self.UpdateAroundObject(h_idx[0], h_idx[1], width=self._Human_Penalty_width, data=0)
-
+            self.UpdateAroundObject(h_idx[0], h_idx[1],
+                                    width=self._Human_Penalty_Width, data=0)
         for t_idx in self._Turkey_List:
-            self.UpdateAroundObject(t_idx[0], t_idx[1], width=self._Turkey_Obstacle_Width, data=0)
-
-        self._Human_List = []
+            self.UpdateAroundObject(t_idx[0], t_idx[1],
+                                    width=self._Turkey_Obstacle_Width, data=0)
+        self._Human_List  = []
         self._Turkey_List = []
 
     def UpdateHuman(self, xcord, ycord):
         self._Human_List.append([xcord, ycord])
-
-        # Outer Box Near Human Allowed But Penalized With Weight 3
-        self.UpdateAroundObject(xcord, ycord, width=2, data=3)
-        # 1m radius Around Human Considered Obstacle
-        self.UpdateAroundObject(xcord, ycord, width=1, data=2)
+        self.UpdateAroundObject(xcord, ycord, width=self._Human_Penalty_Width,  data=3)
+        self.UpdateAroundObject(xcord, ycord, width=self._Human_Obstacle_Width, data=2)
 
     def UpdateTurkey(self, xcord, ycord):
         self._Turkey_List.append([xcord, ycord])
+        self.UpdateAroundObject(xcord, ycord, width=self._Turkey_Obstacle_Width, data=2)
 
-        # 1m radius Around Turkey Considered Obstacle
-        self.UpdateAroundObject(xcord, ycord, width=1, data=2)
+    # -------------------------------------------------------------------------
+    # Grid I/O
+    # -------------------------------------------------------------------------
 
     def LoadGrid(self):
         grid = []
         with open(self._Map_File, newline='') as f:
             reader = csv.reader(f)
-            next(reader)  # skip header row (x-axis labels)
-
+            next(reader)
             for row in reader:
-                data_cells = row[1:]  # skip y-axis label (first column)
+                data_cells  = row[1:]
                 numeric_row = [int(cell) if cell.strip() != '' else 0
-                            for cell in data_cells]
+                               for cell in data_cells]
                 grid.append(numeric_row)
-
         self.Zone_Map = np.array(grid, dtype=int)
 
     def UpdateAroundObject(self, xcord, ycord, width, data):
-        xcord_low = max(xcord - width, 0)
-        xcord_high = min(xcord + width+1, self.Zone_Map.shape[1]-1)
-        ycord_low = max(ycord - width, 0)
-        ycord_high = min(ycord + width+1, self.Zone_Map.shape[0]-1)
-        
+        xcord_low  = max(xcord - width, 0)
+        xcord_high = min(xcord + width + 1, self.Zone_Map.shape[1] - 1)
+        ycord_low  = max(ycord - width, 0)
+        ycord_high = min(ycord + width + 1, self.Zone_Map.shape[0] - 1)
+
         for x in range(xcord_low, xcord_high):
             for y in range(ycord_low, ycord_high):
-                if(self.Zone_Map[y,x] != 1 and (data == 0 or self.Zone_Map[y, x] != 2)):
-                    self.Zone_Map[y, x] = data 
+                if self.Zone_Map[y, x] != 1 and (data == 0 or self.Zone_Map[y, x] != 2):
+                    self.Zone_Map[y, x] = data
+
+    # -------------------------------------------------------------------------
+    # Convenience helpers
+    # -------------------------------------------------------------------------
+
+    def min_rect_dist(self, x: float, y: float) -> float:
+        """
+        Minimum algebraic distance from point (x, y) to any fixed obstacle
+        rectangle.  Used by the logger and for diagnostics.
+
+        Returns distance in metres (grid cells).  Zero means on the boundary
+        of an obstacle; negative means inside.
+        """
+        min_d = np.inf
+        for (x0, x1, y0, y1) in self.Obstacle_Rects:
+            dx = max(x0 - x, 0.0, x - x1)
+            dy = max(y0 - y, 0.0, y - y1)
+            d  = np.sqrt(dx**2 + dy**2)
+            if d < min_d:
+                min_d = d
+        return float(min_d)
