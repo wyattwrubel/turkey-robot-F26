@@ -190,6 +190,7 @@ class PanelControls:
             await self._macrostate_pub.publish({"Id": "UnlockUI"})
         else:
             self._robot.lock_navigation()
+            await self._macrostate_pub.publish({"Id": "Stop"})
 
     async def _handle_waypoint_move(self, data: dict) -> None:
         """

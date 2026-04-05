@@ -107,7 +107,7 @@ class Robot:
 
     def unlock_navigation(self) -> bool:
         if self._estop:
-            print("[SAFETY] unlock_navigation blocked — estop still active")
+            print("[UI SAFETY] unlock_navigation blocked — estop still active")
             return False
         self.ui_locked          = False
         self._auto_ever_engaged = True   # ← arm the watchdog on first auto

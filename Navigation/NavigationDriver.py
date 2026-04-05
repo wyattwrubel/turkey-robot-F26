@@ -16,7 +16,7 @@ class TrajectoryTracker:
 
     def __init__(self, DriveTrainPub, MotionCommandPub, MPCFeedback_Navigation_pub, Verbose=False):
         self.MotionCommandPub = MotionCommandPub
-        self.Verbose = Verbose
+        self.Verbose =  Verbose
 
         self.MPC = MovementExecutor.MPC_loop(self, DriveTrainPub, MPCFeedback_Navigation_pub)
         asyncio.create_task(self.MPC.DriveTrain_Sender())
