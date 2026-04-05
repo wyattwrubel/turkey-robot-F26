@@ -1298,3 +1298,53 @@
 [2026-04-05 17:58:26.814] [115767] [HailoRT] [info] [vdevice.cpp:780] [configure] Configuring HEF on VDevice took 52.449747 milliseconds
 [2026-04-05 17:58:26.814] [115767] [HailoRT] [info] [hef.cpp:1994] [get_network_group_and_network_name] No name was given. Addressing all networks of default network_group: turkey_640
 [2026-04-05 17:58:26.814] [115767] [HailoRT] [info] [hef.cpp:1994] [get_network_group_and_network_name] No name was given. Addressing all networks of default network_group: turkey_640
+[2026-04-05 18:04:39.176] [123858] [HailoRT] [info] [vdevice.cpp:535] [create] Creating vdevice with params: device_count: 1, scheduling_algorithm: NONE, multi_process_service: false
+[2026-04-05 18:04:39.188] [123858] [HailoRT] [info] [device.cpp:51] [Device] OS Version: Linux 6.12.75+rpt-rpi-2712 #1 SMP PREEMPT Debian 1:6.12.75-1+rpt1 (2026-03-11) aarch64
+[2026-04-05 18:04:39.189] [123858] [HailoRT] [info] [control.cpp:113] [control__parse_identify_results] firmware_version is: 4.23.0
+[2026-04-05 18:04:39.189] [123858] [HailoRT] [info] [vdevice.cpp:682] [create] VDevice Infos: 0001:01:00.0
+[2026-04-05 18:04:39.195] [123858] [HailoRT] [info] [internal_buffer_manager.cpp:77] [print_execution_results] Planned internal buffer memory: CMA=0 CMA-Desc=1245184 Pinned=1743872. memory to edge layer usage factor is 0.7356371
+[2026-04-05 18:04:39.195] [123858] [HailoRT] [info] [internal_buffer_manager.cpp:86] [print_execution_results] Default Internal buffer planner executed successfully
+[2026-04-05 18:04:39.224] [123858] [HailoRT] [info] [device_internal.cpp:57] [configure] Configuring HEF took 35.597915 milliseconds
+[2026-04-05 18:04:39.225] [123858] [HailoRT] [info] [vdevice.cpp:780] [configure] Configuring HEF on VDevice took 35.917936 milliseconds
+[2026-04-05 18:04:39.225] [123858] [HailoRT] [info] [hef.cpp:1994] [get_network_group_and_network_name] No name was given. Addressing all networks of default network_group: turkey_640
+[2026-04-05 18:04:39.225] [123858] [HailoRT] [info] [hef.cpp:1994] [get_network_group_and_network_name] No name was given. Addressing all networks of default network_group: turkey_640
+[2026-04-05 18:11:33.260] [133027] [HailoRT] [info] [vdevice.cpp:535] [create] Creating vdevice with params: device_count: 1, scheduling_algorithm: NONE, multi_process_service: false
+[2026-04-05 18:11:33.273] [133027] [HailoRT] [info] [device.cpp:51] [Device] OS Version: Linux 6.12.75+rpt-rpi-2712 #1 SMP PREEMPT Debian 1:6.12.75-1+rpt1 (2026-03-11) aarch64
+[2026-04-05 18:11:33.273] [133027] [HailoRT] [info] [control.cpp:113] [control__parse_identify_results] firmware_version is: 4.23.0
+[2026-04-05 18:11:33.273] [133027] [HailoRT] [info] [vdevice.cpp:682] [create] VDevice Infos: 0001:01:00.0
+[2026-04-05 18:11:33.281] [133027] [HailoRT] [info] [internal_buffer_manager.cpp:77] [print_execution_results] Planned internal buffer memory: CMA=0 CMA-Desc=1245184 Pinned=1743872. memory to edge layer usage factor is 0.7356371
+[2026-04-05 18:11:33.281] [133027] [HailoRT] [info] [internal_buffer_manager.cpp:86] [print_execution_results] Default Internal buffer planner executed successfully
+[2026-04-05 18:11:33.325] [133027] [HailoRT] [info] [device_internal.cpp:57] [configure] Configuring HEF took 51.352237 milliseconds
+[2026-04-05 18:11:33.325] [133027] [HailoRT] [info] [vdevice.cpp:780] [configure] Configuring HEF on VDevice took 51.673239 milliseconds
+[2026-04-05 18:11:33.325] [133027] [HailoRT] [info] [hef.cpp:1994] [get_network_group_and_network_name] No name was given. Addressing all networks of default network_group: turkey_640
+[2026-04-05 18:11:33.325] [133027] [HailoRT] [info] [hef.cpp:1994] [get_network_group_and_network_name] No name was given. Addressing all networks of default network_group: turkey_640
+[2026-04-05 18:14:17.347] [136596] [HailoRT] [info] [vdevice.cpp:535] [create] Creating vdevice with params: device_count: 1, scheduling_algorithm: NONE, multi_process_service: false
+[2026-04-05 18:14:17.357] [136596] [HailoRT] [info] [device.cpp:51] [Device] OS Version: Linux 6.12.75+rpt-rpi-2712 #1 SMP PREEMPT Debian 1:6.12.75-1+rpt1 (2026-03-11) aarch64
+[2026-04-05 18:14:17.358] [136596] [HailoRT] [info] [control.cpp:113] [control__parse_identify_results] firmware_version is: 4.23.0
+[2026-04-05 18:14:17.358] [136596] [HailoRT] [info] [vdevice.cpp:682] [create] VDevice Infos: 0001:01:00.0
+[2026-04-05 18:14:17.365] [136596] [HailoRT] [info] [internal_buffer_manager.cpp:77] [print_execution_results] Planned internal buffer memory: CMA=0 CMA-Desc=1245184 Pinned=1743872. memory to edge layer usage factor is 0.7356371
+[2026-04-05 18:14:17.365] [136596] [HailoRT] [info] [internal_buffer_manager.cpp:86] [print_execution_results] Default Internal buffer planner executed successfully
+[2026-04-05 18:14:17.396] [136596] [HailoRT] [info] [device_internal.cpp:57] [configure] Configuring HEF took 37.957806 milliseconds
+[2026-04-05 18:14:17.396] [136596] [HailoRT] [info] [vdevice.cpp:780] [configure] Configuring HEF on VDevice took 38.29543 milliseconds
+[2026-04-05 18:14:17.397] [136596] [HailoRT] [info] [hef.cpp:1994] [get_network_group_and_network_name] No name was given. Addressing all networks of default network_group: turkey_640
+[2026-04-05 18:14:17.397] [136596] [HailoRT] [info] [hef.cpp:1994] [get_network_group_and_network_name] No name was given. Addressing all networks of default network_group: turkey_640
+[2026-04-05 18:19:51.854] [144671] [HailoRT] [info] [vdevice.cpp:535] [create] Creating vdevice with params: device_count: 1, scheduling_algorithm: NONE, multi_process_service: false
+[2026-04-05 18:19:51.865] [144671] [HailoRT] [info] [device.cpp:51] [Device] OS Version: Linux 6.12.75+rpt-rpi-2712 #1 SMP PREEMPT Debian 1:6.12.75-1+rpt1 (2026-03-11) aarch64
+[2026-04-05 18:19:51.866] [144671] [HailoRT] [info] [control.cpp:113] [control__parse_identify_results] firmware_version is: 4.23.0
+[2026-04-05 18:19:51.866] [144671] [HailoRT] [info] [vdevice.cpp:682] [create] VDevice Infos: 0001:01:00.0
+[2026-04-05 18:19:51.872] [144671] [HailoRT] [info] [internal_buffer_manager.cpp:77] [print_execution_results] Planned internal buffer memory: CMA=0 CMA-Desc=1245184 Pinned=1743872. memory to edge layer usage factor is 0.7356371
+[2026-04-05 18:19:51.872] [144671] [HailoRT] [info] [internal_buffer_manager.cpp:86] [print_execution_results] Default Internal buffer planner executed successfully
+[2026-04-05 18:19:51.915] [144671] [HailoRT] [info] [device_internal.cpp:57] [configure] Configuring HEF took 49.121808 milliseconds
+[2026-04-05 18:19:51.915] [144671] [HailoRT] [info] [vdevice.cpp:780] [configure] Configuring HEF on VDevice took 49.394972 milliseconds
+[2026-04-05 18:19:51.915] [144671] [HailoRT] [info] [hef.cpp:1994] [get_network_group_and_network_name] No name was given. Addressing all networks of default network_group: turkey_640
+[2026-04-05 18:19:51.915] [144671] [HailoRT] [info] [hef.cpp:1994] [get_network_group_and_network_name] No name was given. Addressing all networks of default network_group: turkey_640
+[2026-04-05 18:29:09.935] [156631] [HailoRT] [info] [vdevice.cpp:535] [create] Creating vdevice with params: device_count: 1, scheduling_algorithm: NONE, multi_process_service: false
+[2026-04-05 18:29:09.946] [156631] [HailoRT] [info] [device.cpp:51] [Device] OS Version: Linux 6.12.75+rpt-rpi-2712 #1 SMP PREEMPT Debian 1:6.12.75-1+rpt1 (2026-03-11) aarch64
+[2026-04-05 18:29:09.946] [156631] [HailoRT] [info] [control.cpp:113] [control__parse_identify_results] firmware_version is: 4.23.0
+[2026-04-05 18:29:09.946] [156631] [HailoRT] [info] [vdevice.cpp:682] [create] VDevice Infos: 0001:01:00.0
+[2026-04-05 18:29:09.952] [156631] [HailoRT] [info] [internal_buffer_manager.cpp:77] [print_execution_results] Planned internal buffer memory: CMA=0 CMA-Desc=1245184 Pinned=1743872. memory to edge layer usage factor is 0.7356371
+[2026-04-05 18:29:09.952] [156631] [HailoRT] [info] [internal_buffer_manager.cpp:86] [print_execution_results] Default Internal buffer planner executed successfully
+[2026-04-05 18:29:09.997] [156631] [HailoRT] [info] [device_internal.cpp:57] [configure] Configuring HEF took 50.931409 milliseconds
+[2026-04-05 18:29:09.997] [156631] [HailoRT] [info] [vdevice.cpp:780] [configure] Configuring HEF on VDevice took 51.304187 milliseconds
+[2026-04-05 18:29:09.998] [156631] [HailoRT] [info] [hef.cpp:1994] [get_network_group_and_network_name] No name was given. Addressing all networks of default network_group: turkey_640
+[2026-04-05 18:29:09.998] [156631] [HailoRT] [info] [hef.cpp:1994] [get_network_group_and_network_name] No name was given. Addressing all networks of default network_group: turkey_640
