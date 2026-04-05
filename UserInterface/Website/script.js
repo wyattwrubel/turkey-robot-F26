@@ -32,7 +32,7 @@ const AUDIO_DEFS = [
 // ═══════════════════════════════════════════════
 let ws       = null
 let wsReady  = false
-let isManual = localStorage.getItem('isManual') === 'true'
+let isManual = false
 let isStopped= false
 
 // Map state
@@ -94,8 +94,8 @@ function buildAudio() {
 // ═══════════════════════════════════════════════
 function connect() {
   ws = new WebSocket('ws://100.67.22.116:8000/ws')
-  ws.onopen    = ()  => { wsReady = true }
-  ws.onclose   = ()  => { wsReady = false; setTimeout(connect, 1500) }
+  ws.onopen    = ()  => { wsReady = true; _startHeartbeat()}
+  ws.onclose   = ()  => { wsReady = false; _stopHeartbeat(); setTimeout(connect, 1000) }
   ws.onmessage = (e) => {
     try   { handle(JSON.parse(e.data)) }
     catch (err) { console.error('handle() error:', err) }
@@ -146,6 +146,10 @@ function handle(m) {
         else if (nc === 'Orient') det.textContent = `→ (${fmt(m.target.x,2)}, ${fmt(m.target.y,2)}) m  θ=${deg(m.target.theta)}°`
         else                      det.textContent = '—'
       }
+    }
+
+    if (m.is_estopped !== undefined) {
+     _applyEstopUI(m.is_estopped)
     }
 
     // Current destination
@@ -229,12 +233,9 @@ function handle(m) {
     if (sub) sub.textContent = `${MAP_W} × ${MAP_H} M · 10 HZ`
   }
 
-  // ── Mode state ──────────────────────────────────────────────
-  if (m.type === 'mode_state') {
-    if (m.is_manual !== isManual) {
-      isManual = m.is_manual
-      _applyModeUI()
-    }
+  if (m.type === 'state' && m.is_manual !== undefined) {
+  isManual = m.is_manual
+  _applyModeUI()
   }
 
   // ── Vision detections ────────────────────────────────────────
@@ -328,25 +329,16 @@ function setSpeed(v) {
 // ═══════════════════════════════════════════════
 // MACROSTATE COMMANDS
 // ═══════════════════════════════════════════════
-function sendMacrostate(state, el) {
+function sendMacrostate(state) {
   send({ type: 'macrostate_command', state })
-  _activeMacrostate = el.dataset.state
-  _syncMacrostateButtons(_activeMacrostate)
 }
 
-function sendMacrostateSub(cmdId, btn) {
-  if (!isManual) return
+function sendMacrostateSub(cmdId) {
   send({ type: 'macrostate_sub_command', state: cmdId })
-  _activeSubCmd = cmdId
-  _syncSubCmdButtons(_activeSubCmd)
 }
 
 function stopMacrostate() {
   send({ type: 'macrostate_command', state: 'Stop' })
-  _activeMacrostate = null
-  _activeSubCmd     = null
-  _syncMacrostateButtons(null)
-  _syncSubCmdButtons(null)
 }
 
 // ═══════════════════════════════════════════════
@@ -360,7 +352,7 @@ const WASD_DRIVE_BTNS = {
 }
 
 function startDrive(key, btnId) {
-  if (!isManual || isStopped) return
+  if (!isManual) return
   document.getElementById(btnId)?.classList.add('lit')
   send({ type: 'key_command', key, state: 'press' })
 }
@@ -371,15 +363,12 @@ function stopDrive(key, btnId) {
 }
 
 function sendPose(p, el) {
-  if (!isManual) return
   send({ type: 'pose_command', pose: p })
-  _activePose = p
-  _syncPoseButtons(_activePose)
 }
 
 // ── WASD ──────────────────────────────────────────────────────
 function wasdPress(k) {
-  if (!isManual || isStopped) return
+  if (!isManual) return
   const keyEl = document.getElementById('key-' + k)
   if (keyEl) keyEl.classList.add('pressed')
   const btnId = WASD_DRIVE_BTNS[k]
@@ -408,39 +397,18 @@ document.addEventListener('keyup', e => {
 // E-STOP
 // ═══════════════════════════════════════════════
 function emergencyStop() {
-  isStopped = true
   send({ type: 'estop' })
-  const b = document.getElementById('estop-btn')
-  b.textContent      = '⬡ STOPPED — CLICK TO RESET'
-  b.style.background = 'rgba(255,34,51,.35)'
-  b.onclick          = resetEStop
 }
 
 function resetEStop() {
-  isStopped = false
   send({ type: 'estop_reset' })
-  const b = document.getElementById('estop-btn')
-  b.textContent      = '⬡ EMERGENCY STOP'
-  b.style.background = ''
-  b.onclick          = emergencyStop
 }
 
 // ═══════════════════════════════════════════════
 // MODE TOGGLE
 // ═══════════════════════════════════════════════
 function toggleMode() {
-  isManual = !isManual
-  localStorage.setItem('isManual', isManual)
-  _applyModeUI()
-  if (!isManual) {
-    Object.keys(WASD_DRIVE_BTNS).forEach(k => {
-      document.getElementById('key-' + k)?.classList.remove('pressed')
-      document.getElementById(WASD_DRIVE_BTNS[k])?.classList.remove('lit')
-    })
-    send({ type: 'unlock_ui' })
-  } else {
-    send({ type: 'lock_ui' })
-  }
+  send({ type: 'toggle_mode' })
 }
 
 function _applyModeUI() {
@@ -450,6 +418,7 @@ function _applyModeUI() {
   document.getElementById('mode-btn').className     = isManual ? 'modetog m' : 'modetog'
   document.getElementById('ctrl-tag').textContent   = isManual ? 'MODE: MANUAL — INPUTS ACTIVE' : 'MODE: AUTO — INPUTS LOCKED'
   applyModeToControls()
+
 }
 
 function applyModeToControls() {
@@ -919,4 +888,34 @@ function drawMap(canvas) {
     : `scroll to zoom`, cw - 8, ch - 8)
 
   ctx.restore()
+}
+
+// ═══════════════════════════════════════════════
+// HEARTBEAT
+// ═══════════════════════════════════════════════
+let _heartbeatTimer = null
+
+function _startHeartbeat() {
+  _stopHeartbeat()
+  _heartbeatTimer = setInterval(() => {
+    send({ type: 'heartbeat' })
+  }, 500)
+}
+
+function _stopHeartbeat() {
+  if (_heartbeatTimer) { clearInterval(_heartbeatTimer); _heartbeatTimer = null }
+}
+
+function _applyEstopUI(estopped) {
+  const b = document.getElementById('estop-btn')
+  if (!b) return
+  if (estopped) {
+    b.textContent      = '⬡ STOPPED — CLICK TO RESET'
+    b.style.background = 'rgba(255,34,51,.35)'
+    b.onclick          = resetEStop
+  } else {
+    b.textContent      = '⬡ EMERGENCY STOP'
+    b.style.background = ''
+    b.onclick          = emergencyStop
+  }
 }

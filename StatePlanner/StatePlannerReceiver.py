@@ -33,7 +33,7 @@ class StatePlannerReceiver:
         self.Verbose                 = Verbose
 
         self.Current_RobotPose = np.array([0.0, 0.0, 0.0])
-        self.IsManualMode      = False
+        self.IsManualMode      = True
         self.WaypointQueue     = self._load_waypoints('/home/turkeysquad/ME450/MainDesign/Navigation/Waypoints.csv')
 
         self.Turkeys           = []

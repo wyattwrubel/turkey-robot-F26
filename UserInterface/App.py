@@ -111,6 +111,13 @@ class CDSControlServer:
     async def _broadcast_state(self) -> None:
         while True:
             await asyncio.sleep(0.1)
+
+            # ── Heartbeat watchdog ────────────────────────────────
+            if not self.robot.check_heartbeat() and not self.robot._estop:
+                print("[UI WATCHDOG] Heartbeat timeout — engaging estop")
+                self.robot.estop_engage()
+                await self.controls._pub_estop()
+
             if not self.connections:
                 continue
             try:

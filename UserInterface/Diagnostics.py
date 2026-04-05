@@ -173,7 +173,6 @@ class PanelDiagnostics:
             self._robot.set_target(target[0], target[1], target[2], nav_type="Orient")
         elif id == "SpeedCap":
             speed = float(np.asarray(cmd, dtype=float).flatten()[0])
-
             self._robot.set_speed(speed)
         else:
             print(f"[UI MotionCommand_Receiver] Unknown Id '{id}'")
