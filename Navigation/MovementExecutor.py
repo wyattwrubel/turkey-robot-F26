@@ -19,12 +19,12 @@ DT          = 0.1
 V_MAX       =  3.0
 V_MIN       = -3.0
 
-FINAL_DIST        = 0.8
-STALL_TICKS       = 15
-LIGHT_SOLVER_DIST = 6.0   # widened: cheap solver takes over sooner
+FINAL_DIST        = 0.8   # m — final waypoint arrival threshold
+STALL_TICKS       = 15    # ticks without 5cm improvement → declare arrival
+LIGHT_SOLVER_DIST = 4.0   # m — switch to lightweight solver (final wp only)
 
-N_FULL  = 8    # was 15 — halves constraint count, faster near obstacles
-N_LIGHT = 5    # was 6
+N_FULL  = 15   # full solver horizon
+N_LIGHT =  6   # lightweight solver horizon (final 4m approach)
 
 # Pivot
 PIVOT_THRESHOLD_DEG = 45.0
@@ -38,22 +38,19 @@ W_FOV        =  8.0
 W_HEADING    = 12.0
 W_OMEGA      =  1.0
 W_INPUT_DIFF =  0.5
-W_SLACK_DYN  = 50.0   # dynamic obstacle CBF slack penalty
-W_SLACK_FIX  = 80.0   # fixed obstacle CBF slack penalty (higher — walls are hard)
+W_SLACK      = 50.0    # dynamic obstacle CBF slack penalty
 
-# Fixed obstacle CBF
-N_FIX_OBS    = 3      # nearest fixed rects passed to solver each tick
-CBF_GAMMA_FX = 0.5    # decay rate for fixed-obstacle CBF
-R_FIX        = 0.9    # m — safety radius around fixed obstacles
+# Grid-lookup obstacle penalties
+# Applied per horizon step based on Zone_Map cell value at that position.
+# Flags are pre-computed in NumPy from the warm-start guess each tick and
+# passed as concrete parameters — no symbolic indexing required.
+W_OBS_STATIC  = 900.0   # penalty per step landing on a static obstacle  (==1)
+W_OBS_DYNAMIC = 400.0   # penalty per step landing on a dynamic obstacle (==2)
+# (CBF already handles dynamic obstacles; this is a belt-and-suspenders cost.)
 
 # Dynamic obstacle CBF
-M_DYN        = 3      # was 5 — saves M*N inequality constraints
-CBF_GAMMA_DY = 0.6
-R_DYN        = 1.5
-
-# u_prev offset in parameter vector: X0(3)+wp(2)+turkey(2)+chase(1)+dyn(2*KD)+h0d(KD)
-# With KD=3: 3+2+2+1+6+3 = 17
-_UPREV_IDX = 3 + 2 + 2 + 1 + 2 * M_DYN + M_DYN
+CBF_GAMMA = 0.6
+R_DYN     = 1.5
 
 
 # =============================================================================
@@ -76,74 +73,79 @@ def heading_to_waypoint(robot_xy, wp):
 
 
 # =============================================================================
-# Nearest fixed-obstacle rects — vectorised NumPy, called each tick
+# Grid-lookup obstacle flags — computed in NumPy each tick
 # =============================================================================
 
-def nearest_fix_obs_rects(robot_xy: np.ndarray,
-                           obstacle_rects,
-                           n: int = N_FIX_OBS) -> np.ndarray:
+def compute_obs_flags(X_guess, zone_map, n_steps):
     """
-    Return the n nearest obstacle rects as a (n, 4) array [x0, x1, y0, y1],
-    sorted nearest-first. Padded with far sentinels if fewer than n rects exist.
-    Uses np.argpartition for O(K) selection — typically <0.1 ms with 100+ rects.
+    For each of the N horizon steps, round the (x, y) position from the
+    warm-start trajectory to the nearest grid cell and look up Zone_Map.
+
+    Returns
+    -------
+    static_flags  : (N,) float array — 1.0 where cell == 1, else 0.0
+    dynamic_flags : (N,) float array — 1.0 where cell == 2, else 0.0
+
+    Parameters
+    ----------
+    X_guess   : flat decision-variable array (from previous solution / seed)
+    zone_map  : (H, W) int array  — Map.Zone_Map
+    n_steps   : horizon length N
     """
-    sentinel = np.array([1e6, 1e6 + 1, 1e6, 1e6 + 1], dtype=np.float64)
+    H, W = zone_map.shape
+    n_s  = 3   # state dimension
 
-    if not obstacle_rects:
-        return np.tile(sentinel, (n, 1))
+    static_flags  = np.zeros(n_steps, dtype=np.float64)
+    dynamic_flags = np.zeros(n_steps, dtype=np.float64)
 
-    rects = np.asarray(obstacle_rects, dtype=np.float64)   # (K, 4)
-    dx    = np.maximum(0.0, np.maximum(rects[:, 0] - robot_xy[0],
-                                       robot_xy[0] - rects[:, 1]))
-    dy    = np.maximum(0.0, np.maximum(rects[:, 2] - robot_xy[1],
-                                       robot_xy[1] - rects[:, 3]))
-    dist  = np.hypot(dx, dy)
+    for k in range(n_steps):
+        # States are packed column-major: X[:, k] starts at k*n_s
+        xk = X_guess[k * n_s]
+        yk = X_guess[k * n_s + 1]
 
-    k   = min(n, len(rects))
-    idx = np.argpartition(dist, range(k))[:k]
-    idx = idx[np.argsort(dist[idx])]
+        col = int(round(xk))
+        row = int(round(yk))
 
-    chosen = rects[idx]
-    if k < n:
-        chosen = np.vstack([chosen, np.tile(sentinel, (n - k, 1))])
+        # Clamp to valid grid range
+        col = int(np.clip(col, 0, W - 1))
+        row = int(np.clip(row, 0, H - 1))
 
-    return chosen   # (n, 4)
+        cell = zone_map[row, col]
+        if cell == 1:
+            static_flags[k]  = 1.0
+        elif cell == 2:
+            dynamic_flags[k] = 1.0
+
+    return static_flags, dynamic_flags
 
 
 # =============================================================================
 # MPC solver builder
 # =============================================================================
 
-def build_mpc_solver(n_steps: int,
-                     n_fix: int = N_FIX_OBS,
-                     n_dyn: int = M_DYN):
+def build_mpc_solver(n_steps: int, max_dynamic_obstacles: int = 5):
     """
-    Lean NLP with two classes of CBF safety constraint and no transcendental
-    obstacle cost terms.
+    Build one CasADi / IPOPT NLP.
 
-    Fixed obstacle CBF
-    ------------------
-    h(x,y,rect) = dist²(point, rect) - R_FIX²   (squared distance to rect surface)
-    CBF:  h(k+1) >= (1 - gamma) * h(k) - slack
-    One slack per rect shared across all steps.
+    Obstacle avoidance strategy:
+      - Fixed obstacles: grid-lookup flags passed as parameters each tick.
+        Per-step cost += W_OBS_STATIC  * p_static[k]
+                       + W_OBS_DYNAMIC * p_dynamic[k]
+        Flags are concrete floats (0 or 1) — no symbolic indexing.
+      - Dynamic obstacles: CBF with one slack per obstacle (always active),
+        plus the dynamic grid flag cost above as extra discouragement.
 
-    Dynamic obstacle CBF
-    --------------------
-    Same structure, M_DYN=3 slots instead of 5.
-
-    Cost function
-    -------------
-    Purely quadratic + atan2 heading — no Gaussian/log-barrier terms.
-    Simpler Hessian structure means L-BFGS approximates it accurately
-    in far fewer iterations, especially near obstacles.
+    Parameters
+    ----------
+    n_steps               : horizon length (N_FULL or N_LIGHT)
+    max_dynamic_obstacles : CBF slots for dynamic obstacles
     """
     N   = n_steps
     n_s = 3
     n_u = 2
-    KF  = n_fix
-    KD  = n_dyn
+    M   = max_dynamic_obstacles
 
-    # ── Kinematics ────────────────────────────────────────────────────────────
+    # Kinematics
     x_s, y_s, th_s = ca.SX.sym('x'), ca.SX.sym('y'), ca.SX.sym('th')
     vl_s, vr_s     = ca.SX.sym('vl'), ca.SX.sym('vr')
     v_s     = (vl_s + vr_s) / 2
@@ -157,111 +159,113 @@ def build_mpc_solver(n_steps: int,
         )]
     )
 
-    # ── Decision variables ────────────────────────────────────────────────────
+    # Decision variables
     X_mpc  = ca.SX.sym('X',     n_s, N + 1)
     U_mpc  = ca.SX.sym('U',     n_u, N)
-    S_fix  = ca.SX.sym('S_fix', KF)   # one slack per fixed rect
-    S_dyn  = ca.SX.sym('S_dyn', KD)   # one slack per dynamic obstacle
+    S_dyn  = ca.SX.sym('S_dyn', M)
 
-    # ── Parameters ───────────────────────────────────────────────────────────
-    # Layout: X0(3)|wp(2)|turkey(2)|chase(1)|dyn(2*KD)|h0d(KD)|uprev(2)|fix_rects(4*KF)
-    P_X0    = ca.SX.sym('X0',    n_s)
-    P_wp    = ca.SX.sym('wp',    2)
-    P_turk  = ca.SX.sym('turk',  2)
-    P_chase = ca.SX.sym('chase', 1)
-    P_dyn   = ca.SX.sym('dyn',   2 * KD)
-    P_h0d   = ca.SX.sym('h0d',   KD)
-    P_uprev = ca.SX.sym('uprev', n_u)
-    P_frect = ca.SX.sym('frect', 4 * KF)   # [x0,x1,y0,y1] per rect, flat
+    # Parameters layout:
+    #   X0          (3)
+    #   wp          (2)
+    #   turkey      (2)
+    #   chase       (1)
+    #   dyn_obs     (2M)
+    #   h0          (M)
+    #   uprev       (2)
+    #   static_flags  (N)   ← 1.0 if horizon step k is on a static obstacle cell
+    #   dynamic_flags (N)   ← 1.0 if horizon step k is on a dynamic obstacle cell
+    P_X0          = ca.SX.sym('X0',           n_s)
+    P_wp          = ca.SX.sym('wp',           2)
+    P_turk        = ca.SX.sym('turk',         2)
+    P_chase       = ca.SX.sym('chase',        1)
+    P_dyn         = ca.SX.sym('dyn',          2 * M)
+    P_h0          = ca.SX.sym('h0',           M)
+    P_uprev       = ca.SX.sym('uprev',        n_u)
+    P_static_flags  = ca.SX.sym('s_flags',   N)   # concrete 0/1 per step
+    P_dynamic_flags = ca.SX.sym('d_flags',   N)   # concrete 0/1 per step
 
     p_all = ca.vertcat(
         P_X0, P_wp, P_turk, P_chase,
-        P_dyn, P_h0d, P_uprev,
-        P_frect,
+        P_dyn, P_h0, P_uprev,
+        P_static_flags, P_dynamic_flags,
     )
 
-    # ── Cost ─────────────────────────────────────────────────────────────────
+    # Cost and dynamics equality
     obj  = 0
-    for i in range(KF):
-        obj += W_SLACK_FIX * S_fix[i]**2
-    for i in range(KD):
-        obj += W_SLACK_DYN * S_dyn[i]**2
-
     g_eq = [X_mpc[:, 0] - P_X0]
+
+    # Dynamic obstacle slack cost
+    for m in range(M):
+        obj += W_SLACK * S_dyn[m]**2
 
     for k in range(N):
         xk  = X_mpc[0, k];  yk  = X_mpc[1, k];  thk = X_mpc[2, k]
         vlk = U_mpc[0, k];  vrk = U_mpc[1, k]
 
+        # XY running cost
         obj += W_XY_RUN * ((xk - P_wp[0])**2 + (yk - P_wp[1])**2)
 
-        # Scan heading
-        wp_dx  = P_wp[0] - xk;  wp_dy = P_wp[1] - yk
+        # ── Grid-lookup obstacle penalty ──────────────────────────────────────
+        # P_static_flags[k] and P_dynamic_flags[k] are concrete 0.0 or 1.0
+        # values passed as parameters — no symbolic indexing required.
+        obj += W_OBS_STATIC  * P_static_flags[k]
+        obj += W_OBS_DYNAMIC * P_dynamic_flags[k]
+
+        # Scan heading (chase=0)
+        wp_dx  = P_wp[0]   - xk
+        wp_dy  = P_wp[1]   - yk
         wp_reg = ca.sqrt(wp_dx**2 + wp_dy**2 + 1e-6)
         ang_wp = ca.atan2(-wp_dy / wp_reg, wp_dx / wp_reg)
         err_wp = ca.atan2(ca.sin(ang_wp - thk), ca.cos(ang_wp - thk))
         obj   += (1 - P_chase) * W_HEADING * err_wp**2
 
-        # Chase heading
-        tk_dx   = P_turk[0] - xk;  tk_dy = P_turk[1] - yk
-        tk_reg  = ca.sqrt(tk_dx**2 + tk_dy**2 + 1e-6)
-        ang_t   = ca.atan2(-tk_dy / tk_reg, tk_dx / tk_reg)
+        # Chase heading (chase=1)
+        tk_dx  = P_turk[0] - xk
+        tk_dy  = P_turk[1] - yk
+        tk_reg = ca.sqrt(tk_dx**2 + tk_dy**2 + 1e-6)
+        ang_t  = ca.atan2(-tk_dy / tk_reg, tk_dx / tk_reg)
         err_fov = ca.atan2(ca.sin(ang_t - thk), ca.cos(ang_t - thk))
         obj    += P_chase * W_FOV * err_fov**2
 
+        # Turn-rate + smoothness
         obj += W_OMEGA * ((vrk - vlk) / L)**2
         u_prev_k = P_uprev if k == 0 else U_mpc[:, k - 1]
         obj     += W_INPUT_DIFF * ca.sumsqr(U_mpc[:, k] - u_prev_k)
 
+        # Dynamics equality
         g_eq.append(X_mpc[:, k + 1] - f_disc(X_mpc[:, k], U_mpc[:, k]))
 
+    # Terminal XY cost
     obj += W_XY_TERM * (
         (X_mpc[0, N] - P_wp[0])**2 + (X_mpc[1, N] - P_wp[1])**2
     )
 
-    # ── Fixed obstacle CBF ────────────────────────────────────────────────────
+    # Dynamic obstacle CBF inequalities
     g_ineq = []
-    for i in range(KF):
-        rx0 = P_frect[4 * i + 0];  rx1 = P_frect[4 * i + 1]
-        ry0 = P_frect[4 * i + 2];  ry1 = P_frect[4 * i + 3]
-
-        def rect_dist2(px, py):
-            ddx = ca.fmax(rx0 - px, ca.fmax(0.0, px - rx1))
-            ddy = ca.fmax(ry0 - py, ca.fmax(0.0, py - ry1))
-            return ddx**2 + ddy**2
-
-        for k in range(N):
-            hk  = rect_dist2(X_mpc[0, k],   X_mpc[1, k])   - R_FIX**2
-            hk1 = rect_dist2(X_mpc[0, k+1], X_mpc[1, k+1]) - R_FIX**2
-            g_ineq.append(hk1 - (1 - CBF_GAMMA_FX) * hk + S_fix[i])
-
-    # ── Dynamic obstacle CBF ──────────────────────────────────────────────────
-    for i in range(KD):
-        ox = P_dyn[2 * i];  oy = P_dyn[2 * i + 1]
+    for m in range(M):
+        ox = P_dyn[2 * m];  oy = P_dyn[2 * m + 1]
         for k in range(N):
             xk  = X_mpc[0, k];   yk  = X_mpc[1, k]
             xk1 = X_mpc[0, k+1]; yk1 = X_mpc[1, k+1]
             hk  = (xk  - ox)**2 + (yk  - oy)**2 - R_DYN**2
             hk1 = (xk1 - ox)**2 + (yk1 - oy)**2 - R_DYN**2
-            g_ineq.append(hk1 - (1 - CBF_GAMMA_DY) * hk + S_dyn[i])
+            g_ineq.append(hk1 - (1 - CBF_GAMMA) * hk + S_dyn[m])
 
-    # ── Pack NLP ──────────────────────────────────────────────────────────────
+    # Pack NLP
     opt_vars = ca.vertcat(
         ca.reshape(X_mpc, -1, 1),
         ca.reshape(U_mpc, -1, 1),
-        S_fix,
         S_dyn,
     )
-    n_dec      = opt_vars.numel()
-    ctrl_start = n_s * (N + 1)
-    sfix_start = ctrl_start + n_u * N
-    sdyn_start = sfix_start + KF
+    n_dec       = opt_vars.numel()
+    ctrl_start  = n_s * (N + 1)
+    slack_start = ctrl_start + n_u * N
 
     lbx = -np.inf * np.ones(n_dec)
     ubx =  np.inf * np.ones(n_dec)
-    lbx[ctrl_start:sfix_start] = V_MIN
-    ubx[ctrl_start:sfix_start] = V_MAX
-    lbx[sfix_start:]           = 0.0   # all slacks non-negative
+    lbx[ctrl_start:slack_start] = V_MIN
+    ubx[ctrl_start:slack_start] = V_MAX
+    lbx[slack_start:]           = 0.0
 
     g_eq_cat   = ca.vertcat(*g_eq)
     g_ineq_cat = ca.vertcat(*g_ineq)
@@ -269,37 +273,32 @@ def build_mpc_solver(n_steps: int,
 
     n_eq   = g_eq_cat.numel()
     n_ineq = g_ineq_cat.numel()
-    lbg    = np.concatenate([np.zeros(n_eq),   np.zeros(n_ineq)])
-    ubg    = np.concatenate([np.zeros(n_eq),   np.inf * np.ones(n_ineq)])
+    lbg    = np.concatenate([np.zeros(n_eq), np.zeros(n_ineq)])
+    ubg    = np.concatenate([np.zeros(n_eq), np.inf * np.ones(n_ineq)])
 
     solver = ca.nlpsol('solver', 'ipopt',
         {'f': obj, 'x': opt_vars, 'g': g_all, 'p': p_all},
         {
-            'ipopt.print_level':                0,
-            'print_time':                       0,
-            'ipopt.tol':                        5e-3,
-            'ipopt.max_iter':                   50,
-            'ipopt.warm_start_init_point':      'yes',
-            'ipopt.mu_strategy':                'adaptive',
-            'ipopt.hessian_approximation':      'limited-memory',
-            'ipopt.limited_memory_max_history': 6,
+            'ipopt.print_level':           0,
+            'print_time':                  0,
+            'ipopt.tol':                   1e-3,
+            'ipopt.max_iter':              80,
+            'ipopt.warm_start_init_point': 'yes',
         }
     )
 
     return dict(
-        solver     = solver,
-        lbx        = lbx,   ubx = ubx,
-        lbg        = lbg,   ubg = ubg,
-        n_dec      = n_dec,
-        ctrl_start = ctrl_start,
-        sfix_start = sfix_start,
-        sdyn_start = sdyn_start,
-        n_s        = n_s,
-        n_u        = n_u,
-        N          = N,
-        KF         = KF,
-        KD         = KD,
-        n_p        = p_all.numel(),
+        solver      = solver,
+        lbx         = lbx,   ubx         = ubx,
+        lbg         = lbg,   ubg         = ubg,
+        n_dec       = n_dec,
+        ctrl_start  = ctrl_start,
+        slack_start = slack_start,
+        n_s         = n_s,
+        n_u         = n_u,
+        N           = N,
+        M           = M,
+        n_p         = p_all.numel(),
     )
 
 
@@ -308,16 +307,19 @@ def build_mpc_solver(n_steps: int,
 # =============================================================================
 
 def build_param_vector(state, waypoint, turkey_xy, chase_mode,
-                       dynamic_obstacles, fix_rects: np.ndarray):
+                       dynamic_obstacles, M,
+                       static_flags, dynamic_flags):
     """
-    fix_rects : (N_FIX_OBS, 4) from nearest_fix_obs_rects(), cols [x0,x1,y0,y1]
+    Pack all MPC parameters into a flat numpy vector.
+
+    static_flags  : (N,) float array — 1.0 where step k hits a static obstacle
+    dynamic_flags : (N,) float array — 1.0 where step k hits a dynamic obstacle
     """
-    KD         = M_DYN
-    dyn_padded = list(dynamic_obstacles) + [(-999.0, -999.0)] * (KD - len(dynamic_obstacles))
+    dyn_padded = list(dynamic_obstacles) + [(-999.0, -999.0)] * (M - len(dynamic_obstacles))
     dyn_flat   = np.array([(ox, oy) for ox, oy in dyn_padded]).flatten()
     rx, ry     = state[0], state[1]
-    h0d        = np.array([(rx - ox)**2 + (ry - oy)**2 - R_DYN**2
-                            for ox, oy in dyn_padded])
+    h0_vals    = np.array([(rx-ox)**2 + (ry-oy)**2 - R_DYN**2
+                           for ox, oy in dyn_padded])
     turkey     = np.array(turkey_xy, dtype=float) if turkey_xy is not None else np.zeros(2)
 
     return np.concatenate([
@@ -325,9 +327,10 @@ def build_param_vector(state, waypoint, turkey_xy, chase_mode,
         np.array(waypoint, dtype=float),
         turkey,
         [1.0 if chase_mode else 0.0],
-        dyn_flat, h0d,
-        np.zeros(2),          # u_prev placeholder — filled in MPC_Main
-        fix_rects.flatten(),  # 4 * N_FIX_OBS
+        dyn_flat, h0_vals,
+        np.zeros(2),                          # u_prev placeholder
+        static_flags.astype(np.float64),      # N values
+        dynamic_flags.astype(np.float64),     # N values
     ])
 
 
@@ -346,22 +349,22 @@ def _make_state_seeded_guess(state, mpc_dict):
 
 
 def _shift_warm_start(sol_flat, mpc_dict):
-    n_s        = mpc_dict['n_s']
-    n_u        = mpc_dict['n_u']
-    N          = mpc_dict['N']
-    ctrl_start = mpc_dict['ctrl_start']
-    sfix_start = mpc_dict['sfix_start']
-    n_dec      = mpc_dict['n_dec']
+    n_s         = mpc_dict['n_s']
+    n_u         = mpc_dict['n_u']
+    N           = mpc_dict['N']
+    ctrl_start  = mpc_dict['ctrl_start']
+    slack_start = mpc_dict['slack_start']
+    n_dec       = mpc_dict['n_dec']
 
     X_flat  = sol_flat[:ctrl_start].reshape(n_s, N + 1, order='F')
-    U_flat  = sol_flat[ctrl_start:sfix_start].reshape(n_u, N, order='F')
+    U_flat  = sol_flat[ctrl_start:slack_start].reshape(n_u, N, order='F')
     X_shift = np.hstack([X_flat[:, 1:], X_flat[:, -1:]])
     U_shift = np.hstack([U_flat[:, 1:], U_flat[:, -1:]])
 
     x0 = np.zeros(n_dec)
     x0[:ctrl_start]            = X_shift.flatten(order='F')
-    x0[ctrl_start:sfix_start]  = U_shift.flatten(order='F')
-    x0[sfix_start:]            = sol_flat[sfix_start:]   # carry slacks forward
+    x0[ctrl_start:slack_start] = U_shift.flatten(order='F')
+    x0[slack_start:]           = sol_flat[slack_start:]
     return x0
 
 
@@ -376,13 +379,13 @@ class MPC_loop:
         self.MPCFeedback_pub = MPCFeedback_Navigation_pub
         self._parent         = parent
 
-        self._mode        = "idle"
-        self._waypoints   = []
-        self._wp_idx      = 0
+        self._mode            = "idle"
+        self._waypoints       = []
+        self._wp_idx          = 0
 
-        self._turkey_pos  = None
-        self._chase_mode  = False
-        self._dynamic_obs = []
+        self._turkey_pos      = None
+        self._chase_mode      = False
+        self._dynamic_obs     = []
 
         self._pivot_target_hdg    = 0.0
         self._pivot_threshold_deg = PIVOT_THRESHOLD_DEG
@@ -395,11 +398,13 @@ class MPC_loop:
         self._u_prev           = np.zeros(2)
         self._last_solver_was_light = False
 
-        print(f"[MPC] Building full solver  (N={N_FULL}, KF={N_FIX_OBS}, KD={M_DYN})...")
-        self._mpc_full  = build_mpc_solver(N_FULL)
-        print(f"[MPC] Building light solver (N={N_LIGHT}, KF={N_FIX_OBS}, KD={M_DYN})...")
-        self._mpc_light = build_mpc_solver(N_LIGHT)
-        print(f"[MPC] Ready. full n_dec={self._mpc_full['n_dec']}  "
+        M = 5
+        print(f"[MPC] Building full solver  (N={N_FULL})...")
+        self._mpc_full  = build_mpc_solver(N_FULL,  max_dynamic_obstacles=M)
+        print(f"[MPC] Building light solver (N={N_LIGHT})...")
+        self._mpc_light = build_mpc_solver(N_LIGHT, max_dynamic_obstacles=M)
+        print(f"[MPC] Both solvers ready. "
+              f"full n_dec={self._mpc_full['n_dec']}, "
               f"light n_dec={self._mpc_light['n_dec']}")
 
     # ── Public setters ────────────────────────────────────────────────────────
@@ -482,6 +487,7 @@ class MPC_loop:
 
     async def MPC_Main(self, logger=None):
 
+        # Pivot
         if self._mode == "pivot":
             state   = get_state(self._parent)
             hdg_err = wrap(self._pivot_target_hdg - state[2])
@@ -501,7 +507,7 @@ class MPC_loop:
                 if logger:
                     logger.log(
                         state=state, mode="pivot",
-                        waypoint=self._waypoints[self._wp_idx] if self._waypoints else (0, 0),
+                        waypoint=self._waypoints[self._wp_idx] if self._waypoints else (0,0),
                         turkey_pos=self._turkey_pos,
                         edt_distance=self._parent.Map.min_rect_dist(*state[:2]),
                         vl=float(u[0]), vr=float(u[1]),
@@ -518,11 +524,12 @@ class MPC_loop:
             return
 
         state      = get_state(self._parent)
+        M          = self._mpc_full['M']
         current_wp = np.array(self._waypoints[self._wp_idx], dtype=float)
         is_final   = (self._wp_idx == len(self._waypoints) - 1)
         dist_to_wp = np.linalg.norm(state[:2] - current_wp)
 
-        # Dot-product waypoint advance
+        # Dot-product advance
         if not is_final:
             next_wp  = np.array(self._waypoints[self._wp_idx + 1], dtype=float)
             to_robot = state[:2] - current_wp
@@ -592,23 +599,41 @@ class MPC_loop:
 
         init_guess = self._init_guess_light if use_light else self._init_guess_full
 
-        # ── Nearest fixed rects (vectorised NumPy) ────────────────────────────
-        fix_rects = nearest_fix_obs_rects(state[:2], self._parent.Map.Obstacle_Rects)
-
-        # ── Parameter vector ──────────────────────────────────────────────────
-        p_vec = build_param_vector(
-            state=state, waypoint=current_wp,
-            turkey_xy=self._turkey_pos, chase_mode=self._chase_mode,
-            dynamic_obstacles=self._dynamic_obs[:M_DYN],
-            fix_rects=fix_rects,
-        )
-        p_vec[_UPREV_IDX]     = self._u_prev[0]
-        p_vec[_UPREV_IDX + 1] = self._u_prev[1]
-
-        # ── Initial guess ─────────────────────────────────────────────────────
+        # ── Initial guess (needed before flag computation) ────────────────────
         warm = (init_guess is not None)
         if not warm:
             init_guess = _make_state_seeded_guess(state, mpc)
+
+        # ── Grid-lookup obstacle flags (NumPy, no CasADi) ────────────────────
+        # Uses the warm-start trajectory to predict which horizon steps land on
+        # obstacle cells.  Lag of one tick is negligible at 0.1s / 3m/s max.
+        N = mpc['N']
+        static_flags, dynamic_flags = compute_obs_flags(
+            init_guess, self._parent.Map.Zone_Map, N
+        )
+
+        # Log how many steps are flagged — useful for debugging near obstacles
+        n_static_flagged  = int(static_flags.sum())
+        n_dynamic_flagged = int(dynamic_flags.sum())
+        if n_static_flagged > 0:
+            print(f"[MPC] WARNING: {n_static_flagged} horizon steps on static obstacle cells")
+        if n_dynamic_flagged > 0:
+            print(f"[MPC] NOTE: {n_dynamic_flagged} horizon steps on dynamic obstacle cells")
+
+        # ── Parameter vector ──────────────────────────────────────────────────
+        dyn_list = self._dynamic_obs[:M]
+        p_vec    = build_param_vector(
+            state=state, waypoint=current_wp,
+            turkey_xy=self._turkey_pos, chase_mode=self._chase_mode,
+            dynamic_obstacles=dyn_list, M=M,
+            static_flags=static_flags,
+            dynamic_flags=dynamic_flags,
+        )
+        # u_prev is at a fixed offset: X0(3)+wp(2)+turkey(2)+chase(1)+dyn(2M)+h0(M)
+        # With M=5: offset = 3+2+2+1+10+5 = 23
+        _uprev_idx = 3 + 2 + 2 + 1 + 2 * M + M
+        p_vec[_uprev_idx]     = self._u_prev[0]
+        p_vec[_uprev_idx + 1] = self._u_prev[1]
 
         # ── Solve ─────────────────────────────────────────────────────────────
         t0  = time.perf_counter()
@@ -655,7 +680,8 @@ class MPC_loop:
               f"{'chase' if self._chase_mode else 'scan '} "
               f"state=({state[0]:.2f},{state[1]:.2f},{np.degrees(state[2]):.1f}deg) "
               f"u=[{u[0]:.2f},{u[1]:.2f}] "
-              f"solve={solve_ms:.1f}ms warm={warm}")
+              f"solve={solve_ms:.1f}ms warm={warm} "
+              f"obs_flags=[s:{n_static_flagged},d:{n_dynamic_flagged}]")
 
         await self._send(u)
 

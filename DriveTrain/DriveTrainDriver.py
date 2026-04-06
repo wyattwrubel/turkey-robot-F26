@@ -15,7 +15,7 @@ class MotorDriver:
         self.Verbose        = Verbose
         self.SkipUKFUpdates = SkipUKFUpdates
         
-        initial_state = np.array([20.0, 15.0, 0.0])
+        initial_state = np.array([10.0, 75.0, 45.0])
         P0    = np.diag([0.5, 0.5, 0.1])
         Q     = np.diag([0.00025, 0.00025, 0.0017])
         R_uwb = np.diag([0.02, 0.02])

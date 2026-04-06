@@ -253,6 +253,8 @@ class StatePlannerReceiver:
 
         async def _gesture_loop():
             while True:
+                if self.Turkeys is None:
+                    return
                 robot_pos      = np.array(self.Current_RobotPose[:2])
                 nearest_turkey = min(self.Turkeys, key=lambda t: np.linalg.norm(np.array(t[:2]) - robot_pos))
                 dist           = np.linalg.norm(np.array(nearest_turkey[:2]) - robot_pos)
@@ -283,7 +285,7 @@ class StatePlannerReceiver:
                 await asyncio.sleep(10)
             base_heading = float(self.Current_RobotPose[2])
             self._dbg(f"[Alert] Spinning at {np.round(self.Current_RobotPose[:2], 2)}")
-            for i in range(1, 13):
+            for i in range(1, 12):
                 robot_pos      = np.array(self.Current_RobotPose[:3])
                 target_heading = ((base_heading + i * np.pi / 2) + np.pi) % (2 * np.pi) - np.pi
                 await self.MotionCommand_Publisher.publish({"Id": "Orient", "Cmd": [robot_pos[0], robot_pos[1], target_heading]})
