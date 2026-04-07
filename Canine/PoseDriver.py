@@ -14,11 +14,11 @@ class PoseDriver():
     Rear_Right_Pin = 3
     Head_Pin = 4
 
-    Front_Left_Offset = -41 # Subtract off to be at 0
+    Front_Left_Offset = -43 # Subtract off to be at 0
     Front_Right_Offset = 44
-    Rear_Left_Offset = 0
+    Rear_Left_Offset = 49
     Rear_Right_Offset = -18
-    Head_Offset = 0
+    Head_Offset = -6
 
     Default_Angle_Delay = 0.5 # Seconds
  
@@ -31,7 +31,7 @@ class PoseDriver():
         self.servos["FrontRight"] = SC.ServoController("FrontRight", "Leg", self.Front_Right_Pin, self.Front_Right_Offset, False, Simulated, Verbose)
         self.servos["RearLeft"] = SC.ServoController("RearLeft", "Leg", self.Rear_Left_Pin, self.Rear_Left_Offset, True, Simulated, Verbose)
         self.servos["RearRight"] = SC.ServoController("RearRight", "Leg", self.Rear_Right_Pin, self.Rear_Right_Offset, False, Simulated, Verbose)
-        self.servos["Head"] = SC.ServoController("Head", "Head", self.Head_Pin, self.Head_Offset, False, Simulated, Verbose)
+        self.servos["Head"] = SC.ServoController("Head", "Head", self.Head_Pin, self.Head_Offset, True, Simulated, Verbose)
         self.ServoAnglePublisher = ServoAnglePublisher
 
     async def CanineMotor_Receiver(self, data):

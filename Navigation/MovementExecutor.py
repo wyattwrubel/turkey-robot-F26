@@ -321,7 +321,7 @@ class MPC_loop:
             state = get_state(self._parent)
             err   = wrap(self._pivot_target_hdg - state[2])
             if abs(np.degrees(err)) < PIVOT_ALIGN_DEG:
-                print("[MPC] Pivot complete.")
+                # print("[MPC] Pivot complete.")
                 if self._pivot_is_chase_orient:
                     # Post-chase-arrival orient — always land in idle.
                     # Never loop back to chase with empty waypoints.
@@ -329,7 +329,7 @@ class MPC_loop:
                     self._pivot_is_chase_orient = False
                     self._dist_history          = []
                     await self._pub_clear()
-                    print("[MPC] Chase orient complete — idle.")
+                    # print("[MPC] Chase orient complete — idle.")
                 else:
                     # Normal pivot (pre-move align or external Orient CMD)
                     self._mode = "chase" if self._chase_mode else "trajectory"
@@ -366,7 +366,7 @@ class MPC_loop:
         # Guard: if we somehow enter trajectory/chase with no waypoints, go idle
         # rather than spinning in an at_end loop.
         if not self._waypoints:
-            print(f"[MPC] {self._mode} with empty waypoints — going idle")
+            # print(f"[MPC] {self._mode} with empty waypoints — going idle")
             self._mode = "idle"
             await self._send(np.zeros(2))
             await self._pub_clear()
@@ -389,14 +389,14 @@ class MPC_loop:
                 # NOT back to chase (which would cause the deadlock seen in logs).
                 tx, ty = float(self._turkey_pos[0]), float(self._turkey_pos[1])
                 hdg    = np.arctan2(-(ty - state[1]), tx - state[0])
-                print(f"[MPC] Chase path end — orienting toward turkey "
-                      f"({np.degrees(hdg):.1f}deg)")
+                # print(f"[MPC] Chase path end — orienting toward turkey "
+                    #   f"({np.degrees(hdg):.1f}deg)")
                 self._pivot_target_hdg      = hdg
                 self._pivot_is_chase_orient = True
                 self._waypoints             = []   # consumed
                 self._mode                  = "pivot"
             else:
-                print("[MPC] Path end reached — idle")
+                # print("[MPC] Path end reached — idle")
                 self._mode         = "idle"
                 self._dist_history = []
                 await self._pub_clear()
@@ -420,7 +420,7 @@ class MPC_loop:
                    and (self._dist_history[0] - dist_to_ref) < STALL_DELTA)
 
         if stalled:
-            print(f"[MPC] Stall replan (dist_to_ref={dist_to_ref:.2f}m)")
+            # print(f"[MPC] Stall replan (dist_to_ref={dist_to_ref:.2f}m)")
             self._dist_history = []; self._guess = None
             asyncio.create_task(self._parent.replan_to(self._target))
 
@@ -451,10 +451,10 @@ class MPC_loop:
                 solve_time_ms=ms, warm_start=warm,
                 replan=False, n_waypoints=len(self._waypoints))
 
-        print(f"[MPC] mode={self._mode} dist={dist_to_ref:.2f}m edt={edt:.2f}m "
-              f"state=({state[0]:.2f},{state[1]:.2f},{np.degrees(state[2]):.1f}deg) "
-              f"u=[{u[0]:.2f},{u[1]:.2f}] solve={ms:.1f}ms warm={warm} "
-              f"vlim=[{self._v_min:.1f},{self._v_max:.1f}]")
+        # print(f"[MPC] mode={self._mode} dist={dist_to_ref:.2f}m edt={edt:.2f}m "
+        #       f"state=({state[0]:.2f},{state[1]:.2f},{np.degrees(state[2]):.1f}deg) "
+        #       f"u=[{u[0]:.2f},{u[1]:.2f}] solve={ms:.1f}ms warm={warm} "
+        #       f"vlim=[{self._v_min:.1f},{self._v_max:.1f}]")
 
         await self._send(u)
 

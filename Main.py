@@ -89,7 +89,7 @@ async def main():
 
     TestVision = FakeVision(TESTING_VideoFeed_Vision_pub, TESTING_VisionObject_Vision_pub)
 
-    Canine = CanineDriver(ServoFeedback_Canine_pub, Canine_Canine_pub, Simulated=True, Verbose=False)
+    Canine = CanineDriver(ServoFeedback_Canine_pub, Canine_Canine_pub, Simulated=False, Verbose=False)
 
     Drivetrain = MotorDriver(RobotPose_Drivetrain_pub, SlipFeedback_Drivetrain_pub, Simulated=True, SkipUKFUpdates=True)
 
