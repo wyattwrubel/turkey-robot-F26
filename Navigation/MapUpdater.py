@@ -19,31 +19,25 @@ class Map:
     # Hardcoded obstacle rectangle decomposition for the current placeholder map.
     # Format: (x_min, x_max, y_min, y_max) in grid cells (== metres).
     #
-    # These were derived by running a maximal-rectangle decomposition on the
-    # Zone.csv obstacle layer (cells == 1).  8 rectangles cover all 659
-    # obstacle cells exactly with zero overlap gaps.
-    #
     # TODO: replace with automated decomposition once the final map is received.
-    #       See the decomposition script in the project notes.
     # -------------------------------------------------------------------------
     OBSTACLE_RECTS = [
-        # (x_min, x_max, y_min, y_max)
-        (36, 40, 12, 58),   # right interior wall segment
-        ( 0,  1,  0, 77),   # left boundary wall
-        ( 2, 40,  0,  1),   # top boundary wall
-        ( 2, 40, 76, 77),   # bottom boundary wall
-        ( 8, 14, 52, 58),   # 7×7 interior obstacle
-        (39, 40, 59, 75),   # right boundary lower segment
-        (39, 40,  2, 11),   # right boundary upper segment
-        (12, 14, 20, 22),   # 3×3 interior obstacle
+        (36, 40, 12, 58),
+        ( 0,  1,  0, 77),
+        ( 2, 40,  0,  1),
+        ( 2, 40, 76, 77),
+        ( 8, 14, 52, 58),
+        (39, 40, 59, 75),
+        (39, 40,  2, 11),
+        (12, 14, 20, 22),
     ]
 
     def __init__(self):
         self._Human_List  = []
         self._Turkey_List = []
 
-        self.Zone_Map      = np.zeros((100, 100), dtype=int)
-        self.Obstacle_Rects = self.OBSTACLE_RECTS   # expose for MPC / PathGenerator
+        self.Zone_Map       = np.zeros((100, 100), dtype=int)
+        self.Obstacle_Rects = self.OBSTACLE_RECTS
 
         self.LoadGrid()
 
@@ -102,13 +96,7 @@ class Map:
     # -------------------------------------------------------------------------
 
     def min_rect_dist(self, x: float, y: float) -> float:
-        """
-        Minimum algebraic distance from point (x, y) to any fixed obstacle
-        rectangle.  Used by the logger and for diagnostics.
-
-        Returns distance in metres (grid cells).  Zero means on the boundary
-        of an obstacle; negative means inside.
-        """
+        """Minimum distance from (x, y) to any fixed obstacle rectangle."""
         min_d = np.inf
         for (x0, x1, y0, y1) in self.Obstacle_Rects:
             dx = max(x0 - x, 0.0, x - x1)

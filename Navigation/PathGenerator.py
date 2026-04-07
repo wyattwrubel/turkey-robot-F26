@@ -1,98 +1,136 @@
 import heapq
 import numpy as np
 from collections import deque
-
+from scipy.ndimage import distance_transform_edt
 
 # =============================================================================
 # Config
 # =============================================================================
 
-# Cells within this distance of a fixed obstacle are treated as blocked during
-# planning.  1.5m keeps the planner naturally away from walls, accounting for
-# mapping uncertainty and robot footprint.
-PLANNING_CLEARANCE = 1.5   # metres (== grid cells, 1 cell = 1 m)
+EDT_WEIGHT      = 2.0   # how strongly A* favours corridor centres
+STRAIGHT_WEIGHT = 0.3   # bonus cost for direction changes (favours straight lines)
+
+# Cells within this EDT distance of a static obstacle are treated as blocked.
+# This must be >= MPC STATIC_MARGIN (0.5m) so A* never routes through gaps
+# that MPC cannot physically execute.  Set to 0.7m to give a small buffer
+# above the 0.5m MPC hard constraint margin.
+PLANNING_CLEARANCE = 0.7   # metres (== grid cells, 1 cell = 1 m)
+
+# =============================================================================
+# EDT cache — recomputed only when the static obstacle layer changes
+# =============================================================================
+
+_edt_cache   = None
+_static_hash = None
+
+
+def _get_edt(map_grid):
+    """
+    Return the EDT of the static-obstacle-free space.
+    Cached — only recomputed when the static layer (cells == 1) changes.
+    """
+    global _edt_cache, _static_hash
+
+    static_mask = (map_grid == 1).astype(np.uint8)
+    h           = hash(static_mask.tobytes())
+
+    if h != _static_hash:
+        free         = (static_mask == 0).astype(np.uint8)
+        _edt_cache   = distance_transform_edt(free).astype(np.float32)
+        _static_hash = h
+
+    return _edt_cache
 
 
 # =============================================================================
-# Clearance check using rectangle list
+# Helpers
 # =============================================================================
 
-def _min_rect_dist(obstacle_rects, x, y):
+def _is_blocked(map_grid, edt, x, y):
     """
-    Minimum distance from grid cell (x, y) to any fixed obstacle rectangle.
-    Cheap NumPy arithmetic — no grid array lookup needed.
+    True if cell (x, y) is:
+      - out of bounds
+      - a static obstacle  (map == 1)
+      - a dynamic obstacle (map == 2)
+      - within PLANNING_CLEARANCE of a static obstacle (EDT check)
+
+    The clearance rejection is what prevents A* from routing through gaps
+    narrower than the robot can physically traverse under MPC.
     """
-    min_d = np.inf
-    for (x0, x1, y0, y1) in obstacle_rects:
-        dx = max(x0 - x, 0.0, x - x1)
-        dy = max(y0 - y, 0.0, y - y1)
-        d  = np.sqrt(dx*dx + dy*dy)
-        if d < min_d:
-            min_d = d
-    return min_d
-
-
-def _is_blocked(map_grid, obstacle_rects, x, y):
-    """True if cell (x, y) is an obstacle, dynamic obstacle, or too close to a
-    fixed obstacle rectangle."""
     h, w = map_grid.shape
     if x < 0 or x >= w or y < 0 or y >= h:
         return True
-    if map_grid[y, x] == 1 or map_grid[y, x] == 2:
+    cell = map_grid[y, x]
+    if cell == 1 or cell == 2:
         return True
-    if _min_rect_dist(obstacle_rects, x, y) < PLANNING_CLEARANCE:
+    if float(edt[y, x]) < PLANNING_CLEARANCE:
         return True
     return False
 
 
-def _line_of_sight(map_grid, obstacle_rects, a, b):
+def _diagonal_cuts_corner(map_grid, edt, cx, cy, dx, dy):
+    """True when a diagonal step would clip through an obstacle corner."""
+    if abs(dx) == 1 and abs(dy) == 1:
+        return (_is_blocked(map_grid, edt, cx + dx, cy) or
+                _is_blocked(map_grid, edt, cx,       cy + dy))
+    return False
+
+
+def _nearest_free(map_grid, edt, cell):
+    """BFS outward from cell until a free, sufficiently clear cell is found."""
+    h, w = map_grid.shape
+    q    = deque([cell])
+    seen = {cell}
+    while q:
+        cx, cy = q.popleft()
+        if not _is_blocked(map_grid, edt, cx, cy):
+            return (cx, cy)
+        for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+            nx, ny = cx + dx, cy + dy
+            if (nx, ny) not in seen and 0 <= nx < w and 0 <= ny < h:
+                seen.add((nx, ny))
+                q.append((nx, ny))
+    return cell
+
+
+# =============================================================================
+# A* with EDT centering, planning clearance, and straight-line preference
+# =============================================================================
+
+NEIGHBORS = [
+    (-1,  0, 1.0),   ( 1,  0, 1.0),   ( 0, -1, 1.0),   ( 0,  1, 1.0),
+    (-1, -1, 1.414), (-1,  1, 1.414), ( 1, -1, 1.414),  ( 1,  1, 1.414),
+]
+
+
+def _astar(map_grid, start, goal):
     """
-    Bresenham line-of-sight check between grid cells a and b.
-    Returns True iff every cell along the line is free and has sufficient
-    clearance from fixed obstacle rectangles.
+    A* on the Zone_Map grid.
+
+    Edge cost = move_distance
+              + EDT_WEIGHT / (edt(neighbour) + 0.5)   ← corridor centering
+              + STRAIGHT_WEIGHT * direction_changed     ← straight-line bias
+
+    Cells with EDT < PLANNING_CLEARANCE are treated as blocked (see _is_blocked),
+    so the planner naturally routes through the centre of corridors and never
+    produces a path through a gap too tight for MPC to execute.
+
+    Falls back to closest reachable node if goal is unreachable.
     """
-    x0, y0 = a
-    x1, y1 = b
-    dx = abs(x1 - x0);  dy = abs(y1 - y0)
-    sx = 1 if x1 > x0 else -1
-    sy = 1 if y1 > y0 else -1
-    err = dx - dy
+    edt  = _get_edt(map_grid)
     h, w = map_grid.shape
 
-    while True:
-        if x0 < 0 or x0 >= w or y0 < 0 or y0 >= h:
-            return False
-        if map_grid[y0, x0] == 1 or map_grid[y0, x0] == 2:
-            return False
-        if _min_rect_dist(obstacle_rects, x0, y0) < PLANNING_CLEARANCE:
-            return False
-        if x0 == x1 and y0 == y1:
-            return True
-        e2 = 2 * err
-        if e2 > -dy:
-            err -= dy;  x0 += sx
-        if e2 <  dx:
-            err += dx;  y0 += sy
+    def edt_penalty(x, y):
+        col = int(np.clip(x, 0, w - 1))
+        row = int(np.clip(y, 0, h - 1))
+        return EDT_WEIGHT / (float(edt[row, col]) + 0.5)
 
-
-# =============================================================================
-# Theta*
-# =============================================================================
-
-def _theta_star(map_grid, obstacle_rects, start, goal):
-    """
-    Theta* on the Zone_Map grid.  Produces sparse, geometrically smooth
-    waypoints by allowing any-angle edges via line-of-sight checks.
-    Falls back to closest node reached if the goal is unreachable.
-    """
-    neighbors = [(-1,0),(1,0),(0,-1),(0,1),
-                 (-1,-1),(-1,1),(1,-1),(1,1)]
-
-    came_from = {start: start}
+    came_from = {start: (start, None)}
     gscore    = {start: 0.0}
     open_heap = []
     closed    = set()
-    heapq.heappush(open_heap, (np.hypot(start[0]-goal[0], start[1]-goal[1]), start))
+    heapq.heappush(open_heap,
+                   (np.hypot(start[0]-goal[0], start[1]-goal[1]), start))
 
     best_node = start
     best_h    = np.hypot(start[0]-goal[0], start[1]-goal[1])
@@ -108,48 +146,53 @@ def _theta_star(map_grid, obstacle_rects, start, goal):
             continue
         closed.add(current)
 
-        h = np.hypot(current[0]-goal[0], current[1]-goal[1])
-        if h < best_h:
-            best_h    = h
+        h_val = np.hypot(current[0]-goal[0], current[1]-goal[1])
+        if h_val < best_h:
+            best_h    = h_val
             best_node = current
 
-        parent = came_from[current]
+        parent_node, parent_dir = came_from[current]
 
-        for dx, dy in neighbors:
+        for dx, dy, move_cost in NEIGHBORS:
             nx, ny   = current[0] + dx, current[1] + dy
             neighbor = (nx, ny)
 
-            if _is_blocked(map_grid, obstacle_rects, nx, ny):
+            if _is_blocked(map_grid, edt, nx, ny):
+                continue
+            if _diagonal_cuts_corner(map_grid, edt, current[0], current[1], dx, dy):
                 continue
             if neighbor in closed:
                 continue
 
-            if _line_of_sight(map_grid, obstacle_rects, parent, neighbor):
-                tentative_g = gscore[parent] + np.hypot(
-                    parent[0]-neighbor[0], parent[1]-neighbor[1])
-                use_parent  = parent
-            else:
-                tentative_g = gscore[current] + np.hypot(dx, dy)
-                use_parent  = current
+            direction_cost = (STRAIGHT_WEIGHT
+                              if parent_dir is not None and (dx, dy) != parent_dir
+                              else 0.0)
+
+            tentative_g = (gscore[current]
+                           + move_cost
+                           + edt_penalty(nx, ny)
+                           + direction_cost)
 
             if neighbor not in gscore or tentative_g < gscore[neighbor]:
-                came_from[neighbor] = use_parent
+                came_from[neighbor] = (current, (dx, dy))
                 gscore[neighbor]    = tentative_g
-                fscore              = tentative_g + np.hypot(
-                    neighbor[0]-goal[0], neighbor[1]-goal[1])
+                fscore              = tentative_g + np.hypot(nx-goal[0], ny-goal[1])
                 heapq.heappush(open_heap, (fscore, neighbor))
 
-    # Reconstruct
+    # Reconstruct path
     path    = []
     node    = best_node
     visited = set()
-    while node != came_from[node]:
+    while True:
         if node in visited:
             break
         visited.add(node)
         path.append(node)
-        node = came_from[node]
-    path.append(node)
+        parent_node, _ = came_from[node]
+        if parent_node == node:
+            break
+        node = parent_node
+
     path.reverse()
     return path
 
@@ -160,48 +203,34 @@ def _theta_star(map_grid, obstacle_rects, start, goal):
 
 def GenerateTrajectory(map_obj, current_state, desired_state):
     """
-    Theta* path planner.  Produces a sparse list of (x, y) grid-cell waypoints.
+    A* path planner with EDT corridor-centering, planning clearance, and
+    straight-line bias.
 
     Parameters
     ----------
-    map_obj       : MapUpdater.Map instance (has .Zone_Map and .Obstacle_Rects)
+    map_obj       : MapUpdater.Map instance  (.Zone_Map)
     current_state : array-like [x, y, ...]
     desired_state : array-like [x, y, ...]
 
     Returns
     -------
-    List of (int x, int y) waypoints — typically 2-6 points.
+    List of (int x, int y) waypoints.
+    If the goal is unreachable the path terminates at the closest reachable cell.
     """
-    map_grid      = map_obj.Zone_Map
-    obstacle_rects = map_obj.Obstacle_Rects
+    map_grid = map_obj.Zone_Map
+    h, w     = map_grid.shape
+    edt      = _get_edt(map_grid)
 
-    start = tuple(np.array(current_state[0:2]).round().astype(int))
-    goal  = tuple(np.array(desired_state[0:2]).round().astype(int))
+    start = tuple(np.array(current_state[:2]).round().astype(int))
+    goal  = tuple(np.array(desired_state[:2]).round().astype(int))
 
-    h, w  = map_grid.shape
     start = (int(np.clip(start[0], 0, w-1)), int(np.clip(start[1], 0, h-1)))
     goal  = (int(np.clip(goal[0],  0, w-1)), int(np.clip(goal[1],  0, h-1)))
 
-    if _is_blocked(map_grid, obstacle_rects, *start):
-        start = _nearest_free(map_grid, obstacle_rects, start, h, w)
-    if _is_blocked(map_grid, obstacle_rects, *goal):
-        goal  = _nearest_free(map_grid, obstacle_rects, goal,  h, w)
+    if _is_blocked(map_grid, edt, *start):
+        start = _nearest_free(map_grid, edt, start)
+    if _is_blocked(map_grid, edt, *goal):
+        goal  = _nearest_free(map_grid, edt, goal)
 
-    path = _theta_star(map_grid, obstacle_rects, start, goal)
+    path = _astar(map_grid, start, goal)
     return [(int(x), int(y)) for x, y in path]
-
-
-def _nearest_free(map_grid, obstacle_rects, cell, h, w):
-    """BFS outward from cell until a free, clear cell is found."""
-    q    = deque([cell])
-    seen = {cell}
-    while q:
-        cx, cy = q.popleft()
-        if not _is_blocked(map_grid, obstacle_rects, cx, cy):
-            return (cx, cy)
-        for dx, dy in [(-1,0),(1,0),(0,-1),(0,1)]:
-            nx, ny = cx+dx, cy+dy
-            if (nx, ny) not in seen and 0 <= nx < w and 0 <= ny < h:
-                seen.add((nx, ny))
-                q.append((nx, ny))
-    return cell
