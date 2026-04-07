@@ -40,14 +40,18 @@ class StatePlannerReceiver:
         self._module_chase = ModuleChase(self)
         self._module_alert = ModuleAlert(self)
 
-        self._scan_routine_idx  = 0
-        self._alert_routine_idx = 0
-        self._current_mode      = None
-        self._current_submode   = None
+        self._scan_routine_idx      = 0
+        self._scan_arrived_once     = False   # True once robot reaches its first waypoint
+        self._alert_routine_idx     = 0
+        self._current_mode          = None
+        self._current_submode       = None
         self._current_task: asyncio.Task | None = None
         self._active_auto_mode: Mode | None = None
-        self._alert_running     = False
-        self.target             = None
+        self._alert_running         = False
+        self.target                 = None
+        self.turkey_detected           = False   # True while any turkey is in FOV
+        self.last_known_turkey_pos     = None    # np.array([x, y]) of last seen turkey
+        self.last_known_turkey_in_zone = True    # zone status at last sighting; default inside
 
     def _load_waypoints(self, path: str) -> list:
         waypoints = []
@@ -99,7 +103,16 @@ class StatePlannerReceiver:
             return
         turkeys = np.asarray(data.get("Turkeys", []), dtype=float)
         ghosts  = np.asarray(data.get("Ghosts",  []), dtype=float)
-        self.Turkeys = turkeys.tolist() if turkeys.size > 0 else []
+        self.Turkeys         = turkeys.tolist() if turkeys.size > 0 else []
+        self.turkey_detected = len(self.Turkeys) > 0
+
+        # Track last known position and zone status of the nearest turkey while visible
+        if self.turkey_detected:
+            robot_pos = np.array(self.Current_RobotPose[:2])
+            nearest   = min(self.Turkeys, key=lambda t: np.linalg.norm(np.array(t[:2]) - robot_pos))
+            self.last_known_turkey_pos     = np.array(nearest[:2])
+            self.last_known_turkey_in_zone = self.ZoneChecker.is_inside(nearest[0], nearest[1])
+
         for g in (ghosts.tolist() if ghosts.size > 0 else []):
             self._try_enqueue_ghost(g[0], g[1])
         await self._arbitrate_auto()
@@ -166,14 +179,16 @@ class StatePlannerReceiver:
     # ------------------------------------------------------------------
 
     async def _arbitrate_auto(self) -> None:
-        turkey_in_zone = any(self.ZoneChecker.is_inside(t[0], t[1]) for t in self.Turkeys)
+        turkey_in_zone    = any(self.ZoneChecker.is_inside(t[0], t[1]) for t in self.Turkeys)
+        turkey_outside    = self.turkey_detected and not turkey_in_zone   # visible AND outside
 
         if self.Verbose:
             status = [f"({t[0]:.2f},{t[1]:.2f})->{'IN' if self.ZoneChecker.is_inside(t[0], t[1]) else 'OUT'}" for t in self.Turkeys]
             print(f"[Arbitrate] mode={self._active_auto_mode} | alert_running={self._alert_running} | "
-                  f"in_zone={turkey_in_zone} | turkeys={status or 'none'} | "
+                  f"in_zone={turkey_in_zone} | outside={turkey_outside} | turkeys={status or 'none'} | "
                   f"target={np.round(self.target, 2) if self.target is not None else None}")
 
+        # Turkey visible inside zone — chase preempts everything
         if turkey_in_zone:
             if self._active_auto_mode != Mode.CHASE:
                 self._alert_running    = False
@@ -182,19 +197,21 @@ class StatePlannerReceiver:
                 await self._switch_to(self.Chase_Routine())
             return
 
+        # Turkey visible but outside zone — ignore entirely
+        if turkey_outside:
+            self._dbg("[Arbitrate] Turkey outside zone — ignoring")
+            return
+
+        # No turkey visible at all — Chase_Routine handles its own lost-visual/stopped logic.
+        # Only fall through to Scan if we were never in chase.
         if self._alert_running:
             return
 
-        if self._active_auto_mode == Mode.CHASE:
-            self._active_auto_mode = Mode.ALERT
-            self._dbg("[Arbitrate] -> ALERT (end_of_chase)")
-            await self._switch_to(self.Alert_Routine(end_of_chase=True))
-            return
-
-        if self._active_auto_mode != Mode.SCAN:
-            self._active_auto_mode = Mode.SCAN
-            self._dbg("[Arbitrate] -> SCAN")
-            await self._switch_to(self.Scan_Routine())
+        if self._active_auto_mode not in (Mode.CHASE, Mode.ALERT):
+            if self._active_auto_mode != Mode.SCAN:
+                self._active_auto_mode = Mode.SCAN
+                self._dbg("[Arbitrate] -> SCAN")
+                await self._switch_to(self.Scan_Routine())
 
     # ------------------------------------------------------------------
     # MacroStates
@@ -202,64 +219,122 @@ class StatePlannerReceiver:
 
     async def Scan_Routine(self):
         await self.MacroState_Publisher.publish({"Id": "Scan"})
-        if self.target is None:
-            self.target = self._next_target()
+
+        # Resume at the current index without advancing.
+        # If we were interrupted before ever arriving at waypoint 0, reset to 0.
+        if self.target is None or not self._scan_arrived_once:
+            self._scan_routine_idx = 0
+            self._scan_arrived_once = False
+            self.target = self.WaypointQueue[0]
+
         self._dbg(f"[Scan] Starting — target={np.round(self.target, 2)}, idx={self._scan_routine_idx}")
 
         await self.MotionCommand_Publisher.publish({"Id": "Move", "Cmd": self.target[:2].tolist()})
         await self._module_scan._travel_to_waypoint()
 
-        while True:
-            robot_pos = np.array(self.Current_RobotPose[:3])
-            dist      = np.linalg.norm(self.target[:2] - robot_pos[:2])
-            self._dbg(f"[Scan] dist={dist:.2f}m target={np.round(self.target[:2], 2)} pos={np.round(robot_pos[:2], 2)}")
+        async def _turkey_watch():
+            """Poll every 0.5 s — preempt scan immediately if a turkey enters the zone."""
+            while True:
+                await asyncio.sleep(0.5)
+                if any(self.ZoneChecker.is_inside(t[0], t[1]) for t in self.Turkeys):
+                    self._dbg("[Scan] Turkey detected — preempting scan")
+                    self._alert_running    = False
+                    self._active_auto_mode = Mode.CHASE
+                    await self._switch_to(self.Chase_Routine())
+                    return
 
-            if dist < 1:
-                self._dbg("[Scan] Reached waypoint — spinning")
-                base_heading = float(self.Current_RobotPose[2])
-                for i in range(1, 5):
-                    if i % 4 == 0:
-                        await self._module_scan._stationary_scan()
-                    elif i % 4 == 2:
-                        await self._module_scan._stationary_crouch()
-                    robot_pos      = np.array(self.Current_RobotPose[:3])
-                    target_heading = ((base_heading + i * np.pi / 2) + np.pi) % (2 * np.pi) - np.pi
-                    await self.MotionCommand_Publisher.publish({"Id": "Orient", "Cmd": [robot_pos[0], robot_pos[1], target_heading]})
-                    await asyncio.sleep(1)
+        async def _waypoint_loop():
+            while True:
+                robot_pos = np.array(self.Current_RobotPose[:3])
+                dist      = np.linalg.norm(self.target[:2] - robot_pos[:2])
+                self._dbg(f"[Scan] dist={dist:.2f}m target={np.round(self.target[:2], 2)} pos={np.round(robot_pos[:2], 2)}")
 
-                self.target = self._next_target()
-                self._dbg(f"[Scan] Next target={np.round(self.target, 2)}, idx={self._scan_routine_idx}")
-                await self.MotionCommand_Publisher.publish({"Id": "Move", "Cmd": self.target[:2].tolist()})
-                await self._module_scan._travel_to_waypoint()
+                if dist < 1:
+                    self._dbg("[Scan] Reached waypoint — spinning")
+                    self._scan_arrived_once = True  # mark that we've arrived at least once
+                    base_heading = float(self.Current_RobotPose[2])
+                    for i in range(1, 5):
+                        if i % 4 == 0:
+                            await self._module_scan._stationary_scan()
+                        elif i % 4 == 2:
+                            await self._module_scan._stationary_crouch()
+                        robot_pos      = np.array(self.Current_RobotPose[:3])
+                        target_heading = ((base_heading + i * np.pi / 2) + np.pi) % (2 * np.pi) - np.pi
+                        await self.MotionCommand_Publisher.publish({"Id": "Orient", "Cmd": [robot_pos[0], robot_pos[1], target_heading]})
+                        await asyncio.sleep(1)
 
-            await asyncio.sleep(0.5)
+                    # Advance index only now that we've arrived
+                    self._scan_routine_idx = (self._scan_routine_idx + 1) % len(self.WaypointQueue)
+                    self.target = self._next_target()
+                    self._dbg(f"[Scan] Next target={np.round(self.target, 2)}, idx={self._scan_routine_idx}")
+                    await self.MotionCommand_Publisher.publish({"Id": "Move", "Cmd": self.target[:2].tolist()})
+                    await self._module_scan._travel_to_waypoint()
+
+                await asyncio.sleep(0.5)
+
+        await asyncio.gather(_turkey_watch(), _waypoint_loop())
 
     async def Chase_Routine(self):
         await self.MacroState_Publisher.publish({"Id": "Chase"})
-        if not self.Turkeys:
-            self._dbg("[Chase] No turkeys at startup — bailing")
-            self._active_auto_mode = None
+        # Don't bail if Turkeys is momentarily empty — we may have just lost visual.
+        # Use last_known_turkey_pos as the initial nav target if needed.
+        if not self.Turkeys and self.last_known_turkey_pos is None:
+            self._dbg("[Chase] No turkeys and no last known pos — bailing to Scan")
+            self._active_auto_mode = Mode.SCAN
+            await self._switch_to(self.Scan_Routine())
             return
-        self._dbg(f"[Chase] Starting — {len(self.Turkeys)} turkey(s)")
+        self._dbg(f"[Chase] Starting — {len(self.Turkeys)} turkey(s), last_known_in_zone={self.last_known_turkey_in_zone}")
 
         async def _move_loop():
+            STOPPED_THRESHOLD_M    = 0.5
+            STOPPED_CHECK_INTERVAL = 2.0
+            last_robot_pos = np.array(self.Current_RobotPose[:2])
+
             while True:
-                robot_pos      = np.array(self.Current_RobotPose[:2])
-                nearest_turkey = min(self.Turkeys, key=lambda t: np.linalg.norm(np.array(t[:2]) - robot_pos))
-                self.target    = np.array(nearest_turkey[:2])
-                await self.MotionCommand_Publisher.publish({"Id": "Move", "Cmd": self.target.tolist()})
-                self._dbg(f"[Chase] Tracking {np.round(nearest_turkey[:2], 2)}, robot={np.round(robot_pos, 2)}")
-                await asyncio.sleep(1.0)
+                await asyncio.sleep(STOPPED_CHECK_INTERVAL)
+
+                if self.turkey_detected and self.Turkeys:
+                    # Turkey visible — track nearest, reset movement baseline
+                    robot_pos      = np.array(self.Current_RobotPose[:2])
+                    nearest_turkey = min(self.Turkeys, key=lambda t: np.linalg.norm(np.array(t[:2]) - robot_pos))
+                    self.target    = np.array(nearest_turkey[:2])
+                    await self.MotionCommand_Publisher.publish({"Id": "Move", "Cmd": self.target.tolist()})
+                    self._dbg(f"[Chase] Tracking {np.round(nearest_turkey[:2], 2)}, robot={np.round(robot_pos, 2)}")
+                    last_robot_pos = robot_pos
+
+                else:
+                    # Lost visual — hold course to last known position
+                    robot_pos = np.array(self.Current_RobotPose[:2])
+                    delta     = np.linalg.norm(robot_pos - last_robot_pos)
+                    self._dbg(f"[Chase] Lost visual — delta={delta:.2f}m, last_in_zone={self.last_known_turkey_in_zone}")
+
+                    if delta < STOPPED_THRESHOLD_M:
+                        # Stopped — pick alert path based on where turkey was last seen
+                        # last_known_turkey_in_zone=True  → LoseVisual  (end_of_chase=False)
+                        # last_known_turkey_in_zone=False → TerminalChase (end_of_chase=True)
+                        end_of_chase = not self.last_known_turkey_in_zone
+                        self._dbg(f"[Chase] Stopped. last_in_zone={self.last_known_turkey_in_zone} -> end_of_chase={end_of_chase}")
+                        self._active_auto_mode = Mode.ALERT
+                        await self._switch_to(self.Alert_Routine(end_of_chase=end_of_chase))
+                        return
+
+                    # Still moving — keep nav command live toward last known pos
+                    if self.last_known_turkey_pos is not None:
+                        await self.MotionCommand_Publisher.publish(
+                            {"Id": "Move", "Cmd": self.last_known_turkey_pos[:2].tolist()}
+                        )
+                    last_robot_pos = robot_pos
 
         async def _gesture_loop():
             while True:
-                if self.Turkeys is None:
-                    return
+                if not self.Turkeys:
+                    await asyncio.sleep(0.5)
+                    continue
                 robot_pos      = np.array(self.Current_RobotPose[:2])
                 nearest_turkey = min(self.Turkeys, key=lambda t: np.linalg.norm(np.array(t[:2]) - robot_pos))
                 dist           = np.linalg.norm(np.array(nearest_turkey[:2]) - robot_pos)
                 self._dbg(f"[Chase] dist={dist:.2f}m")
-                if dist > 5:
+                if dist > self._module_chase.TURKEY_NEAR_THRESHOLD_M:
                     await self._module_chase._growl_and_chase()
                     await self._module_chase._aggressive_pursuit()
                 else:
@@ -278,44 +353,50 @@ class StatePlannerReceiver:
         await self.MacroState_Publisher.publish({"Id": "Alert"})
         self._dbg(f"[Alert] Starting — end_of_chase={end_of_chase}, target={np.round(self.target, 2) if self.target is not None else None}")
 
-        async def _spin_loop():
-            if self.target is not None:
-                self._dbg(f"[Alert] Moving toward {np.round(self.target[:2], 2)}, waiting 10s")
-                await self.MotionCommand_Publisher.publish({"Id": "Move", "Cmd": self.target[:2].tolist()})
-                await asyncio.sleep(10)
-            base_heading = float(self.Current_RobotPose[2])
-            self._dbg(f"[Alert] Spinning at {np.round(self.Current_RobotPose[:2], 2)}")
-            for i in range(1, 12):
-                robot_pos      = np.array(self.Current_RobotPose[:3])
-                target_heading = ((base_heading + i * np.pi / 2) + np.pi) % (2 * np.pi) - np.pi
-                await self.MotionCommand_Publisher.publish({"Id": "Orient", "Cmd": [robot_pos[0], robot_pos[1], target_heading]})
-                await asyncio.sleep(1)
-            self._dbg("[Alert] Spin complete")
+        if end_of_chase:
+            # TerminalChaseRoutine: move to last known pos, spin, then warn
+            async def _spin_loop():
+                if self.target is not None:
+                    self._dbg(f"[Alert] Moving toward {np.round(self.target[:2], 2)}, waiting 10s")
+                    await self.MotionCommand_Publisher.publish({"Id": "Move", "Cmd": self.target[:2].tolist()})
+                    await asyncio.sleep(10)
+                base_heading = float(self.Current_RobotPose[2])
+                self._dbg(f"[Alert] Spinning at {np.round(self.Current_RobotPose[:2], 2)}")
+                for i in range(1, 5):
+                    robot_pos      = np.array(self.Current_RobotPose[:3])
+                    target_heading = ((base_heading + i * np.pi / 2) + np.pi) % (2 * np.pi) - np.pi
+                    await self.MotionCommand_Publisher.publish({"Id": "Orient", "Cmd": [robot_pos[0], robot_pos[1], target_heading]})
+                    await asyncio.sleep(1)
+                self._dbg("[Alert] Spin complete")
 
-        async def _gesture_loop():
-            if end_of_chase:
+            async def _gesture_loop():
                 self._dbg("[Alert] TerminalChaseRoutine")
                 await self._module_alert._territorial_warning()
                 await self._module_alert._short_warning_burst()
                 await self._module_alert._territorial_warning()
                 await self._module_alert._short_warning_burst()
-            else:
-                self._alert_routine_idx += 1
-                self._dbg(f"[Alert] LoseVisualRoutine idx={self._alert_routine_idx}")
-                if self._alert_routine_idx % 2 == 1:
-                    await self._module_alert._territorial_warning()
-                    await self._module_alert._watchful_dog()
-                else:
-                    await self._module_alert._short_warning_burst()
-                    await self._module_alert._watchful_dog()
-            self._dbg("[Alert] Gestures complete")
+                self._dbg("[Alert] Gestures complete")
 
-        await asyncio.gather(_spin_loop(), _gesture_loop())
+            await asyncio.gather(_spin_loop(), _gesture_loop())
+
+        else:
+            # LoseVisualRoutine: watchful_dog pose + spin run concurrently,
+            # then territorial warning sequence runs after both finish.
+            self._alert_routine_idx += 1
+            self._dbg(f"[Alert] LoseVisualRoutine idx={self._alert_routine_idx}")
+            await self._module_alert._lose_visual_routine()
+
+            # Sequential bark sequence after spin completes
+            if self._alert_routine_idx % 2 == 1:
+                await self._module_alert._territorial_warning()
+            else:
+                await self._module_alert._short_warning_burst()
+            self._dbg("[Alert] Gestures complete")
 
         self._alert_running    = False
         self._active_auto_mode = Mode.SCAN
-        self.target            = self._next_target()
-        self._dbg(f"[Alert] Complete — handing off to Scan, target={np.round(self.target, 2)}")
+        # Resume Scan at current index — do NOT advance
+        self._dbg(f"[Alert] Complete — handing off to Scan at idx={self._scan_routine_idx}, target={np.round(self.target, 2) if self.target is not None else None}")
         await self._switch_to(self.Scan_Routine())
 
     def _next_target(self) -> np.ndarray:
@@ -325,7 +406,7 @@ class StatePlannerReceiver:
             return np.array(ghost)
         target = self.WaypointQueue[self._scan_routine_idx % len(self.WaypointQueue)]
         self._dbg(f"[NextTarget] Waypoint idx={self._scan_routine_idx} -> {np.round(target, 2)}")
-        self._scan_routine_idx += 1
+        # Index is advanced by Scan_Routine only when the waypoint is actually reached
         return target
 
     async def _orient_toward(self, target: np.ndarray) -> None:

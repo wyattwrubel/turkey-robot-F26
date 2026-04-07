@@ -41,7 +41,7 @@ class MotorDriver:
         self.ReadCurrentPeriod    = 0.1
         self.SlipPublishPeriod    = 1
 
-        self._MaxSpeedAllowed       = 3.0
+        self._MaxSpeedAllowed       = 30 #3.0
 
         self._Max_Current_Threshold = 40
         self._StallDebounceLimit    = 5

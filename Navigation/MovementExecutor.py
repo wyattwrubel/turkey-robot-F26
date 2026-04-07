@@ -12,11 +12,11 @@ import casadi as ca
 # =============================================================================
 WHEELBASE = 0.7
 L         = WHEELBASE
-DT        = 0.1
+DT        = 0.2
 N         = 8
 
-V_MAX_DEFAULT =  3.0
-V_MIN_DEFAULT = -3.0
+V_MAX_DEFAULT = 20 # 3.0
+V_MIN_DEFAULT = -20 #-3.0
 
 # Arrival: robot is considered to have reached the end of the A* path when it
 # is within this distance of the final waypoint.

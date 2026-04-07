@@ -35,7 +35,9 @@ class FakeVision:
     # --- controller config ---
     GRID_SIZE       = 100       # coordinate space 0-100 (1 unit = 1 m)
     CELL_PX         = 6         # pixels per unit
-    TURKEY_SPEED    = 0.175       # m per tick (0.5 * 20 hz = 10 m/s)
+    # TURKEY_SPEED    = 0.175       # m per tick (0.5 * 20 hz = 10 m/s)
+    TURKEY_SPEED    = 0.6       # m per tick (0.5 * 20 hz = 10 m/s)
+    
     PUBLISH_HZ      = 20
 
     COLOR_VISIBLE   = "#EF9F27"  # orange — turkey is visible to backend

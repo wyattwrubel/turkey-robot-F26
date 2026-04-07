@@ -33,7 +33,7 @@ class DC_Driver:
     timeout  = 0.05   # seconds
 
     # Physical parameters -- TODO update for your platform
-    max_linear_speed = 10.0 #4.0   # m/s (hard clip, both directions)
+    max_linear_speed = 4.0   # m/s (hard clip, both directions)
     encoder_CPR      = 1024  # quadrature counts per revolution
     wheel_radius     = 0.08  # metres
 
