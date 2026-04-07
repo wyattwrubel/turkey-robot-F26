@@ -27,6 +27,9 @@ class TrajectoryTracker:
         self._last_planned_target = None
         self._replan_threshold    = 3.0
 
+        # Stores the most recent chase A* path for old-waypoint bias on replan
+        self._chase_waypoints = []
+
         asyncio.create_task(self.MPC.DriveTrain_Sender(logger=self.Logger))
 
     # ── Vision receiver ───────────────────────────────────────────────────────
@@ -48,8 +51,8 @@ class TrajectoryTracker:
         except KeyError as e:
             print(f"Bad VisionObject Cmd: {e} missing"); return
 
-        if turkeydata.size == 0: turkeydata = turkeydata.reshape(0,3)
-        if humandata.size  == 0: humandata  = humandata.reshape(0,3)
+        if turkeydata.size == 0: turkeydata = turkeydata.reshape(0, 3)
+        if humandata.size  == 0: humandata  = humandata.reshape(0, 3)
 
         if turkeydata.ndim < 2 or humandata.ndim < 2:
             print("Invalid shape for Human or Turkey"); return
@@ -79,6 +82,7 @@ class TrajectoryTracker:
         else:
             self._turkey_pos          = None
             self._last_planned_target = None
+            self._chase_waypoints     = []
             self.MPC.clear_turkey()
 
         if self.Verbose:
@@ -124,7 +128,7 @@ class TrajectoryTracker:
         if self._last_planned_target is not None:
             moved = np.linalg.norm(target - self._last_planned_target)
             if moved < self._replan_threshold and \
-               self.MPC._mode in ("trajectory","chase","pivot"):
+               self.MPC._mode in ("trajectory", "chase", "pivot"):
                 if self.Verbose:
                     print(f"[Nav] Replan suppressed (moved {moved:.2f}m)")
                 if self._turkey_pos is not None:
@@ -139,43 +143,54 @@ class TrajectoryTracker:
             await self._scan_move(target)
 
     async def _scan_move(self, target):
-        wps = PathGenerator.GenerateTrajectory(self.Map, self.Current_State, target)
+        wps = PathGenerator.GenerateTrajectory(
+            self.Map, self.Current_State, target)
         if self.Verbose:
             print(f"[Nav] A* (scan) → {len(wps)} waypoints")
-        await self.MPC.Move_CMD_Receiver(wps, target, chase=False, astar_approach=False)
+        await self.MPC.Move_CMD_Receiver(wps, target, chase=False)
 
     async def _chase_move(self, target):
-        rxy    = np.array(self.Current_State[:2], dtype=float)
+        """
+        Chase mode: A* from current position directly to the turkey, biased
+        toward the previous chase path for continuity.  No path truncation —
+        the robot runs to the end of the path, then orients toward the turkey.
+        """
         turkey = np.array(self._turkey_pos, dtype=float)
-        dist   = np.linalg.norm(rxy - turkey)
 
-        if dist > MovementExecutor.CHASE_HANDOFF_DIST:
-            wps = PathGenerator.GenerateTrajectory(self.Map, self.Current_State, target)
+        wps = PathGenerator.GenerateTrajectory(
+            self.Map,
+            self.Current_State,
+            turkey,
+            old_waypoints=self._chase_waypoints if self._chase_waypoints else None,
+        )
+
+        if not wps:
             if self.Verbose:
-                print(f"[Nav] A* approach (dist={dist:.1f}m) → {len(wps)} waypoints")
-            # chase=False: MPC tracks A* path in scan mode
-            # astar_approach=True: live handoff fires once dist <= 10m
-            await self.MPC.Move_CMD_Receiver(
-                wps, target, chase=False, astar_approach=True)
-        else:
-            if self.Verbose:
-                print(f"[Nav] Direct chase (dist={dist:.1f}m)")
-            wps = [(int(round(turkey[0])), int(round(turkey[1])))]
-            await self.MPC.Move_CMD_Receiver(
-                wps, turkey, chase=True, astar_approach=False)
+                print("[Nav] Chase A* returned empty path")
+            return
+
+        self._chase_waypoints = wps   # store for next replan bias
+
+        if self.Verbose:
+            print(f"[Nav] A* (chase) → {len(wps)} waypoints to turkey at {turkey}")
+
+        await self.MPC.Move_CMD_Receiver(wps, tuple(turkey), chase=True)
 
     async def replan_to(self, target):
         """
         Called by MPC_loop on stall recovery.  Replans A* from current
-        position to target and updates MPC plan.
+        position to target and updates the MPC plan.
         """
         if target is None:
             return
-        wps = PathGenerator.GenerateTrajectory(self.Map, self.Current_State, target)
-        if wps:
-            print(f"[Nav] Stall replan → {len(wps)} waypoints")
-            await self.MPC.Move_CMD_Receiver(
-                wps, target, chase=False, astar_approach=self.MPC._astar_approach_active)
+        if self._turkey_pos is not None:
+            await self._chase_move(np.array(target, dtype=float))
+        else:
+            wps = PathGenerator.GenerateTrajectory(
+                self.Map, self.Current_State, target)
+            if wps:
+                print(f"[Nav] Stall replan → {len(wps)} waypoints")
+                await self.MPC.Move_CMD_Receiver(wps, target, chase=False)
 
     async def _Orient_CMD_Receiver(self, data):
         try:
@@ -190,7 +205,8 @@ class TrajectoryTracker:
         except KeyError:
             print(f"Bad SpeedCap CMD: 'Cmd' missing in {data}"); return
         try:
-            self.Max_Allowed_Speed = float(input_cmd)
+            self.MPC.set_speed_cap(float(input_cmd))
+            self.Max_Allowed_Speed = float(input_cmd)   # keep local attr in sync
         except ValueError:
             print(f"Bad SpeedCap value: {input_cmd}")
 

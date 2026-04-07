@@ -7,14 +7,27 @@ from scipy.ndimage import distance_transform_edt
 # Config
 # =============================================================================
 
-EDT_WEIGHT      = 2.0   # how strongly A* favours corridor centres
+EDT_WEIGHT      = 2.5   # how strongly A* favours corridor centres
+                        # (raised from 2.0 for stronger centering)
 STRAIGHT_WEIGHT = 0.3   # bonus cost for direction changes (favours straight lines)
 
-# Cells within this EDT distance of a static obstacle are treated as blocked.
-# This must be >= MPC STATIC_MARGIN (0.5m) so A* never routes through gaps
-# that MPC cannot physically execute.  Set to 0.7m to give a small buffer
-# above the 0.5m MPC hard constraint margin.
-PLANNING_CLEARANCE = 0.7   # metres (== grid cells, 1 cell = 1 m)
+# Hard block: cells within this distance of a static obstacle are completely
+# impassable.  Must be >= MPC physical margin so A* never routes through gaps
+# the robot cannot physically execute.
+PLANNING_CLEARANCE = 0.7   # metres
+
+# Soft penalty zone: cells between PLANNING_CLEARANCE and SOFT_CLEARANCE are
+# passable but incur SOFT_CLEARANCE_PENALTY added to their edge cost.
+# This strongly discourages tight-margin routing while still allowing the
+# planner to find a path if no wider alternative exists (e.g. turkey near wall).
+SOFT_CLEARANCE         = 1.0   # metres — desired minimum separation
+SOFT_CLEARANCE_PENALTY = 4.0   # flat extra cost per step inside the soft zone
+
+# When replanning in chase mode, cells that lie on (or near) the previous
+# A* path receive a cost discount.  Cells farther than PATH_BIAS_RADIUS from
+# any old waypoint receive PATH_BIAS_PENALTY added to their edge cost.
+PATH_BIAS_RADIUS  = 1.5   # metres
+PATH_BIAS_PENALTY = 1.2   # extra cost per step when leaving the old-path corridor
 
 # =============================================================================
 # EDT cache — recomputed only when the static obstacle layer changes
@@ -52,10 +65,10 @@ def _is_blocked(map_grid, edt, x, y):
       - out of bounds
       - a static obstacle  (map == 1)
       - a dynamic obstacle (map == 2)
-      - within PLANNING_CLEARANCE of a static obstacle (EDT check)
+      - within PLANNING_CLEARANCE (0.7m) of a static obstacle — hard block
 
-    The clearance rejection is what prevents A* from routing through gaps
-    narrower than the robot can physically traverse under MPC.
+    Cells between 0.7m and 1.0m are NOT blocked here; they receive
+    SOFT_CLEARANCE_PENALTY in the edge cost instead (see _soft_penalty).
     """
     h, w = map_grid.shape
     if x < 0 or x >= w or y < 0 or y >= h:
@@ -66,6 +79,18 @@ def _is_blocked(map_grid, edt, x, y):
     if float(edt[y, x]) < PLANNING_CLEARANCE:
         return True
     return False
+
+
+def _soft_penalty(edt, x, y):
+    """
+    Returns SOFT_CLEARANCE_PENALTY if the cell is in the soft zone
+    (between PLANNING_CLEARANCE and SOFT_CLEARANCE), otherwise 0.
+    Applied on top of the normal EDT centering cost.
+    """
+    d = float(edt[int(y), int(x)])
+    if d < SOFT_CLEARANCE:   # PLANNING_CLEARANCE <= d < SOFT_CLEARANCE
+        return SOFT_CLEARANCE_PENALTY
+    return 0.0
 
 
 def _diagonal_cuts_corner(map_grid, edt, cx, cy, dx, dy):
@@ -93,8 +118,28 @@ def _nearest_free(map_grid, edt, cell):
     return cell
 
 
+def _build_bias_set(old_waypoints):
+    """
+    Return a set of (x, y) integer cells that are within PATH_BIAS_RADIUS of
+    any waypoint on the previous path.  Cells in this set receive no extra
+    penalty; cells outside it pay PATH_BIAS_PENALTY per step.
+    """
+    if not old_waypoints:
+        return None
+    radius_sq = PATH_BIAS_RADIUS ** 2
+    bias = set()
+    for wx, wy in old_waypoints:
+        r = int(np.ceil(PATH_BIAS_RADIUS))
+        for dx in range(-r, r + 1):
+            for dy in range(-r, r + 1):
+                if dx * dx + dy * dy <= radius_sq:
+                    bias.add((wx + dx, wy + dy))
+    return bias
+
+
 # =============================================================================
-# A* with EDT centering, planning clearance, and straight-line preference
+# A* with EDT centering, hard clearance, soft clearance penalty,
+# straight-line preference, and optional old-path bias for smooth replanning
 # =============================================================================
 
 NEIGHBORS = [
@@ -103,27 +148,30 @@ NEIGHBORS = [
 ]
 
 
-def _astar(map_grid, start, goal):
+def _astar(map_grid, start, goal, bias_set=None):
     """
     A* on the Zone_Map grid.
 
     Edge cost = move_distance
-              + EDT_WEIGHT / (edt(neighbour) + 0.5)   ← corridor centering
-              + STRAIGHT_WEIGHT * direction_changed     ← straight-line bias
+              + EDT_WEIGHT / (edt(neighbour) + 0.5)       ← corridor centering
+              + SOFT_CLEARANCE_PENALTY (if EDT < 1.0m)    ← soft 1m margin
+              + STRAIGHT_WEIGHT * direction_changed        ← straight-line bias
+              + PATH_BIAS_PENALTY * (not in bias_set)      ← old-path continuity
 
-    Cells with EDT < PLANNING_CLEARANCE are treated as blocked (see _is_blocked),
-    so the planner naturally routes through the centre of corridors and never
-    produces a path through a gap too tight for MPC to execute.
-
+    Hard block at 0.7m (PLANNING_CLEARANCE) — physically impassable.
+    Soft penalty at 1.0m (SOFT_CLEARANCE) — passable but strongly discouraged.
     Falls back to closest reachable node if goal is unreachable.
     """
     edt  = _get_edt(map_grid)
     h, w = map_grid.shape
+    use_bias = bias_set is not None
 
-    def edt_penalty(x, y):
+    def edt_cost(x, y):
         col = int(np.clip(x, 0, w - 1))
         row = int(np.clip(y, 0, h - 1))
-        return EDT_WEIGHT / (float(edt[row, col]) + 0.5)
+        centering = EDT_WEIGHT / (float(edt[row, col]) + 0.5)
+        soft      = _soft_penalty(edt, col, row)
+        return centering + soft
 
     came_from = {start: (start, None)}
     gscore    = {start: 0.0}
@@ -168,10 +216,14 @@ def _astar(map_grid, start, goal):
                               if parent_dir is not None and (dx, dy) != parent_dir
                               else 0.0)
 
+            bias_cost = (0.0 if (not use_bias or neighbor in bias_set)
+                         else PATH_BIAS_PENALTY)
+
             tentative_g = (gscore[current]
                            + move_cost
-                           + edt_penalty(nx, ny)
-                           + direction_cost)
+                           + edt_cost(nx, ny)
+                           + direction_cost
+                           + bias_cost)
 
             if neighbor not in gscore or tentative_g < gscore[neighbor]:
                 came_from[neighbor] = (current, (dx, dy))
@@ -201,16 +253,21 @@ def _astar(map_grid, start, goal):
 # Public interface
 # =============================================================================
 
-def GenerateTrajectory(map_obj, current_state, desired_state):
+def GenerateTrajectory(map_obj, current_state, desired_state,
+                       old_waypoints=None):
     """
-    A* path planner with EDT corridor-centering, planning clearance, and
-    straight-line bias.
+    A* path planner with EDT corridor-centering, hard + soft clearance,
+    straight-line bias, and optional old-path continuity bias for replanning.
 
     Parameters
     ----------
     map_obj       : MapUpdater.Map instance  (.Zone_Map)
     current_state : array-like [x, y, ...]
     desired_state : array-like [x, y, ...]
+    old_waypoints : list of (int x, int y) or None
+        Previous A* path.  When provided, cells near the old path receive a
+        lower edge cost so the replanned path stays close to the original
+        where possible (used in chase-mode replanning for continuity).
 
     Returns
     -------
@@ -232,5 +289,6 @@ def GenerateTrajectory(map_obj, current_state, desired_state):
     if _is_blocked(map_grid, edt, *goal):
         goal  = _nearest_free(map_grid, edt, goal)
 
-    path = _astar(map_grid, start, goal)
+    bias_set = _build_bias_set(old_waypoints) if old_waypoints else None
+    path     = _astar(map_grid, start, goal, bias_set=bias_set)
     return [(int(x), int(y)) for x, y in path]
