@@ -32,7 +32,7 @@ class ModuleAlert:
         await asyncio.sleep(0.1)
         await self.parent._Pose_Publish("HeadScan")
 
-        for _ in range(6):
+        for _ in range(2):
             await self.parent._Audio_Publish("BarkShort")
             await asyncio.sleep(5.0)
 
@@ -56,7 +56,6 @@ class ModuleAlert:
             await asyncio.sleep(1.0)
             await self.parent._Audio_Publish("BarkShort_2x2")
             await asyncio.sleep(2.0)
-            await asyncio.sleep(9.0)   # pad to ~30s across both reps
 
     async def _short_warning_burst(self) -> None:
         """
@@ -74,4 +73,3 @@ class ModuleAlert:
             await self.parent._ServoCommand_Publish("Head", -40.0)
             await self.parent._Audio_Publish("BarkShort_2x2")
             await asyncio.sleep(3.0)
-            await asyncio.sleep(9.0)   # pad to ~30s across both reps

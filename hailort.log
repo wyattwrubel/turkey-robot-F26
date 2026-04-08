@@ -2538,3 +2538,13 @@
 [2026-04-08 19:12:38.418] [83658] [HailoRT] [info] [vdevice.cpp:780] [configure] Configuring HEF on VDevice took 54.42222 milliseconds
 [2026-04-08 19:12:38.418] [83658] [HailoRT] [info] [hef.cpp:1994] [get_network_group_and_network_name] No name was given. Addressing all networks of default network_group: turkey_640
 [2026-04-08 19:12:38.419] [83658] [HailoRT] [info] [hef.cpp:1994] [get_network_group_and_network_name] No name was given. Addressing all networks of default network_group: turkey_640
+[2026-04-08 19:15:13.227] [87153] [HailoRT] [info] [vdevice.cpp:535] [create] Creating vdevice with params: device_count: 1, scheduling_algorithm: NONE, multi_process_service: false
+[2026-04-08 19:15:13.240] [87153] [HailoRT] [info] [device.cpp:51] [Device] OS Version: Linux 6.12.75+rpt-rpi-2712 #1 SMP PREEMPT Debian 1:6.12.75-1+rpt1 (2026-03-11) aarch64
+[2026-04-08 19:15:13.240] [87153] [HailoRT] [info] [control.cpp:113] [control__parse_identify_results] firmware_version is: 4.23.0
+[2026-04-08 19:15:13.240] [87153] [HailoRT] [info] [vdevice.cpp:682] [create] VDevice Infos: 0001:01:00.0
+[2026-04-08 19:15:13.248] [87153] [HailoRT] [info] [internal_buffer_manager.cpp:77] [print_execution_results] Planned internal buffer memory: CMA=0 CMA-Desc=1245184 Pinned=1743872. memory to edge layer usage factor is 0.7356371
+[2026-04-08 19:15:13.248] [87153] [HailoRT] [info] [internal_buffer_manager.cpp:86] [print_execution_results] Default Internal buffer planner executed successfully
+[2026-04-08 19:15:13.296] [87153] [HailoRT] [info] [device_internal.cpp:57] [configure] Configuring HEF took 55.536591 milliseconds
+[2026-04-08 19:15:13.296] [87153] [HailoRT] [info] [vdevice.cpp:780] [configure] Configuring HEF on VDevice took 55.875167 milliseconds
+[2026-04-08 19:15:13.297] [87153] [HailoRT] [info] [hef.cpp:1994] [get_network_group_and_network_name] No name was given. Addressing all networks of default network_group: turkey_640
+[2026-04-08 19:15:13.297] [87153] [HailoRT] [info] [hef.cpp:1994] [get_network_group_and_network_name] No name was given. Addressing all networks of default network_group: turkey_640
