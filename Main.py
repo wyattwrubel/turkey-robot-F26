@@ -121,7 +121,6 @@ async def main():
     VideoFeed_Vision_pub.subscribe(UserInterface.VideoFeed_Receiver)   
     TESTING_VideoFeed_Vision_pub.subscribe(UserInterface.VideoFeed_Receiver)   
 
-
     """Canine"""
     Canine_UI_pub.subscribe(Canine.CanineDriver_Receiver)
     Canine_StatePlanner_pub.subscribe(Canine.CanineDriver_Receiver)
