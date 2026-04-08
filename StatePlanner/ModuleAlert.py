@@ -1,93 +1,77 @@
+"""
+ModuleAlert.py
+
+Canine behavior module for ALERT state.
+Owns ONLY: poses, audio, servo commands.
+All movement, timing, and path selection is owned by StatePlannerReceiver.
+
+Each substate runs its full fixed duration and then returns.
+StatePlannerReceiver sequences them and handles interruption via task cancellation.
+"""
+
 import asyncio
-import numpy as np
+
 
 class ModuleAlert:
 
     def __init__(self, parent):
-        self.parent    = parent
-        self._path_idx = 0   # cycles Path1 -> Path2 -> Path3 -> Path1
+        self.parent = parent
 
     # ------------------------------------------------------------------
-    # Substates
+    # Substates — 30 seconds each, behavior only
     # ------------------------------------------------------------------
 
     async def _watchful_dog(self) -> None:
+        """
+        WatchfulDog — 30 seconds.
+        AlertPose + HeadScan. Short barks every 5 seconds.
+        Used as the wind-down substate in Path2 and Path3 (lose visual).
+        """
         await self.parent.MacroState_Publisher.publish({"Id": "WatchfulDog"})
         await self.parent._Pose_Publish("AlertPose")
-        await self.parent._SpeedCap_Publish(3.0)
         await asyncio.sleep(0.1)
         await self.parent._Pose_Publish("HeadScan")
-        
-        for i in range(3):
+
+        for _ in range(6):
             await self.parent._Audio_Publish("BarkShort")
-            await asyncio.sleep(5)
+            await asyncio.sleep(5.0)
 
     async def _territorial_warning(self) -> None:
+        """
+        TerritorialWarning — 30 seconds.
+        AlertStep + HeadScan. Escalating bark pattern repeated twice.
+        Used in Path1 (turkey outside zone) and Path2 (lose visual).
+        """
         await self.parent.MacroState_Publisher.publish({"Id": "TerritorialWarning"})
-        await self.parent._SpeedCap_Publish(3.0)
         await self.parent._Pose_Publish("AlertStep")
         await asyncio.sleep(0.1)
         await self.parent._Pose_Publish("HeadScan")
-        
-        for i in range(2):
-            await self.parent._Audio_Publish("BarkShort_2x2")
-            await asyncio.sleep(2)
-            await self.parent._Audio_Publish("BarkShort_3x")
-            await asyncio.sleep(1)
-            await self.parent._Audio_Publish("BarkShort_3x")
-            await asyncio.sleep(1)
-            await self.parent._Audio_Publish("BarkShort_2x2")
-            await asyncio.sleep(2)
 
-    async def _Pose_setup_lose_visual(self) -> None:
-        """Set alert pose and speed before the concurrent watchful_dog + navigate phase."""
-        await self.parent.MacroState_Publisher.publish({"Id": "WatchfulDog"})
-        await self.parent._Pose_Publish("AlertPose")
-        await self.parent._SpeedCap_Publish(3.0)
-
-    async def _lose_visual_routine(self) -> None:
-        """
-        Navigate to last known turkey position and wait for arrival.
-        Runs concurrently with _watchful_dog in Alert_Routine (LoseVisual path).
-        """
-        last_pos = self.parent.last_known_turkey_pos
-        if last_pos is not None:
-            self.parent._dbg(f"[Alert/LoseVisual] Navigating to last known pos {np.round(last_pos, 2)}")
-            await self.parent.MotionCommand_Publisher.publish({"Id": "Move", "Cmd": last_pos[:2].tolist()})
-            await self.parent._Pose_Publish("HeadScan")
-            # Wait until arrival (15 s timeout)
-            for _ in range(30):
-                robot_pos = np.array(self.parent.Current_RobotPose[:2])
-                if np.linalg.norm(last_pos[:2] - robot_pos) < 1.0:
-                    break
-                await asyncio.sleep(0.5)
-
-    async def _spin_360(self) -> None:
-        """Full 360° spin in 4 × 90° Orient steps — mirrors Scan_Routine spin."""
-        self.parent._dbg("[Alert] Spinning 360°")
-        base_heading = float(self.parent.Current_RobotPose[2])
-        for i in range(1, 5):
-            if i % 4 == 0:
-                await self.parent._module_scan._stationary_scan()
-            elif i % 4 == 2:
-                await self.parent._module_scan._stationary_crouch()
-            robot_pos      = np.array(self.parent.Current_RobotPose[:3])
-            target_heading = ((base_heading + i * np.pi / 2) + np.pi) % (2 * np.pi) - np.pi
-            await self.parent.MotionCommand_Publisher.publish(
-                {"Id": "Orient", "Cmd": [robot_pos[0], robot_pos[1], target_heading]}
-            )
-            await asyncio.sleep(1)
+        for _ in range(2):
+            await self.parent._Audio_Publish("2x2_BarkShort")
+            await asyncio.sleep(2.0)
+            await self.parent._Audio_Publish("3x_BarkShort")
+            await asyncio.sleep(1.0)
+            await self.parent._Audio_Publish("3x_BarkShort")
+            await asyncio.sleep(1.0)
+            await self.parent._Audio_Publish("2x2_BarkShort")
+            await asyncio.sleep(2.0)
+            await asyncio.sleep(9.0)   # pad to ~30s across both reps
 
     async def _short_warning_burst(self) -> None:
-
+        """
+        ShortWarningBurst — 30 seconds.
+        AlertStep. Head snaps + BarkBurst pattern repeated twice.
+        Used in Path1 (turkey outside zone) and Path3 (lose visual).
+        """
         await self.parent.MacroState_Publisher.publish({"Id": "ShortWarningBurst"})
-        await self.parent._SpeedCap_Publish(3.0)
         await self.parent._Pose_Publish("AlertStep")
 
-        for i in range(2):
+        for _ in range(2):
             await self.parent._Audio_Publish("BarkBurst")
             await self.parent._ServoCommand_Publish("Head", 40.0)
-            await asyncio.sleep(5.0)
+            await asyncio.sleep(3.0)
             await self.parent._ServoCommand_Publish("Head", -40.0)
-            await self.parent._Audio_Publish("BarkShort_2x2")
-            await asyncio.sleep(2.0)
+            await self.parent._Audio_Publish("2x2_BarkShort")
+            await asyncio.sleep(3.0)
+            await asyncio.sleep(9.0)   # pad to ~30s across both reps

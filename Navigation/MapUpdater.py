@@ -81,10 +81,22 @@ class Map:
         self.Zone_Map = np.array(grid, dtype=int)
 
     def UpdateAroundObject(self, xcord, ycord, width, data):
+        """
+        Write `data` into all cells within `width` steps of (xcord, ycord),
+        forming a (2*width+1) x (2*width+1) square.
+
+        Fixed: upper bounds now correctly include the +width cell so that
+        a width of 1 produces a full 3x3 box as intended.
+        Static obstacle cells (== 1) are never overwritten.
+        When clearing (data == 0), dynamic obstacle cells (== 2) are also
+        cleared; penalty cells (> 2) are cleared by the outer penalty pass.
+        """
+        h, w = self.Zone_Map.shape
+
         xcord_low  = max(xcord - width, 0)
-        xcord_high = min(xcord + width + 1, self.Zone_Map.shape[1] - 1)
+        xcord_high = min(xcord + width + 1, w)   # was: shape[1] - 1 (off by one)
         ycord_low  = max(ycord - width, 0)
-        ycord_high = min(ycord + width + 1, self.Zone_Map.shape[0] - 1)
+        ycord_high = min(ycord + width + 1, h)   # was: shape[0] - 1 (off by one)
 
         for x in range(xcord_low, xcord_high):
             for y in range(ycord_low, ycord_high):

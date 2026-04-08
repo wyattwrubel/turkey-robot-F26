@@ -1,6 +1,7 @@
 import asyncio
 import time
 import numpy as np
+from collections import deque
 import sys
 sys.path.insert(0, '/home/turkeysquad/ME450/MainDesign/casadi')
 if 'casadi' in sys.modules:
@@ -15,17 +16,19 @@ L         = WHEELBASE
 DT        = 0.2
 N         = 8
 
-V_MAX_DEFAULT = 20 # 3.0
-V_MIN_DEFAULT = -20 #-3.0
+# WARNING: these are intentionally wide for testing.  Call set_speed_cap()
+# at startup to apply real operating limits (e.g. 3.0 m/s).
+V_MAX_DEFAULT = 20.0
+V_MIN_DEFAULT = -20.0
 
 # Arrival: robot is considered to have reached the end of the A* path when it
 # is within this distance of the final waypoint.
 PATH_END_DIST = 1.0   # metres (1 grid cell)
 
-STALL_WINDOW = 30
-STALL_DELTA  = 0.3
+STALL_WINDOW = 30     # ticks
+STALL_DELTA  = 0.3    # metres — minimum progress over STALL_WINDOW ticks
 
-LOOKAHEAD_DIST = 2.5
+LOOKAHEAD_DIST = 2.5  # metres
 
 PIVOT_THRESHOLD_DEG = 10.0
 PIVOT_ALIGN_DEG     =  3.0
@@ -50,7 +53,6 @@ def get_state(parent):
 # =============================================================================
 # Unified MPC solver
 # =============================================================================
-# One solver for both scan and chase modes.
 # Obstacle avoidance is fully delegated to A*.
 # Speed limits are applied by patching lbx/ubx before each solve.
 #
@@ -104,7 +106,6 @@ def build_solver(n_steps=N):
     nd  = ov.numel()
     cs  = ns * (n + 1)
 
-    # lbx/ubx are mutable numpy arrays — speed limits are patched in-place
     lbx = -np.inf * np.ones(nd); ubx = np.inf * np.ones(nd)
     lbx[cs:] = V_MIN_DEFAULT;    ubx[cs:] = V_MAX_DEFAULT
 
@@ -142,26 +143,28 @@ def _shift_guess(sol_flat, mpc):
     return x0
 
 # =============================================================================
-# Lookahead — forward-direction check
+# Lookahead
 # =============================================================================
 
 def _lookahead_point(robot_xy, robot_theta, waypoints, dist=LOOKAHEAD_DIST):
     """
     Project a point dist metres ahead along the A* path.
-    Skips waypoints behind the robot to avoid U-turn demands in tight corridors.
+
+    Forward-skip is softened: instead of skipping all waypoints with a
+    negative dot product (which could skip past imminent waypoints after a
+    sharp turn), we only skip waypoints that are both behind the robot AND
+    further from the path end than the closest forward waypoint.  In practice
+    this means we walk from the beginning of the remaining path and take the
+    first waypoint that is either ahead or the closest one behind.
 
     Returns
     -------
     (lookahead_xy, at_end)
       lookahead_xy : np.array([x, y])
-      at_end       : True when waypoints is non-empty AND the robot is within
-                     PATH_END_DIST of the final waypoint.
-                     Returns (robot_xy, False) for empty waypoints so the
-                     caller can guard separately.
+      at_end       : True when the robot is within PATH_END_DIST of the
+                     final waypoint.  False for empty waypoints (caller guards).
     """
     if not waypoints:
-        # Empty path — caller must handle this case explicitly; do not
-        # signal at_end here to avoid triggering spurious arrival/orient loops.
         return np.array(robot_xy), False
 
     pts    = [np.array(wp, dtype=float) for wp in waypoints]
@@ -169,10 +172,18 @@ def _lookahead_point(robot_xy, robot_theta, waypoints, dist=LOOKAHEAD_DIST):
 
     fwd = np.array([np.cos(robot_theta), -np.sin(robot_theta)])
 
+    # Find the first waypoint that is strictly ahead of the robot.
+    # If none are ahead, use the nearest one to avoid overshooting corners.
     start = len(pts) - 1
+    min_dist = np.inf
     for i, pt in enumerate(pts):
-        if np.dot(fwd, pt - robot_xy) >= 0:
-            start = i; break
+        if np.dot(fwd, pt - robot_xy) >= -0.5:   # softened: was >= 0
+            start = i
+            break
+        d = np.linalg.norm(pt - robot_xy)
+        if d < min_dist:
+            min_dist = d
+            start    = i
 
     remaining = dist
     for i in range(start, len(pts) - 1):
@@ -188,44 +199,46 @@ def _lookahead_point(robot_xy, robot_theta, waypoints, dist=LOOKAHEAD_DIST):
 
 class MPC_loop:
 
-    def __init__(self, parent, Drivetrain_pub, MPCFeedback_Navigation_pub):
+    def __init__(self, parent, Drivetrain_pub, MPCFeedback_Navigation_pub,
+                 verbose=False):
         self.Drivetrain_pub  = Drivetrain_pub
         self.MPCFeedback_pub = MPCFeedback_Navigation_pub
         self._parent         = parent
+        self._verbose        = verbose
 
-        self._mode       = "idle"
-        self._waypoints  = []
-        self._target     = None
-        self._turkey_pos = None
-        self._chase_mode = False
+        self._mode      = "idle"
+        self._waypoints = []
+        self._target    = None
 
-        # Tracks whether the current pivot is a post-chase-arrival orient.
-        # When True, the pivot completes to "idle" regardless of _chase_mode,
-        # preventing the pivot → chase → at_end → pivot deadlock.
-        self._pivot_is_chase_orient = False
+        # Heading the robot should face at the end of the current path.
+        # Set by Move_CMD_Receiver when a face_heading is provided; None means
+        # no terminal orient is required (plain trajectory mode).
+        self._face_heading = None
 
         self._pivot_target_hdg = 0.0
-        self._dist_history     = []
-        self._solving          = False
+        # True while executing the post-arrival orient so we land in idle,
+        # not back in trajectory.
+        self._pivot_is_terminal_orient = False
+
+        self._dist_history = deque(maxlen=STALL_WINDOW)
+        self._solving      = False
 
         self._guess  = None
         self._u_prev = np.zeros(2)
 
-        # Live speed limits — patched into lbx/ubx before each solve
         self._v_max = V_MAX_DEFAULT
         self._v_min = V_MIN_DEFAULT
 
-        print(f"[MPC] Building unified solver (N={N}, no obstacle constraints)...")
+        print(f"[MPC] Building unified solver (N={N})...")
         self._mpc = build_solver(N)
         print(f"[MPC] Solver ready. n_dec={self._mpc['n_dec']}")
 
-    # ── Speed cap (live update) ───────────────────────────────────────────────
+    # ── Speed cap ─────────────────────────────────────────────────────────────
 
     def set_speed_cap(self, cap: float):
         """
-        Symmetrically clamps wheel speeds to [-cap, +cap].
-        Patches lbx/ubx in-place — takes effect on the very next MPC solve
-        with no solver rebuild required.
+        Symmetrically clamp wheel speeds to [-cap, +cap].
+        Patches lbx/ubx in-place — effective on the very next solve.
         """
         cap = float(cap)
         cap = max(0.0, min(cap, V_MAX_DEFAULT))
@@ -234,19 +247,10 @@ class MPC_loop:
         cs = self._mpc['ctrl_start']
         self._mpc['lbx'][cs:] = self._v_min
         self._mpc['ubx'][cs:] = self._v_max
-        print(f"[MPC] Speed cap updated: [{self._v_min:.2f}, {self._v_max:.2f}] m/s")
+        if self._verbose:
+            print(f"[MPC] Speed cap updated: [{self._v_min:.2f}, {self._v_max:.2f}] m/s")
 
-    # ── Setters ───────────────────────────────────────────────────────────────
-
-    def set_turkey(self, tx, ty):
-        self._turkey_pos = np.array([float(tx), float(ty)])
-        self._chase_mode = True
-
-    def clear_turkey(self):
-        self._turkey_pos = None
-        self._chase_mode = False
-
-    # ── Protocol 6 ───────────────────────────────────────────────────────────
+    # ── Protocol helpers ──────────────────────────────────────────────────────
 
     async def _pub_reference(self, wps):
         await self.MPCFeedback_pub.publish(
@@ -259,12 +263,30 @@ class MPC_loop:
     # ── Command receivers ─────────────────────────────────────────────────────
 
     async def Orient_CMD_Receiver(self, data):
-        self._mode = "pivot"
-        self._pivot_is_chase_orient = False   # external orient — normal completion
-        self._pivot_target_hdg = wrap(float(data[2]))
+        self._mode                    = "pivot"
+        self._pivot_is_terminal_orient = False   # external orient — normal completion
+        self._pivot_target_hdg        = wrap(float(data[2]))
 
-    async def Move_CMD_Receiver(self, waypoints, target_xy, chase=False):
+    async def Move_CMD_Receiver(self, waypoints, target_xy,
+                                face_heading=None):
+        """
+        Begin tracking a new A* path.
+
+        Parameters
+        ----------
+        waypoints    : list of (int x, int y)
+        target_xy    : (x, y) — the original requested destination (may differ
+                       from waypoints[-1] if the goal was snapped)
+        face_heading : float (radians) or None — if provided, the robot will
+                       pivot to this heading after arriving at path end.
+                       Used when the caller wants the robot to face a point
+                       that is behind an obstacle (e.g. a turkey outside the
+                       driveable zone): A* routes to the nearest reachable cell
+                       and the MPC then orients toward the original target.
+        """
         if not waypoints:
+            if self._verbose:
+                print("[MPC] Move_CMD_Receiver: empty waypoints — ignored")
             return
 
         dest_changed = (
@@ -272,35 +294,37 @@ class MPC_loop:
             or np.linalg.norm(np.array(target_xy) - np.array(self._target)) > 3.0
         )
 
-        self._waypoints = waypoints
-        self._target    = target_xy
-        self._guess     = None   # invalidate warm start on new plan
+        self._waypoints    = waypoints
+        self._target       = target_xy
+        self._face_heading = face_heading
+        self._guess        = None   # invalidate warm start on new plan
 
         if dest_changed:
-            self._dist_history = []
+            self._dist_history.clear()
 
         state = get_state(self._parent)
         rxy   = state[:2]
         fwd   = np.array([np.cos(state[2]), -np.sin(state[2])])
 
-        if not chase:
-            pivot_wp = next(
-                (np.array(wp, dtype=float) for wp in waypoints
-                 if np.dot(fwd, np.array(wp, dtype=float) - rxy) > 0),
-                np.array(waypoints[-1], dtype=float)
-            )
-            dx, dy = pivot_wp[0] - rxy[0], pivot_wp[1] - rxy[1]
-            hdg    = np.arctan2(-dy, dx)
-            err    = wrap(hdg - state[2])
-            if abs(np.degrees(err)) > PIVOT_THRESHOLD_DEG:
-                self._pivot_target_hdg      = hdg
-                self._pivot_is_chase_orient = False
-                self._mode = "pivot"
-                print(f"[MPC] Pivot engaged: {np.degrees(err):.1f}deg")
-                await self._pub_reference(waypoints)
-                return
+        # Pre-move pivot if robot is badly misaligned with the first forward waypoint
+        pivot_wp = next(
+            (np.array(wp, dtype=float) for wp in waypoints
+             if np.dot(fwd, np.array(wp, dtype=float) - rxy) > 0),
+            np.array(waypoints[-1], dtype=float)
+        )
+        dx, dy = pivot_wp[0] - rxy[0], pivot_wp[1] - rxy[1]
+        hdg    = np.arctan2(-dy, dx)
+        err    = wrap(hdg - state[2])
+        if abs(np.degrees(err)) > PIVOT_THRESHOLD_DEG:
+            self._pivot_target_hdg         = hdg
+            self._pivot_is_terminal_orient = False
+            self._mode                     = "pivot"
+            if self._verbose:
+                print(f"[MPC] Pre-move pivot engaged: {np.degrees(err):.1f} deg")
+            await self._pub_reference(waypoints)
+            return
 
-        self._mode = "chase" if chase else "trajectory"
+        self._mode = "trajectory"
         await self._pub_reference(waypoints)
 
     # ── Main loop ─────────────────────────────────────────────────────────────
@@ -320,21 +344,35 @@ class MPC_loop:
         if self._mode == "pivot":
             state = get_state(self._parent)
             err   = wrap(self._pivot_target_hdg - state[2])
+
             if abs(np.degrees(err)) < PIVOT_ALIGN_DEG:
-                # print("[MPC] Pivot complete.")
-                if self._pivot_is_chase_orient:
-                    # Post-chase-arrival orient — always land in idle.
-                    # Never loop back to chase with empty waypoints.
-                    self._mode                  = "idle"
-                    self._pivot_is_chase_orient = False
-                    self._dist_history          = []
+                if self._pivot_is_terminal_orient:
+                    # Post-arrival orient complete — go fully idle.
+                    self._mode                     = "idle"
+                    self._pivot_is_terminal_orient = False
+                    self._face_heading             = None
+                    self._dist_history.clear()
+                    await self._send(np.zeros(2))
                     await self._pub_clear()
-                    # print("[MPC] Chase orient complete — idle.")
+                    if self._verbose:
+                        print("[MPC] Terminal orient complete — idle.")
                 else:
-                    # Normal pivot (pre-move align or external Orient CMD)
-                    self._mode = "chase" if self._chase_mode else "trajectory"
+                    # Pre-move align complete — begin tracking.
+                    self._mode = "trajectory"
+                    if self._verbose:
+                        print("[MPC] Pre-move pivot complete — trajectory.")
                 self._u_prev = np.zeros(2)
                 self._guess  = None
+
+                if logger:
+                    logger.log(state=state, mode="idle",
+                        waypoint=tuple(self._target) if self._target is not None else (0, 0),
+                        turkey_pos=None,
+                        edt_distance=self._parent.Map.min_rect_dist(*state[:2]),
+                        vl=0.0, vr=0.0,
+                        n_dynamic=len(self._parent._dynamic_obs),
+                        solve_time_ms=0.0, warm_start=False,
+                        replan=False, n_waypoints=len(self._waypoints))
             else:
                 omega = PIVOT_KP * err
                 u = np.array([np.clip(-omega * L / 2, self._v_min, self._v_max),
@@ -343,7 +381,7 @@ class MPC_loop:
                 if logger:
                     logger.log(state=state, mode="pivot",
                         waypoint=tuple(self._target) if self._target is not None else (0, 0),
-                        turkey_pos=tuple(self._turkey_pos) if self._turkey_pos is not None else None,
+                        turkey_pos=None,
                         edt_distance=self._parent.Map.min_rect_dist(*state[:2]),
                         vl=float(u[0]), vr=float(u[1]),
                         n_dynamic=len(self._parent._dynamic_obs),
@@ -351,60 +389,53 @@ class MPC_loop:
                         replan=False, n_waypoints=len(self._waypoints))
             return
 
-        if self._mode not in ("trajectory", "chase"):
+        if self._mode != "trajectory":
             return
 
         state = get_state(self._parent)
         rxy   = state[:2]
         edt   = self._parent.Map.min_rect_dist(*rxy)
 
-        if self._mode == "chase" and self._turkey_pos is None:
-            self._mode = "idle"; return
-        if self._mode == "trajectory" and self._target is None:
+        if self._target is None:
             self._mode = "idle"; return
 
-        # Guard: if we somehow enter trajectory/chase with no waypoints, go idle
-        # rather than spinning in an at_end loop.
+        # Guard: empty waypoints → idle
         if not self._waypoints:
-            # print(f"[MPC] {self._mode} with empty waypoints — going idle")
+            if self._verbose:
+                print("[MPC] trajectory with empty waypoints — going idle")
             self._mode = "idle"
             await self._send(np.zeros(2))
             await self._pub_clear()
             return
 
-        # Stall reference: turkey position in chase, final waypoint in trajectory
-        ref = (np.array(self._turkey_pos) if self._mode == "chase"
-               else np.array(self._waypoints[-1], dtype=float))
-
         # ── Lookahead and end-of-path detection ───────────────────────────────
         lxy, at_end = _lookahead_point(rxy, state[2], self._waypoints)
 
-        # ── Arrival: end of A* path reached ───────────────────────────────────
+        # ── Arrival ───────────────────────────────────────────────────────────
         if at_end:
             await self._send(np.zeros(2))
 
-            if self._mode == "chase" and self._turkey_pos is not None:
-                # Orient toward turkey, then go idle.
-                # _pivot_is_chase_orient = True ensures pivot completion → idle,
-                # NOT back to chase (which would cause the deadlock seen in logs).
-                tx, ty = float(self._turkey_pos[0]), float(self._turkey_pos[1])
-                hdg    = np.arctan2(-(ty - state[1]), tx - state[0])
-                # print(f"[MPC] Chase path end — orienting toward turkey "
-                    #   f"({np.degrees(hdg):.1f}deg)")
-                self._pivot_target_hdg      = hdg
-                self._pivot_is_chase_orient = True
-                self._waypoints             = []   # consumed
-                self._mode                  = "pivot"
+            if self._face_heading is not None:
+                # Terminal orient requested (e.g. face a turkey outside zone).
+                # Run exactly once, then idle — no replan loop possible.
+                if self._verbose:
+                    print(f"[MPC] Path end — terminal orient to "
+                          f"{np.degrees(self._face_heading):.1f} deg")
+                self._pivot_target_hdg         = self._face_heading
+                self._pivot_is_terminal_orient = True
+                self._waypoints                = []
+                self._mode                     = "pivot"
             else:
-                # print("[MPC] Path end reached — idle")
+                if self._verbose:
+                    print("[MPC] Path end reached — idle")
                 self._mode         = "idle"
-                self._dist_history = []
+                self._dist_history.clear()
                 await self._pub_clear()
 
             if logger:
                 logger.log(state=state, mode="idle",
                     waypoint=tuple(lxy),
-                    turkey_pos=tuple(self._turkey_pos) if self._turkey_pos is not None else None,
+                    turkey_pos=None,
                     edt_distance=edt, vl=0.0, vr=0.0,
                     n_dynamic=len(self._parent._dynamic_obs),
                     solve_time_ms=0.0, warm_start=False,
@@ -412,16 +443,16 @@ class MPC_loop:
             return
 
         # ── Stall detection ───────────────────────────────────────────────────
-        dist_to_ref = np.linalg.norm(rxy - ref)
-        self._dist_history.append(dist_to_ref)
-        if len(self._dist_history) > STALL_WINDOW:
-            self._dist_history.pop(0)
+        dist_to_end = np.linalg.norm(rxy - np.array(self._waypoints[-1], dtype=float))
+        self._dist_history.append(dist_to_end)
         stalled = (len(self._dist_history) == STALL_WINDOW
-                   and (self._dist_history[0] - dist_to_ref) < STALL_DELTA)
+                   and (self._dist_history[0] - dist_to_end) < STALL_DELTA)
 
         if stalled:
-            # print(f"[MPC] Stall replan (dist_to_ref={dist_to_ref:.2f}m)")
-            self._dist_history = []; self._guess = None
+            if self._verbose:
+                print(f"[MPC] Stall detected (dist_to_end={dist_to_end:.2f}m) — replanning")
+            self._dist_history.clear()
+            self._guess = None
             asyncio.create_task(self._parent.replan_to(self._target))
 
         # ── Solve ─────────────────────────────────────────────────────────────
@@ -443,18 +474,19 @@ class MPC_loop:
         self._guess  = _shift_guess(flat, self._mpc)
         self._u_prev = u.copy()
 
+        if self._verbose:
+            print(f"[MPC] mode={self._mode} dist_to_end={dist_to_end:.2f}m edt={edt:.2f}m "
+                  f"state=({state[0]:.2f},{state[1]:.2f},{np.degrees(state[2]):.1f}deg) "
+                  f"u=[{u[0]:.2f},{u[1]:.2f}] solve={ms:.1f}ms warm={warm} "
+                  f"vlim=[{self._v_min:.1f},{self._v_max:.1f}]")
+
         if logger:
             logger.log(state=state, mode=self._mode, waypoint=tuple(lxy),
-                turkey_pos=tuple(self._turkey_pos) if self._turkey_pos is not None else None,
+                turkey_pos=None,
                 edt_distance=edt, vl=float(u[0]), vr=float(u[1]),
                 n_dynamic=len(self._parent._dynamic_obs),
                 solve_time_ms=ms, warm_start=warm,
-                replan=False, n_waypoints=len(self._waypoints))
-
-        # print(f"[MPC] mode={self._mode} dist={dist_to_ref:.2f}m edt={edt:.2f}m "
-        #       f"state=({state[0]:.2f},{state[1]:.2f},{np.degrees(state[2]):.1f}deg) "
-        #       f"u=[{u[0]:.2f},{u[1]:.2f}] solve={ms:.1f}ms warm={warm} "
-        #       f"vlim=[{self._v_min:.1f},{self._v_max:.1f}]")
+                replan=stalled, n_waypoints=len(self._waypoints))
 
         await self._send(u)
 

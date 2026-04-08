@@ -614,7 +614,7 @@ function drawMap(canvas) {
 
   // Sweep line
   const sweepY   = OY + ((t * 0.18) % 1.0) * fh
-  const sweepGrd = ctx.createLinearGradient(OX, sweepY, OX + fw, sweepY)
+  const sweepGrd = ctx.createLinearGradient(OX, OY, OX, OY + fh)
   const fade     = Math.sin(t * 0.57 * Math.PI) * 0.5 + 0.5
   sweepGrd.addColorStop(0,   'rgba(0,212,255,0)')
   sweepGrd.addColorStop(0.3, `rgba(0,212,255,${0.45 * fade})`)
@@ -637,9 +637,9 @@ function drawMap(canvas) {
   })
 
   mapObstacles.filter(o => o.type === 'wall').forEach(ob => {
-    const tx = OX + ob.x * S, ty = OY + ob.y * S
+    const [tx, ty] = proj(ob.x, ob.y)
     ctx.fillStyle   = `rgba(0,70,110,${0.45 * wallPulse})`
-    ctx.fillRect(tx, ty, S, S)
+    ctx.fillRect(tx, ty - S, S, S)
     ctx.strokeStyle = `rgba(0,200,240,${wallPulse})`
     ctx.lineWidth   = 1
     ctx.strokeRect(tx, ty, S, S)
@@ -671,8 +671,9 @@ function drawMap(canvas) {
 
   // Detection boxes
   function drawDetectionBox(wx, wy, color, label, boxW, boxH, idx) {
-    const bx    = OX + (wx - boxW / 2) * S
-    const by    = OY + (wy - boxH / 2) * S
+    const [cx, cy] = proj(wx, wy)
+    const bx = cx - (boxW * S) / 2
+    const by = cy - (boxH * S) / 2
     const bw    = boxW * S, bh = boxH * S
     const pulse = 0.65 + 0.35 * Math.sin(t * 3.5 + idx * 1.7)
     const col      = color.replace('ALPHA', String(pulse))
