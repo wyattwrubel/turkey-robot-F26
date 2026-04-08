@@ -100,7 +100,13 @@ class Map:
 
         for x in range(xcord_low, xcord_high):
             for y in range(ycord_low, ycord_high):
-                if self.Zone_Map[y, x] != 1 and (data == 0 or self.Zone_Map[y, x] != 2):
+                cell = self.Zone_Map[y, x]
+                # Never overwrite static obstacles (1) or exterior tiles (-1).
+                if cell == 1 or cell == -1:
+                    continue
+                # When clearing, also clear dynamic obstacle cells (2);
+                # penalty cells (>2) are cleared by the outer penalty pass.
+                if data == 0 or cell != 2:
                     self.Zone_Map[y, x] = data
 
     # -------------------------------------------------------------------------

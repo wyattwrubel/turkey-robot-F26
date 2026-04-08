@@ -40,7 +40,8 @@ def _get_edt(map_grid):
     """
     global _edt_cache, _static_hash
 
-    static_mask = (map_grid == 1).astype(np.uint8)
+    # Both fixed obstacles (1) and exterior tiles (-1) are impassable.
+    static_mask = ((map_grid == 1) | (map_grid == -1)).astype(np.uint8)
     h           = hash(static_mask.tobytes())
 
     if h != _static_hash:
@@ -69,7 +70,7 @@ def _is_blocked(map_grid, edt, x, y):
     if x < 0 or x >= w or y < 0 or y >= h:
         return True
     cell = map_grid[y, x]
-    if cell == 1 or cell == 2:
+    if cell == 1 or cell == -1 or cell == 2:
         return True
     if float(edt[y, x]) <= PLANNING_CLEARANCE:   # was <, now <= (key fix)
         return True

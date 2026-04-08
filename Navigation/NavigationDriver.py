@@ -12,12 +12,12 @@ class TrajectoryTracker:
     Current_State     = np.array([0, 0, 0], dtype=np.float32)
 
     def __init__(self, DriveTrainPub, MotionCommandPub,
-                 MPCFeedback_Navigation_pub, Verbose=False):
+                 MPCFeedback_Navigation_pub, Verbose=False, EnableLogging=True):
         self.MotionCommandPub = MotionCommandPub
         self.Verbose          = Verbose
 
         self.Map    = MapUpdater.Map()
-        self.Logger = NavigationLogger()
+        self.Logger = NavigationLogger() if EnableLogging else None
         self.MPC    = MovementExecutor.MPC_loop(
             self, DriveTrainPub, MPCFeedback_Navigation_pub,
             verbose=Verbose)
@@ -228,7 +228,16 @@ class TrajectoryTracker:
         await self.MPC.Move_CMD_Receiver(
             wps, target, face_heading=self._last_face_heading)
 
+        # Push the updated path to the UI — Move_CMD_Receiver calls
+        # _pub_reference internally, but only after a mode transition.
+        # Re-publishing here ensures the display stays current after a replan.
+        await self.MPC._pub_reference(wps)
+
+        # Move_CMD_Receiver already clears the cooldown flag via the normal
+        # plan-acceptance path, so no extra action needed here.
+
     # ── Shutdown ──────────────────────────────────────────────────────────────
 
     def shutdown(self):
-        self.Logger.close()
+        if self.Logger is not None:
+            self.Logger.close()

@@ -30,9 +30,10 @@ STALL_DELTA  = 0.3    # metres — minimum progress over STALL_WINDOW ticks
 
 LOOKAHEAD_DIST = 2.5  # metres
 
-PIVOT_THRESHOLD_DEG = 10.0
-PIVOT_ALIGN_DEG     =  3.0
-PIVOT_KP            =  3.0
+PIVOT_THRESHOLD_DEG    = 10.0
+PIVOT_ALIGN_DEG        =  3.0
+PIVOT_KP               =  3.0
+PIVOT_ALIGN_SEGMENTS   =  3     # number of leading path segments used to compute pre-move heading
 
 W_XY_RUN     =  5.0
 W_XY_TERM    = 80.0
@@ -49,6 +50,46 @@ def wrap(a):
 def get_state(parent):
     raw = np.array(parent.Current_State, dtype=np.float64)
     return np.array([raw[0], raw[1], wrap(raw[2])])
+
+def _path_entry_heading(robot_xy, waypoints, n_segments=PIVOT_ALIGN_SEGMENTS):
+    """
+    Compute the heading the robot should face before beginning to track a path.
+
+    Takes the mean direction vector of the first `n_segments` path segments
+    (or fewer if the path is short), weighted by segment length.  This is more
+    robust than using the single nearest waypoint because it accounts for the
+    initial curvature of the path rather than reacting to a single 1-cell step.
+
+    Returns the heading in radians, or None if the path has fewer than 2 points.
+    """
+    pts = [np.array(wp, dtype=float) for wp in waypoints]
+    if len(pts) < 2:
+        return None
+
+    # Skip waypoints that are trivially close to the robot to avoid
+    # a near-zero segment distorting the average.
+    start = 0
+    for i, pt in enumerate(pts):
+        if np.linalg.norm(pt - np.array(robot_xy)) > 0.5:
+            start = i
+            break
+
+    vx_sum, vy_sum, total_len = 0.0, 0.0, 0.0
+    segments_used = 0
+    for i in range(start, min(start + n_segments, len(pts) - 1)):
+        seg = pts[i + 1] - pts[i]
+        sl  = np.linalg.norm(seg)
+        if sl < 1e-6:
+            continue
+        vx_sum    += seg[0]
+        vy_sum    += seg[1]
+        total_len += sl
+        segments_used += 1
+
+    if segments_used == 0 or total_len < 1e-6:
+        return None
+
+    return float(np.arctan2(-vy_sum, vx_sum))
 
 # =============================================================================
 # Unified MPC solver
@@ -223,6 +264,11 @@ class MPC_loop:
         self._dist_history = deque(maxlen=STALL_WINDOW)
         self._solving      = False
 
+        # Stall-replan state: track the in-flight task so Orient can cancel it,
+        # and a cooldown flag to prevent back-to-back replan storms.
+        self._stall_replan_task     = None
+        self._stall_replan_cooldown = False
+
         self._guess  = None
         self._u_prev = np.zeros(2)
 
@@ -263,9 +309,32 @@ class MPC_loop:
     # ── Command receivers ─────────────────────────────────────────────────────
 
     async def Orient_CMD_Receiver(self, data):
-        self._mode                    = "pivot"
+        # Cancel any in-flight stall replan so it doesn't overwrite the orient.
+        if self._stall_replan_task is not None and not self._stall_replan_task.done():
+            self._stall_replan_task.cancel()
+            self._stall_replan_task = None
+
+        # Clear all move state so the MPC doesn't resume trajectory after orient.
+        self._waypoints             = []
+        self._target                = None
+        self._face_heading          = None
+        self._dist_history.clear()
+        self._stall_replan_cooldown = False
+
+        # Reset solver to avoid stale warm-start influencing the pivot.
+        self._u_prev = np.zeros(2)
+        self._guess  = None
+
+        self._mode                     = "pivot"
         self._pivot_is_terminal_orient = False   # external orient — normal completion
-        self._pivot_target_hdg        = wrap(float(data[2]))
+        self._pivot_target_hdg         = wrap(float(data[2]))
+
+        # Notify UI that the trajectory has been cancelled.
+        await self._pub_clear()
+
+        if self._verbose:
+            print(f"[MPC] Orient interrupt — move cancelled, "
+                  f"pivoting to {np.degrees(self._pivot_target_hdg):.1f} deg")
 
     async def Move_CMD_Receiver(self, waypoints, target_xy,
                                 face_heading=None):
@@ -299,28 +368,35 @@ class MPC_loop:
         self._face_heading = face_heading
         self._guess        = None   # invalidate warm start on new plan
 
+        # Clear stall cooldown so the new path gets a fresh detection window.
+        self._stall_replan_cooldown = False
+
         if dest_changed:
             self._dist_history.clear()
 
         state = get_state(self._parent)
         rxy   = state[:2]
-        fwd   = np.array([np.cos(state[2]), -np.sin(state[2])])
 
-        # Pre-move pivot if robot is badly misaligned with the first forward waypoint
-        pivot_wp = next(
-            (np.array(wp, dtype=float) for wp in waypoints
-             if np.dot(fwd, np.array(wp, dtype=float) - rxy) > 0),
-            np.array(waypoints[-1], dtype=float)
-        )
-        dx, dy = pivot_wp[0] - rxy[0], pivot_wp[1] - rxy[1]
-        hdg    = np.arctan2(-dy, dx)
-        err    = wrap(hdg - state[2])
+        # Compute pre-move heading from the average direction of the first
+        # PIVOT_ALIGN_SEGMENTS path segments (weighted by length).
+        # This prevents donuts caused by aligning to a single 1-cell step that
+        # doesn't represent the path's true initial direction.
+        hdg = _path_entry_heading(rxy, waypoints, n_segments=PIVOT_ALIGN_SEGMENTS)
+
+        if hdg is None:
+            # Degenerate path (single point) — go straight to trajectory mode.
+            self._mode = "trajectory"
+            await self._pub_reference(waypoints)
+            return
+
+        err = wrap(hdg - state[2])
         if abs(np.degrees(err)) > PIVOT_THRESHOLD_DEG:
             self._pivot_target_hdg         = hdg
             self._pivot_is_terminal_orient = False
             self._mode                     = "pivot"
             if self._verbose:
-                print(f"[MPC] Pre-move pivot engaged: {np.degrees(err):.1f} deg")
+                print(f"[MPC] Pre-move pivot engaged: {np.degrees(err):.1f} deg "
+                      f"(averaged over first {PIVOT_ALIGN_SEGMENTS} segments)")
             await self._pub_reference(waypoints)
             return
 
@@ -445,15 +521,20 @@ class MPC_loop:
         # ── Stall detection ───────────────────────────────────────────────────
         dist_to_end = np.linalg.norm(rxy - np.array(self._waypoints[-1], dtype=float))
         self._dist_history.append(dist_to_end)
-        stalled = (len(self._dist_history) == STALL_WINDOW
-                   and (self._dist_history[0] - dist_to_end) < STALL_DELTA)
+        stalled = (
+            not self._stall_replan_cooldown
+            and len(self._dist_history) == STALL_WINDOW
+            and (self._dist_history[0] - dist_to_end) < STALL_DELTA
+        )
 
         if stalled:
             if self._verbose:
                 print(f"[MPC] Stall detected (dist_to_end={dist_to_end:.2f}m) — replanning")
             self._dist_history.clear()
-            self._guess = None
-            asyncio.create_task(self._parent.replan_to(self._target))
+            self._guess             = None
+            self._stall_replan_cooldown = True   # suppress further replans until resolved
+            self._stall_replan_task = asyncio.create_task(
+                self._parent.replan_to(self._target))
 
         # ── Solve ─────────────────────────────────────────────────────────────
         warm = self._guess is not None
