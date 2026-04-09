@@ -639,7 +639,7 @@ function drawMap(canvas) {
   mapObstacles.filter(o => o.type === 'wall').forEach(ob => {
     const [tx, ty] = proj(ob.x, ob.y)
     ctx.fillStyle   = `rgba(0,70,110,${0.45 * wallPulse})`
-    ctx.fillRect(tx, ty - S, S, S)
+    ctx.fillRect(tx, ty, S, S)
     ctx.strokeStyle = `rgba(0,200,240,${wallPulse})`
     ctx.lineWidth   = 1
     ctx.strokeRect(tx, ty, S, S)

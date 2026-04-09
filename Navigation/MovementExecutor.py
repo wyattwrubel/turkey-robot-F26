@@ -13,7 +13,7 @@ import casadi as ca
 # =============================================================================
 WHEELBASE = 0.7
 L         = WHEELBASE
-DT        = 0.2
+DT        = 0.1
 N         = 8
 
 # WARNING: these are intentionally wide for testing.  Call set_speed_cap()
@@ -42,12 +42,17 @@ PIVOT_ALIGN_SEGMENTS   =  3     # leading path segments used for pre-move headin
 PIVOT_STALL_WINDOW     = 15     # ticks (~3 s at DT=0.2)
 PIVOT_STALL_DEG        =  5.0   # minimum heading progress over the window
 
-# Obstacle escape (reverse-and-replan):
-# When the robot detects it is inside an obstacle cell (EDT == 0) it enters
-# "escape" mode.  It reverses at ESCAPE_SPEED for ESCAPE_REVERSE_TICKS ticks,
-# then stops and triggers a full A* replan before resuming trajectory mode.
-ESCAPE_SPEED         = 0.5    # m/s — reverse speed
-ESCAPE_REVERSE_TICKS = 10     # number of DT ticks to reverse (~2 s at DT=0.2)
+# Obstacle escape (targeted cell + MPC):
+# When the robot is inside an obstacle cell (EDT == 0) it enters "escape" mode.
+# A target escape cell is chosen by BFS: candidates must have EDT >= this floor,
+# and are scored by EDT value + ESCAPE_BEHIND_WEIGHT * cos(angle behind robot).
+# The cosine bias strongly prefers cells behind the robot (opposite to heading)
+# so the escape naturally retraces the path that caused the collision rather
+# than pushing through into more obstacle.  The robot then drives to the chosen
+# cell under normal MPC control (no open-loop wheel commands), then replans.
+ESCAPE_EDT_FLOOR      = 2.0   # minimum EDT a candidate cell must have
+ESCAPE_BEHIND_WEIGHT  = 3.0   # how strongly cells behind the robot are preferred
+ESCAPE_SEARCH_RADIUS  = 12    # BFS radius in grid cells
 
 W_XY_RUN     =  5.0
 W_XY_TERM    = 80.0
@@ -98,6 +103,99 @@ def _path_entry_heading(robot_xy, waypoints, n_segments=PIVOT_ALIGN_SEGMENTS):
         return None
 
     return float(np.arctan2(-vy_sum, vx_sum))
+
+
+def _find_escape_cell(map_obj, robot_xy, robot_heading, verbose=False):
+    """
+    Find the best cell for the robot to drive to in order to escape an obstacle.
+
+    BFS outward from the robot's current grid cell.  Each candidate cell is
+    scored as:
+
+        score = edt(cell) + ESCAPE_BEHIND_WEIGHT * cos(angle_to_cell - (heading + π))
+
+    The cosine term is maximised when the cell is directly behind the robot
+    (opposite to its current heading), so the escape naturally retraces the
+    approach path rather than powering through the obstacle.
+
+    Hard floor: only cells with EDT >= ESCAPE_EDT_FLOOR are eligible.
+
+    Fallback: if no cell clears the floor (robot is deeply boxed in), returns
+    the single highest-EDT reachable cell so there is always somewhere to go.
+
+    Returns (int x, int y) grid cell, or None if the map is completely blocked.
+    """
+    from . import PathGenerator as PG
+
+    gz       = map_obj.Zone_Map
+    edt_grid = PG._get_edt(gz)
+    h, w     = gz.shape
+
+    gx = int(np.clip(round(robot_xy[0]), 0, w - 1))
+    gy = int(np.clip(round(robot_xy[1]), 0, h - 1))
+
+    # Direction directly behind the robot.
+    behind_angle = wrap(robot_heading + np.pi)
+
+    candidates    = []   # (score, cell) — only cells that clear ESCAPE_EDT_FLOOR
+    fallback_best  = None
+    fallback_score = -np.inf
+
+    visited = {(gx, gy)}
+    queue   = [(gx, gy, 0)]
+
+    while queue:
+        next_queue = []
+        for cx, cy, depth in queue:
+            if depth > ESCAPE_SEARCH_RADIUS:
+                continue
+
+            cell_edt = float(edt_grid[cy, cx])
+
+            dx = cx - gx
+            dy = cy - gy
+            if dx == 0 and dy == 0:
+                behind_score = 0.0
+            else:
+                angle_to_cell = np.arctan2(-dy, dx)   # y-flipped robot convention
+                behind_score  = float(np.cos(angle_to_cell - behind_angle))
+
+            score = cell_edt + ESCAPE_BEHIND_WEIGHT * behind_score
+
+            if cell_edt >= ESCAPE_EDT_FLOOR:
+                candidates.append((score, (cx, cy)))
+            elif score > fallback_score:
+                fallback_score = score
+                fallback_best  = (cx, cy)
+
+            for ndx, ndy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                nx, ny = cx + ndx, cy + ndy
+                if (nx, ny) not in visited and 0 <= nx < w and 0 <= ny < h:
+                    cell = gz[ny, nx]
+                    if cell != 1 and cell != -1:   # don't expand into hard walls
+                        visited.add((nx, ny))
+                        next_queue.append((nx, ny, depth + 1))
+
+        queue = next_queue
+
+    if candidates:
+        best = max(candidates, key=lambda c: c[0])[1]
+        if verbose:
+            print(f"[MPC] Escape cell: {best}  "
+                  f"edt={float(edt_grid[best[1], best[0]]):.1f}  "
+                  f"({len(candidates)} candidates, "
+                  f"behind={np.degrees(behind_angle):.1f} deg)")
+        return best
+
+    if fallback_best is not None:
+        if verbose:
+            print(f"[MPC] Escape cell (fallback — no EDT>={ESCAPE_EDT_FLOOR} found): "
+                  f"{fallback_best}  edt={float(edt_grid[fallback_best[1], fallback_best[0]]):.1f}")
+        return fallback_best
+
+    if verbose:
+        print("[MPC] Escape: no reachable cell found — fully boxed in")
+    return None
 
 
 # =============================================================================
@@ -264,8 +362,10 @@ class MPC_loop:
         self._stall_replan_task     = None
         self._stall_replan_cooldown = False
 
-        # Escape state — counts down reverse ticks, then triggers replan.
-        self._escape_ticks_remaining = 0   # > 0 means escape is active
+        # Escape state — set to the target (int x, int y) cell on first obstacle
+        # entry; None means escape is not active.  Locked for the full escape so
+        # we don't recompute a different cell every tick.
+        self._escape_target_cell = None   # None = not escaping
 
         self._guess  = None
         self._u_prev = np.zeros(2)
@@ -309,12 +409,12 @@ class MPC_loop:
             self._stall_replan_task.cancel()
             self._stall_replan_task = None
 
-        self._waypoints              = []
-        self._target                 = None
-        self._face_heading           = None
+        self._waypoints             = []
+        self._target                = None
+        self._face_heading          = None
         self._dist_history.clear()
-        self._stall_replan_cooldown  = False
-        self._escape_ticks_remaining = 0
+        self._stall_replan_cooldown = False
+        self._escape_target_cell    = None
 
         self._u_prev = np.zeros(2)
         self._guess  = None
@@ -355,9 +455,8 @@ class MPC_loop:
         self._guess        = None   # invalidate warm start on new plan
 
         # If escape is active, update target/waypoints but let the escape
-        # complete — don't interrupt reverse or the robot will re-enter the
-        # obstacle on the very next tick.
-        if self._escape_ticks_remaining > 0:
+        # complete — interrupting it would send the robot back into the obstacle.
+        if self._escape_target_cell is not None:
             if self._verbose:
                 print("[MPC] Move received during escape — updating target, "
                       "deferring until escape completes")
@@ -490,60 +589,99 @@ class MPC_loop:
         if self._target is None:
             self._mode = "idle"; return
 
-        # ── Obstacle escape (reverse-and-replan) ──────────────────────────────
-        # Triggered when EDT == 0, meaning the robot is literally inside a wall
-        # cell.  We reverse straight back for ESCAPE_REVERSE_TICKS ticks, then
-        # stop and trigger a full A* replan from the recovered position.
+        # ── Obstacle escape (targeted cell + MPC) ────────────────────────────
+        # Triggered when EDT == 0 (robot is inside a hard wall cell).
+        # On first entry: BFS finds the nearest high-EDT cell biased behind the
+        # robot (opposite to current heading), locks it as the escape target.
+        # The robot then drives to that cell under normal MPC control — no
+        # open-loop wheel commands.  Escape ends when the robot's EDT clears
+        # ESCAPE_EDT_FLOOR, at which point a full A* replan fires.
         from . import PathGenerator as PG
 
-        gz   = self._parent.Map.Zone_Map
-        giy  = int(np.clip(round(rxy[1]), 0, gz.shape[0] - 1))
-        gix  = int(np.clip(round(rxy[0]), 0, gz.shape[1] - 1))
-        grid_edt    = float(PG._get_edt(gz)[giy, gix])
-        in_obstacle = grid_edt == 0.0   # only trigger on actual wall cell
+        gz       = self._parent.Map.Zone_Map
+        giy      = int(np.clip(round(rxy[1]), 0, gz.shape[0] - 1))
+        gix      = int(np.clip(round(rxy[0]), 0, gz.shape[1] - 1))
+        grid_edt = float(PG._get_edt(gz)[giy, gix])
+        in_obstacle = grid_edt == 0.0
 
-        if in_obstacle or self._escape_ticks_remaining > 0:
+        # Enter escape if newly in obstacle, or continue if already escaping.
+        if in_obstacle and self._escape_target_cell is None:
+            target_cell = _find_escape_cell(
+                self._parent.Map, rxy, state[2], verbose=self._verbose)
 
-            if in_obstacle and self._escape_ticks_remaining == 0:
-                # First entry into obstacle — start the reverse countdown.
-                self._escape_ticks_remaining = ESCAPE_REVERSE_TICKS
-                self._guess  = None   # discard warm-start; it drove us here
-                self._u_prev = np.zeros(2)
-                if self._verbose:
-                    print(f"[MPC] Obstacle escape: EDT=0 at ({rxy[0]:.1f},{rxy[1]:.1f}) "
-                          f"— reversing for {ESCAPE_REVERSE_TICKS} ticks")
-
-            if self._escape_ticks_remaining > 0:
-                # Reverse: both wheels negative (straight back).
-                spd   = -min(ESCAPE_SPEED, abs(self._v_min))
-                u_esc = np.array([spd, spd])
-                await self._send(u_esc)
-                self._escape_ticks_remaining -= 1
-
-                if self._verbose:
-                    print(f"[MPC] Escape reverse tick {ESCAPE_REVERSE_TICKS - self._escape_ticks_remaining}"
-                          f"/{ESCAPE_REVERSE_TICKS} at spd={spd:.2f}")
-
+            if target_cell is None:
+                # Fully boxed in — stop and wait for map to change.
+                await self._send(np.zeros(2))
                 if logger:
                     logger.log(state=state, mode="escape",
                         waypoint=tuple(self._target) if self._target is not None else (0, 0),
-                        edt_distance=float(grid_edt),
-                        vl=float(u_esc[0]), vr=float(u_esc[1]),
+                        edt_distance=grid_edt, vl=0.0, vr=0.0,
                         n_dynamic=self._parent._n_dynamic_obs,
                         solve_time_ms=0.0, warm_start=False,
-                        replan=False, n_waypoints=len(self._waypoints))
+                        replan=False, n_waypoints=0)
                 return
 
-            # Countdown finished — stop and fire a replan from here.
-            await self._send(np.zeros(2))
+            self._escape_target_cell    = target_cell
+            self._guess                 = None   # discard warm-start; it drove us here
+            self._u_prev                = np.zeros(2)
             self._stall_replan_cooldown = False
             if self._verbose:
-                print("[MPC] Escape complete — replanning from recovery position")
-            if (self._target is not None
-                    and (self._stall_replan_task is None
-                         or self._stall_replan_task.done())):
-                self._stall_replan_task = asyncio.create_task(
-                    self._parent.replan_to(self._target))
+                print(f"[MPC] Obstacle escape: EDT=0 at ({rxy[0]:.1f},{rxy[1]:.1f}) "
+                      f"— driving to escape cell {target_cell} "
+                      f"(edt={float(PG._get_edt(gz)[target_cell[1], target_cell[0]]):.1f})")
+
+        if self._escape_target_cell is not None:
+            escape_cell = self._escape_target_cell
+
+            # Check clearance at current position — exit escape when clear.
+            if grid_edt >= ESCAPE_EDT_FLOOR and not in_obstacle:
+                if self._verbose:
+                    print(f"[MPC] Escape cleared (EDT={grid_edt:.1f} >= {ESCAPE_EDT_FLOOR}) "
+                          f"— replanning from ({rxy[0]:.1f},{rxy[1]:.1f})")
+                self._escape_target_cell = None
+                await self._send(np.zeros(2))
+                if (self._target is not None
+                        and (self._stall_replan_task is None
+                             or self._stall_replan_task.done())):
+                    self._stall_replan_task = asyncio.create_task(
+                        self._parent.replan_to(self._target))
+                return
+
+            # Still escaping — drive to escape cell under MPC.
+            escape_xy = np.array(escape_cell, dtype=float)
+            warm = self._guess is not None
+            if not warm:
+                self._guess = _seed_guess(state, self._mpc)
+            pvec = np.concatenate([state, escape_xy, self._u_prev])
+
+            t0  = time.perf_counter()
+            sol = self._mpc['solver'](
+                x0=self._guess,
+                lbx=self._mpc['lbx'], ubx=self._mpc['ubx'],
+                lbg=self._mpc['lbg'], ubg=self._mpc['ubg'],
+                p=pvec)
+            ms  = (time.perf_counter() - t0) * 1000
+
+            flat         = sol['x'].full().flatten()
+            u            = flat[self._mpc['ctrl_start']:self._mpc['ctrl_start'] + self._mpc['nu']]
+            self._guess  = _shift_guess(flat, self._mpc)
+            self._u_prev = u.copy()
+
+            if self._verbose:
+                dist_esc = np.linalg.norm(rxy - escape_xy)
+                print(f"[MPC] Escape driving to {escape_cell} "
+                      f"dist={dist_esc:.2f}m edt={grid_edt:.2f} "
+                      f"u=[{u[0]:.2f},{u[1]:.2f}] solve={ms:.1f}ms")
+
+            if logger:
+                logger.log(state=state, mode="escape",
+                    waypoint=tuple(escape_cell),
+                    edt_distance=grid_edt, vl=float(u[0]), vr=float(u[1]),
+                    n_dynamic=self._parent._n_dynamic_obs,
+                    solve_time_ms=ms, warm_start=warm,
+                    replan=False, n_waypoints=len(self._waypoints))
+
+            await self._send(u)
             return
 
         # ── Guard: empty waypoints ────────────────────────────────────────────

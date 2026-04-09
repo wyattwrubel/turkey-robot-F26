@@ -396,14 +396,14 @@
   .conf-dot.poor { background: var(--danger);  color: var(--danger);  animation: blink 0.6s infinite; }
 
   /* ── LOCKED STATE (auto mode) ─────────────────────────────── */
-  .ctrl-top.locked,
+  /* .ctrl-top.locked,
   .macrostate-g.locked,
   .speed-wrap.locked {
     opacity: 0.3;
     pointer-events: none;
     user-select: none;
     transition: opacity .2s ease;
-  }
+  } */
 
   /* ── DRIVETRAIN READOUT ────────────────────────────────────── */
   .drive-readout {

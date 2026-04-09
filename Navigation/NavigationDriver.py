@@ -14,7 +14,7 @@ class TrajectoryTracker:
     Current_State     = np.array([0, 0, 0], dtype=np.float32)
 
     def __init__(self, DriveTrainPub, MotionCommandPub,
-                 MPCFeedback_Navigation_pub, Verbose=False, EnableLogging=True):
+                 MPCFeedback_Navigation_pub, Verbose=False, EnableLogging=False):
         self.MotionCommandPub = MotionCommandPub
         self.Verbose          = Verbose
 
