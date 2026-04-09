@@ -35,6 +35,16 @@ PIVOT_ALIGN_DEG        =  3.0
 PIVOT_KP               =  3.0
 PIVOT_ALIGN_SEGMENTS   =  3     # number of leading path segments used to compute pre-move heading
 
+# Pivot stall: if heading error hasn't improved by this many degrees over
+# PIVOT_STALL_WINDOW ticks, abort the pivot and proceed to trajectory.
+PIVOT_STALL_WINDOW     = 15     # ticks (~3 s at DT=0.2)
+PIVOT_STALL_DEG        =  5.0   # minimum heading progress required over the window
+
+# Obstacle escape: straight-line drive used when EDT == 0 (robot inside obstacle).
+# Speed is capped and only forward motion is commanded (no reversing, no turning).
+ESCAPE_SPEED           =  0.5   # m/s — slow and deliberate
+ESCAPE_HEADING_TOL_DEG = 15.0   # align to escape heading within this before driving
+
 W_XY_RUN     =  5.0
 W_XY_TERM    = 80.0
 W_HEADING    = 12.0
@@ -90,6 +100,76 @@ def _path_entry_heading(robot_xy, waypoints, n_segments=PIVOT_ALIGN_SEGMENTS):
         return None
 
     return float(np.arctan2(-vy_sum, vx_sum))
+
+
+def _escape_heading(map_obj, robot_xy, verbose=False):
+    """
+    Compute the best heading to drive straight out of the hard-block zone.
+
+    Uses the grid EDT (same metric as A* and the escape trigger) so the probe
+    and the trigger always agree on what counts as 'blocked' vs 'clear'.
+    Probes 16 directions at ~22.5° spacing, scoring each by:
+      1. How quickly it exits the PLANNING_CLEARANCE zone (fewer steps = better)
+      2. How many additional steps of clear space exist beyond the exit point
+         (more depth = leads further into open space, not just past a wall face)
+    Hard-wall cells (1 or -1) terminate a probe immediately.
+    """
+    from . import PathGenerator as PG
+
+    edt_grid = PG._get_edt(map_obj.Zone_Map)
+    h, w     = map_obj.Zone_Map.shape
+    rx, ry   = float(robot_xy[0]), float(robot_xy[1])
+
+    candidates = []   # (exit_step, -clearance_depth, angle)
+
+    for angle_deg in range(0, 360, 23):   # ~16 directions at 22.5° spacing
+        angle = np.radians(angle_deg)
+        dx    =  np.cos(angle)
+        dy    = -np.sin(angle)   # robot coord convention (y flipped)
+
+        exit_step       = None
+        clearance_depth = 0
+
+        for step in range(1, 41):   # up to 20m at 0.5m steps
+            cx_i = int(np.clip(round(rx + dx * step * 0.5), 0, w - 1))
+            cy_i = int(np.clip(round(ry + dy * step * 0.5), 0, h - 1))
+
+            cell = map_obj.Zone_Map[cy_i, cx_i]
+            if cell == 1 or cell == -1:
+                break   # hard wall — no exit this way
+
+            edt_val = float(edt_grid[cy_i, cx_i])
+            if edt_val > PG.PLANNING_CLEARANCE:
+                if exit_step is None:
+                    exit_step = step
+                clearance_depth += 1   # accumulate open steps beyond exit
+
+        if exit_step is not None:
+            candidates.append((exit_step, -clearance_depth, angle))
+
+    if not candidates:
+        if verbose:
+            print("[MPC] _escape_heading: no exit direction found — all blocked")
+        return None
+
+    # Prefer fewest steps to exit; break ties by most clearance depth
+    candidates.sort(key=lambda c: (c[0], c[1]))
+    best_angle = candidates[0][2]
+
+    if verbose:
+        print(f"[MPC] _escape_heading: {len(candidates)} directions viable, "
+              f"best={np.degrees(best_angle):.1f}° "
+              f"(exit_step={candidates[0][0]}, depth={-candidates[0][1]})")
+
+    return float(best_angle)
+
+    if verbose:
+        print(f"[MPC] _escape_heading: best={np.degrees(best_angle):.1f}° "
+              f"(exit_step={candidates[0][0]}, "
+              f"clearance={-candidates[0][1]}), "
+              f"total candidates={len(candidates)}")
+
+    return float(best_angle)
 
 # =============================================================================
 # Unified MPC solver
@@ -187,23 +267,37 @@ def _shift_guess(sol_flat, mpc):
 # Lookahead
 # =============================================================================
 
-def _lookahead_point(robot_xy, robot_theta, waypoints, dist=LOOKAHEAD_DIST):
+def _advance_waypoints(robot_xy, waypoints):
     """
-    Project a point dist metres ahead along the A* path.
+    Drop all waypoints the robot has already passed, keeping at least one.
 
-    Forward-skip is softened: instead of skipping all waypoints with a
-    negative dot product (which could skip past imminent waypoints after a
-    sharp turn), we only skip waypoints that are both behind the robot AND
-    further from the path end than the closest forward waypoint.  In practice
-    this means we walk from the beginning of the remaining path and take the
-    first waypoint that is either ahead or the closest one behind.
+    A waypoint is considered passed when the robot is within PATH_END_DIST of
+    it AND it is not the last waypoint (the goal).  This ensures `waypoints[-1]`
+    always refers to the true destination, so `at_end` detection is reliable
+    regardless of how many intermediate points the path contains.
+
+    Mutates `waypoints` in-place and returns it.
+    """
+    while len(waypoints) > 1:
+        dist = np.linalg.norm(np.array(robot_xy) - np.array(waypoints[0], dtype=float))
+        if dist < PATH_END_DIST:
+            waypoints.pop(0)
+        else:
+            break
+    return waypoints
+
+
+def _lookahead_point(robot_xy, waypoints, dist=LOOKAHEAD_DIST):
+    """
+    Project a point `dist` metres ahead along the (already-pruned) A* path.
+
+    Because _advance_waypoints has already removed passed points, waypoints[0]
+    is always the next relevant point and waypoints[-1] is the true goal.
+    `at_end` is True when the robot is within PATH_END_DIST of the final waypoint.
 
     Returns
     -------
     (lookahead_xy, at_end)
-      lookahead_xy : np.array([x, y])
-      at_end       : True when the robot is within PATH_END_DIST of the
-                     final waypoint.  False for empty waypoints (caller guards).
     """
     if not waypoints:
         return np.array(robot_xy), False
@@ -211,26 +305,14 @@ def _lookahead_point(robot_xy, robot_theta, waypoints, dist=LOOKAHEAD_DIST):
     pts    = [np.array(wp, dtype=float) for wp in waypoints]
     at_end = np.linalg.norm(np.array(robot_xy) - pts[-1]) < PATH_END_DIST
 
-    fwd = np.array([np.cos(robot_theta), -np.sin(robot_theta)])
-
-    # Find the first waypoint that is strictly ahead of the robot.
-    # If none are ahead, use the nearest one to avoid overshooting corners.
-    start = len(pts) - 1
-    min_dist = np.inf
-    for i, pt in enumerate(pts):
-        if np.dot(fwd, pt - robot_xy) >= -0.5:   # softened: was >= 0
-            start = i
-            break
-        d = np.linalg.norm(pt - robot_xy)
-        if d < min_dist:
-            min_dist = d
-            start    = i
-
     remaining = dist
-    for i in range(start, len(pts) - 1):
-        seg = pts[i + 1] - pts[i]; sl = np.linalg.norm(seg)
-        if sl < 1e-6: continue
-        if sl >= remaining: return pts[i] + seg * (remaining / sl), at_end
+    for i in range(len(pts) - 1):
+        seg = pts[i + 1] - pts[i]
+        sl  = np.linalg.norm(seg)
+        if sl < 1e-6:
+            continue
+        if sl >= remaining:
+            return pts[i] + seg * (remaining / sl), at_end
         remaining -= sl
     return pts[-1], at_end
 
@@ -261,6 +343,10 @@ class MPC_loop:
         # not back in trajectory.
         self._pivot_is_terminal_orient = False
 
+        # Pivot stall detection: track error magnitude over the last window
+        # of ticks so we can abort a spinning pivot that isn't converging.
+        self._pivot_err_history = deque(maxlen=PIVOT_STALL_WINDOW)
+
         self._dist_history = deque(maxlen=STALL_WINDOW)
         self._solving      = False
 
@@ -268,6 +354,11 @@ class MPC_loop:
         # and a cooldown flag to prevent back-to-back replan storms.
         self._stall_replan_task     = None
         self._stall_replan_cooldown = False
+
+        # Obstacle escape state: heading is locked on first entry and held
+        # until the robot fully clears the obstacle, preventing oscillation
+        # caused by recomputing a slightly-different heading every tick.
+        self._escape_hdg_locked = None
 
         self._guess  = None
         self._u_prev = np.zeros(2)
@@ -320,6 +411,7 @@ class MPC_loop:
         self._face_heading          = None
         self._dist_history.clear()
         self._stall_replan_cooldown = False
+        self._escape_hdg_locked     = None
 
         # Reset solver to avoid stale warm-start influencing the pivot.
         self._u_prev = np.zeros(2)
@@ -368,8 +460,22 @@ class MPC_loop:
         self._face_heading = face_heading
         self._guess        = None   # invalidate warm start on new plan
 
-        # Clear stall cooldown so the new path gets a fresh detection window.
+        # If escape is currently active, update the target and waypoints so the
+        # robot resumes toward the right goal after clearing the obstacle, but
+        # don't reset the escape heading or trigger a pre-move pivot — doing so
+        # interrupts the escape and causes the spin/replan/re-enter cycle.
+        if self._escape_hdg_locked is not None:
+            if self._verbose:
+                print("[MPC] Move received during escape — updating target/waypoints, "
+                      "deferring pivot until obstacle cleared")
+            if dest_changed:
+                self._dist_history.clear()
+            return
+
+        # Clear stall cooldown and escape heading so the new path gets a
+        # fresh detection window and clean escape state.
         self._stall_replan_cooldown = False
+        self._escape_hdg_locked     = None
 
         if dest_changed:
             self._dist_history.clear()
@@ -391,12 +497,24 @@ class MPC_loop:
 
         err = wrap(hdg - state[2])
         if abs(np.degrees(err)) > PIVOT_THRESHOLD_DEG:
-            self._pivot_target_hdg         = hdg
-            self._pivot_is_terminal_orient = False
-            self._mode                     = "pivot"
-            if self._verbose:
-                print(f"[MPC] Pre-move pivot engaged: {np.degrees(err):.1f} deg "
-                      f"(averaged over first {PIVOT_ALIGN_SEGMENTS} segments)")
+            # If we're already mid-pivot toward a similar heading, don't
+            # reset the target — that's the root cause of the spinning 360s
+            # seen when repeated Move CMDs arrive during a pre-move pivot.
+            already_pivoting_correctly = (
+                self._mode == "pivot"
+                and not self._pivot_is_terminal_orient
+                and abs(np.degrees(wrap(hdg - self._pivot_target_hdg))) < PIVOT_THRESHOLD_DEG
+            )
+            if not already_pivoting_correctly:
+                self._pivot_target_hdg         = hdg
+                self._pivot_is_terminal_orient = False
+                self._pivot_err_history.clear()   # fresh stall window for new target
+                self._mode                     = "pivot"
+                if self._verbose:
+                    print(f"[MPC] Pre-move pivot engaged: {np.degrees(err):.1f} deg "
+                          f"(averaged over first {PIVOT_ALIGN_SEGMENTS} segments)")
+            elif self._verbose:
+                print(f"[MPC] Already pivoting to similar heading — suppressing target update")
             await self._pub_reference(waypoints)
             return
 
@@ -420,8 +538,35 @@ class MPC_loop:
         if self._mode == "pivot":
             state = get_state(self._parent)
             err   = wrap(self._pivot_target_hdg - state[2])
+            err_deg = abs(np.degrees(err))
 
-            if abs(np.degrees(err)) < PIVOT_ALIGN_DEG:
+            # ── Pivot stall detection ─────────────────────────────────────────
+            # If the heading error hasn't improved meaningfully over the last
+            # PIVOT_STALL_WINDOW ticks, the pivot is stuck (drivetrain not
+            # responding, or repeated Move CMDs keep shifting the target).
+            # Abort: clear the error history and jump to trajectory so the
+            # robot keeps moving rather than spinning indefinitely.
+            self._pivot_err_history.append(err_deg)
+            pivot_stalled = (
+                len(self._pivot_err_history) == PIVOT_STALL_WINDOW
+                and (self._pivot_err_history[0] - err_deg) < PIVOT_STALL_DEG
+            )
+            if pivot_stalled:
+                if self._verbose:
+                    print(f"[MPC] Pivot stall detected (err={err_deg:.1f} deg, "
+                          f"no improvement over {PIVOT_STALL_WINDOW} ticks) — "
+                          f"aborting pivot, resuming trajectory")
+                self._pivot_err_history.clear()
+                self._u_prev = np.zeros(2)
+                self._guess  = None
+                # Jump straight to trajectory if we have waypoints, else idle.
+                self._mode = "trajectory" if self._waypoints else "idle"
+                if self._mode == "idle":
+                    await self._send(np.zeros(2))
+                    await self._pub_clear()
+                return
+
+            if err_deg < PIVOT_ALIGN_DEG:
                 if self._pivot_is_terminal_orient:
                     # Post-arrival orient complete — go fully idle.
                     self._mode                     = "idle"
@@ -437,6 +582,7 @@ class MPC_loop:
                     self._mode = "trajectory"
                     if self._verbose:
                         print("[MPC] Pre-move pivot complete — trajectory.")
+                self._pivot_err_history.clear()
                 self._u_prev = np.zeros(2)
                 self._guess  = None
 
@@ -444,12 +590,13 @@ class MPC_loop:
                     logger.log(state=state, mode="idle",
                         waypoint=tuple(self._target) if self._target is not None else (0, 0),
                         turkey_pos=None,
-                        edt_distance=self._parent.Map.min_rect_dist(*state[:2]),
+                        edt_distance=self._parent.Map.grid_edt_at(*state[:2]),
                         vl=0.0, vr=0.0,
                         n_dynamic=len(self._parent._dynamic_obs),
                         solve_time_ms=0.0, warm_start=False,
                         replan=False, n_waypoints=len(self._waypoints))
             else:
+                # Pivot still running — apply proportional controller.
                 omega = PIVOT_KP * err
                 u = np.array([np.clip(-omega * L / 2, self._v_min, self._v_max),
                                np.clip( omega * L / 2, self._v_min, self._v_max)])
@@ -458,7 +605,7 @@ class MPC_loop:
                     logger.log(state=state, mode="pivot",
                         waypoint=tuple(self._target) if self._target is not None else (0, 0),
                         turkey_pos=None,
-                        edt_distance=self._parent.Map.min_rect_dist(*state[:2]),
+                        edt_distance=self._parent.Map.grid_edt_at(*state[:2]),
                         vl=float(u[0]), vr=float(u[1]),
                         n_dynamic=len(self._parent._dynamic_obs),
                         solve_time_ms=0.0, warm_start=False,
@@ -470,10 +617,88 @@ class MPC_loop:
 
         state = get_state(self._parent)
         rxy   = state[:2]
-        edt   = self._parent.Map.min_rect_dist(*rxy)
+        edt   = self._parent.Map.grid_edt_at(*rxy)
 
         if self._target is None:
             self._mode = "idle"; return
+
+        # ── Obstacle escape ───────────────────────────────────────────────────
+        # Use the grid EDT (same source as A* and _is_blocked) as the trigger.
+        # min_rect_dist can return 0 inside freely navigable cells if OBSTACLE_RECTS
+        # doesn't match the Zone_Map grid — causing endless spurious escapes in
+        # open space. The grid EDT is the single authoritative obstacle source.
+        from . import PathGenerator as PG
+        gz  = self._parent.Map.Zone_Map
+        giy = int(np.clip(round(rxy[1]), 0, gz.shape[0] - 1))
+        gix = int(np.clip(round(rxy[0]), 0, gz.shape[1] - 1))
+        grid_edt     = float(PG._get_edt(gz)[giy, gix])
+        in_obstacle  = grid_edt <= PG.PLANNING_CLEARANCE
+
+        if in_obstacle:
+            # Lock the escape heading on first entry so we don't recompute a
+            # slightly-different angle every tick and perpetually re-align.
+            if self._escape_hdg_locked is None:
+                self._escape_hdg_locked = _escape_heading(
+                    self._parent.Map, rxy, verbose=self._verbose)
+                if self._verbose:
+                    if self._escape_hdg_locked is not None:
+                        print(f"[MPC] Obstacle escape: grid_edt={grid_edt:.2f}m <= "
+                              f"{PG.PLANNING_CLEARANCE}m — locking escape heading "
+                              f"{np.degrees(self._escape_hdg_locked):.1f} deg")
+                    else:
+                        print(f"[MPC] Obstacle escape: grid_edt={grid_edt:.2f}m — "
+                              "all directions blocked")
+
+            esc_hdg = self._escape_hdg_locked
+            u_esc = np.zeros(2)
+
+            if esc_hdg is None:
+                # Fully surrounded — stop and wait for the map to update.
+                await self._send(np.zeros(2))
+                if self._verbose:
+                    print("[MPC] Obstacle escape: all directions blocked — stopped")
+            else:
+                hdg_err = wrap(esc_hdg - state[2])
+                if abs(np.degrees(hdg_err)) > ESCAPE_HEADING_TOL_DEG:
+                    # Align to escape heading first.
+                    omega = PIVOT_KP * hdg_err
+                    u_esc = np.array([np.clip(-omega * L / 2, self._v_min, self._v_max),
+                                      np.clip( omega * L / 2, self._v_min, self._v_max)])
+                    if self._verbose:
+                        print(f"[MPC] Obstacle escape: aligning to {np.degrees(esc_hdg):.1f} deg "
+                              f"(err={np.degrees(hdg_err):.1f} deg)")
+                else:
+                    # Heading close enough — drive forward, no differential.
+                    spd = min(ESCAPE_SPEED, self._v_max)
+                    u_esc = np.array([spd, spd])
+                    if self._verbose:
+                        print(f"[MPC] Obstacle escape: driving forward at {spd:.2f} m/s")
+                await self._send(u_esc)
+
+            if logger:
+                logger.log(state=state, mode="escape",
+                    waypoint=tuple(self._target) if self._target is not None else (0, 0),
+                    turkey_pos=None,
+                    edt_distance=edt, vl=float(u_esc[0]), vr=float(u_esc[1]),
+                    n_dynamic=len(self._parent._dynamic_obs),
+                    solve_time_ms=0.0, warm_start=False,
+                    replan=False, n_waypoints=len(self._waypoints))
+            return
+        else:
+            # Robot is clear of the hard-block zone — release escape state.
+            if self._escape_hdg_locked is not None:
+                if self._verbose:
+                    print("[MPC] Obstacle escape: cleared — replanning from recovery position")
+                self._escape_hdg_locked     = None
+                self._stall_replan_cooldown = False
+                # Replan from current position so A* routes cleanly away from
+                # the obstacle rather than resuming the old path that drove into it.
+                # Only fire if we have a valid target and are not already replanning.
+                if (self._target is not None
+                        and (self._stall_replan_task is None
+                             or self._stall_replan_task.done())):
+                    self._stall_replan_task = asyncio.create_task(
+                        self._parent.replan_to(self._target))
 
         # Guard: empty waypoints → idle
         if not self._waypoints:
@@ -484,8 +709,14 @@ class MPC_loop:
             await self._pub_clear()
             return
 
+        # ── Prune passed waypoints ────────────────────────────────────────────
+        # Remove waypoints the robot has already reached from the front of the
+        # list so that pts[-1] always refers to the true goal and at_end
+        # detection is reliable on long paths.
+        self._waypoints = _advance_waypoints(rxy, self._waypoints)
+
         # ── Lookahead and end-of-path detection ───────────────────────────────
-        lxy, at_end = _lookahead_point(rxy, state[2], self._waypoints)
+        lxy, at_end = _lookahead_point(rxy, self._waypoints)
 
         # ── Arrival ───────────────────────────────────────────────────────────
         if at_end:

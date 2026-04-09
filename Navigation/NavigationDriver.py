@@ -6,6 +6,8 @@ from . import MovementExecutor
 from . import PathGenerator
 from .DataLogger import NavigationLogger
 
+REPLAN_THRESHOLD = 3.0   # metres — suppress replan if target hasn't moved this far
+
 
 class TrajectoryTracker:
     Max_Allowed_Speed = 3
@@ -27,22 +29,17 @@ class TrajectoryTracker:
         self._last_target       = None
         self._last_face_heading = None
 
-        # Replan suppression: don't replan if the new target has barely moved
-        # and the MPC is already executing toward it.
-        self._replan_threshold = 3.0
-
         # Stores the most recent A* path for old-waypoint bias on replan.
         self._last_waypoints = []
 
-        # Dynamic obstacle list — populated by vision, used only for logging.
-        self._dynamic_obs = []
+        # Count of dynamic obstacles last seen — used only for logging.
+        self._n_dynamic_obs = 0
 
         asyncio.create_task(self.MPC.DriveTrain_Sender(logger=self.Logger))
 
     # ── Vision receiver ───────────────────────────────────────────────────────
     # Vision data is used ONLY to update the obstacle map.
-    # The MPC and A* never see turkey/human positions directly — routing
-    # decisions come exclusively from TrajectoryCMD_Receiver.
+    # The MPC and A* never see turkey/human positions directly.
 
     async def VisionObject_Receiver(self, data):
         if self.Verbose:
@@ -70,22 +67,21 @@ class TrajectoryTracker:
            (humandata.size  > 0 and humandata.shape[1]  != 3):
             print("[Nav] Invalid shape for Human or Turkey data"); return
 
-        # Update map — this is the only thing vision data does here.
         self.Map.ClearDynamicObstacles()
-        self._dynamic_obs = []
+        n = 0
 
-        if turkeydata.shape[0] > 0:
-            for t in turkeydata.astype(int):
-                self.Map.UpdateTurkey(t[0], t[1])
-                self._dynamic_obs.append((float(t[0]), float(t[1])))
+        for t in turkeydata.astype(int):
+            self.Map.UpdateTurkey(t[0], t[1])
+            n += 1
 
-        if humandata.shape[0] > 0:
-            for h in humandata.astype(int):
-                self.Map.UpdateHuman(h[0], h[1])
-                self._dynamic_obs.append((float(h[0]), float(h[1])))
+        for h in humandata.astype(int):
+            self.Map.UpdateHuman(h[0], h[1])
+            n += 1
+
+        self._n_dynamic_obs = n
 
         if self.Verbose:
-            print(f"[Nav] Map updated: {len(self._dynamic_obs)} dynamic obstacles")
+            print(f"[Nav] Map updated: {n} dynamic obstacles")
 
     # ── Drivetrain receiver ───────────────────────────────────────────────────
 
@@ -127,8 +123,8 @@ class TrajectoryTracker:
         # Suppress replan if the target hasn't moved much and MPC is active.
         if self._last_target is not None:
             moved = np.linalg.norm(target - self._last_target)
-            if moved < self._replan_threshold and \
-               self.MPC._mode in ("trajectory", "pivot"):
+            if moved < REPLAN_THRESHOLD and \
+               self.MPC._mode in ("trajectory", "orient"):
                 if self.Verbose:
                     print(f"[Nav] Replan suppressed (target moved {moved:.2f}m, "
                           f"MPC mode={self.MPC._mode})")
@@ -180,10 +176,10 @@ class TrajectoryTracker:
 
     async def _Orient_CMD_Receiver(self, data):
         try:
-            input_cmd = data["Cmd"]
+            data["Cmd"]
         except KeyError:
             print(f"[Nav] Bad Orient CMD: 'Cmd' missing in {data}"); return
-        await self.MPC.Orient_CMD_Receiver(input_cmd)
+        await self.MPC.Orient_CMD_Receiver(data["Cmd"])
 
     def _SpeedCap_CMD_Receiver(self, data):
         try:

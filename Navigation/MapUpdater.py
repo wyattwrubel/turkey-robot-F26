@@ -15,29 +15,11 @@ class Map:
     _Human_Penalty_Width   = 2
     _Turkey_Obstacle_Width = 1
 
-    # -------------------------------------------------------------------------
-    # Hardcoded obstacle rectangle decomposition for the current placeholder map.
-    # Format: (x_min, x_max, y_min, y_max) in grid cells (== metres).
-    #
-    # TODO: replace with automated decomposition once the final map is received.
-    # -------------------------------------------------------------------------
-    OBSTACLE_RECTS = [
-        (36, 40, 12, 58),
-        ( 0,  1,  0, 77),
-        ( 2, 40,  0,  1),
-        ( 2, 40, 76, 77),
-        ( 8, 14, 52, 58),
-        (39, 40, 59, 75),
-        (39, 40,  2, 11),
-        (12, 14, 20, 22),
-    ]
-
     def __init__(self):
         self._Human_List  = []
         self._Turkey_List = []
 
-        self.Zone_Map       = np.zeros((100, 100), dtype=int)
-        self.Obstacle_Rects = self.OBSTACLE_RECTS
+        self.Zone_Map = np.zeros((100, 100), dtype=int)
 
         self.LoadGrid()
 
@@ -113,13 +95,15 @@ class Map:
     # Convenience helpers
     # -------------------------------------------------------------------------
 
-    def min_rect_dist(self, x: float, y: float) -> float:
-        """Minimum distance from (x, y) to any fixed obstacle rectangle."""
-        min_d = np.inf
-        for (x0, x1, y0, y1) in self.Obstacle_Rects:
-            dx = max(x0 - x, 0.0, x - x1)
-            dy = max(y0 - y, 0.0, y - y1)
-            d  = np.sqrt(dx**2 + dy**2)
-            if d < min_d:
-                min_d = d
-        return float(min_d)
+    def grid_edt_at(self, x: float, y: float) -> float:
+        """
+        True EDT distance at world position (x, y), read directly from the
+        distance_transform_edt of the Zone_Map static layer.
+        Consistent with what A* uses for PLANNING_CLEARANCE checks.
+        """
+        from . import PathGenerator as PG
+        edt = PG._get_edt(self.Zone_Map)
+        h, w = self.Zone_Map.shape
+        col  = int(np.clip(round(x), 0, w - 1))
+        row  = int(np.clip(round(y), 0, h - 1))
+        return float(edt[row, col])

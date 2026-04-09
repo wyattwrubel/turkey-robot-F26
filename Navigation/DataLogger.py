@@ -23,11 +23,6 @@ COLUMNS = [
     # Current target waypoint
     "waypoint_x",
     "waypoint_y",
-    # Turkey (chase mode only — NaN otherwise)
-    "turkey_x",
-    "turkey_y",
-    "fov_heading_error_rad",
-    "fov_heading_error_deg",
     # Obstacle proximity
     "edt_distance_m",       # min distance to nearest fixed obstacle rectangle
     # Control outputs
@@ -63,8 +58,7 @@ class NavigationLogger:
         state        = [x, y, theta],
         mode         = "trajectory",
         waypoint     = (wx, wy),
-        turkey_pos   = (tx, ty),          # or None in scan mode
-        edt_distance = map.edt_at(x, y),
+        edt_distance = map.grid_edt_at(x, y),
         vl           = vl,
         vr           = vr,
         n_dynamic    = 2,
@@ -98,7 +92,6 @@ class NavigationLogger:
             state:         list,
             mode:          str,
             waypoint:      tuple,
-            turkey_pos,             # (tx, ty) or None
             edt_distance:  float,
             vl:            float,
             vr:            float,
@@ -110,7 +103,6 @@ class NavigationLogger:
             L:             float = 0.7):
 
         import math
-        import numpy as np
 
         now       = time.monotonic()
         elapsed   = now - self._start_time
@@ -118,19 +110,6 @@ class NavigationLogger:
 
         x, y, theta = float(state[0]), float(state[1]), float(state[2])
         theta_wrapped = math.atan2(math.sin(theta), math.cos(theta))
-
-        # Turkey / FOV metrics
-        if turkey_pos is not None:
-            tx, ty = float(turkey_pos[0]), float(turkey_pos[1])
-            angle_to_turkey = math.atan2(-(ty - y), (tx - x))
-            fov_err_rad     = math.atan2(
-                math.sin(angle_to_turkey - theta_wrapped),
-                math.cos(angle_to_turkey - theta_wrapped)
-            )
-            fov_err_deg = math.degrees(fov_err_rad)
-        else:
-            tx = ty = float("nan")
-            fov_err_rad = fov_err_deg = float("nan")
 
         v_fwd = (vl + vr) / 2.0
         omega = (vr - vl) / L
@@ -145,10 +124,6 @@ class NavigationLogger:
             "mode":                  mode,
             "waypoint_x":            round(float(waypoint[0]), 3) if waypoint is not None else float("nan"),
             "waypoint_y":            round(float(waypoint[1]), 3) if waypoint is not None else float("nan"),
-            "turkey_x":              round(tx, 3),
-            "turkey_y":              round(ty, 3),
-            "fov_heading_error_rad": round(fov_err_rad, 5) if not math.isnan(fov_err_rad) else float("nan"),
-            "fov_heading_error_deg": round(fov_err_deg, 3) if not math.isnan(fov_err_deg) else float("nan"),
             "edt_distance_m":        round(edt_distance, 4),
             "vl":                    round(float(vl), 4),
             "vr":                    round(float(vr), 4),

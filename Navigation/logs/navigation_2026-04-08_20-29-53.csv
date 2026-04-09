@@ -1,0 +1,1 @@
+timestamp_s,wall_time,x,y,theta_rad,theta_deg,mode,waypoint_x,waypoint_y,edt_distance_m,vl,vr,v_fwd,omega,n_dynamic_obstacles,solve_time_ms,warm_start_used,replan_triggered,n_waypoints
