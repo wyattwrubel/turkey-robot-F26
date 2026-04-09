@@ -10,29 +10,26 @@ from scipy.ndimage import distance_transform_edt
 EDT_WEIGHT      = 2.0   # how strongly A* favours corridor centres
 STRAIGHT_WEIGHT = 0.3   # bonus cost for direction changes (favours straight lines)
 
-# Hard block: cells within this distance (strictly greater than) of any static
-# obstacle are completely impassable.  Changed to <= so that cells exactly at
-# 1.0m (i.e. directly adjacent to a wall on a 1m grid) are also blocked,
-# preventing the "squeeze alongside a wall" behaviour.
-PLANNING_CLEARANCE = 1.0   # metres
+# Hard clearance has been REMOVED.  A* will now plan through any cell that is
+# not an actual obstacle (1, -1, 2).  The soft penalty below is the only
+# mechanism that discourages wall-hugging; this lets the robot squeeze through
+# tight corridors that the old 1-cell hard buffer would have blocked entirely.
 
-# Note: soft clearance penalty was removed — it caused unwanted speed reduction
-# in tight corridors by pushing A* toward route-lengthening detours.
-# Hard clearance (PLANNING_CLEARANCE) is sufficient for obstacle avoidance.
-
-# Soft penalty zone: cells between PLANNING_CLEARANCE and SOFT_CLEARANCE metres
-# from a static obstacle incur a small extra cost per step.  This nudges A*
-# to prefer open corridors over wall-hugging paths without forcing detours —
-# the path remains permissible near walls, just not preferred.
+# Soft penalty zone: cells within SOFT_CLEARANCE metres of a static obstacle
+# incur a small extra cost per step.  This nudges A* to prefer open corridors
+# without hard-blocking narrow passages.
 SOFT_CLEARANCE         = 3.0   # metres — zone within which penalty applies
-SOFT_CLEARANCE_PENALTY = 1.5   # additive cost per step (was 6.0 — too strong)
+SOFT_CLEARANCE_PENALTY = 1.5   # additive cost per step
 
-# When replanning, cells near the previous A* path get a cost discount.
-# Penalty fades linearly from PATH_BIAS_PENALTY at the path edge to 0 at
-# PATH_BIAS_RADIUS, so minor deviations are mildly penalised and major
-# improvements are still taken.
-PATH_BIAS_RADIUS  = 2.5   # metres — wider corridor than before (was 1.5)
-PATH_BIAS_PENALTY = 1.5   # max extra cost per step at the corridor edge (was 1.2)
+# Exposed so MovementExecutor can import it for the escape-trigger check.
+# With no hard clearance this is now 0 — the robot is only "in obstacle" if
+# EDT == 0 (it is literally inside a wall cell).
+PLANNING_CLEARANCE = 0.0
+
+# Old-path bias on replan — fades linearly so small deviations are penalised
+# but large improvements that justify leaving the corridor are still taken.
+PATH_BIAS_RADIUS  = 2.5   # metres
+PATH_BIAS_PENALTY = 1.5   # max extra cost per step at the corridor edge
 
 # =============================================================================
 # EDT cache — recomputed only when the static obstacle layer changes
@@ -44,12 +41,11 @@ _static_hash = None
 
 def _get_edt(map_grid):
     """
-    Return the EDT of the static-obstacle-free space.
-    Cached — only recomputed when the static layer (cells == 1) changes.
+    Return the EDT of static-obstacle-free space.
+    Cached — only recomputed when the static layer (cells == 1 or -1) changes.
     """
     global _edt_cache, _static_hash
 
-    # Both fixed obstacles (1) and exterior tiles (-1) are impassable.
     static_mask = ((map_grid == 1) | (map_grid == -1)).astype(np.uint8)
     h           = hash(static_mask.tobytes())
 
@@ -69,36 +65,32 @@ def _is_blocked(map_grid, edt, x, y):
     """
     True if cell (x, y) is:
       - out of bounds
-      - a static obstacle (cell == 1) or dynamic obstacle (cell == 2)
-      - within PLANNING_CLEARANCE of a static obstacle (inclusive: <= not <)
+      - a static obstacle (1 or -1)
+      - a dynamic obstacle (2)
 
-    The inclusive check ensures that cells directly adjacent to a wall
-    (EDT == 1.0 on a 1m grid) are hard-blocked, eliminating wall-squeeze paths.
+    Hard EDT clearance has been removed.  Cells adjacent to walls are now
+    permissible — the soft penalty in _soft_penalty() discourages wall-hugging
+    without completely forbidding tight corridors.
     """
     h, w = map_grid.shape
     if x < 0 or x >= w or y < 0 or y >= h:
         return True
     cell = map_grid[y, x]
-    if cell == 1 or cell == -1 or cell == 2:
-        return True
-    if float(edt[y, x]) <= PLANNING_CLEARANCE:   # was <, now <= (key fix)
-        return True
-    return False
+    return cell == 1 or cell == -1 or cell == 2
 
 
 def _soft_penalty(edt, x, y):
     """
-    Returns SOFT_CLEARANCE_PENALTY for cells within SOFT_CLEARANCE of a static
-    obstacle, scaled linearly so the penalty fades to zero at SOFT_CLEARANCE.
-    Cells at exactly PLANNING_CLEARANCE (the hard boundary) get the full penalty;
-    cells at SOFT_CLEARANCE or beyond get zero.  This is gentler than the old
-    flat penalty and avoids abrupt cost cliffs.
+    Extra cost for cells near static obstacles, fading linearly from full
+    penalty at the wall face to zero at SOFT_CLEARANCE.
     """
     d = float(edt[int(y), int(x)])
     if d >= SOFT_CLEARANCE:
         return 0.0
-    # Linear fade: full penalty at d=PLANNING_CLEARANCE, zero at d=SOFT_CLEARANCE
-    t = (SOFT_CLEARANCE - d) / (SOFT_CLEARANCE - PLANNING_CLEARANCE)
+    # Avoid division by zero (should not happen, but be safe)
+    if SOFT_CLEARANCE <= 0:
+        return 0.0
+    t = (SOFT_CLEARANCE - d) / SOFT_CLEARANCE
     return SOFT_CLEARANCE_PENALTY * float(np.clip(t, 0.0, 1.0))
 
 
@@ -112,8 +104,8 @@ def _diagonal_cuts_corner(map_grid, edt, cx, cy, dx, dy):
 
 def _nearest_free(map_grid, edt, cell):
     """
-    BFS outward from cell until a free cell (EDT > PLANNING_CLEARANCE) is found.
-    Used for snapping the robot's start position if it's somehow in a tight spot.
+    BFS outward from cell until a non-obstacle cell is found.
+    Used for snapping the robot's start or goal if it lands on an obstacle.
     """
     h, w = map_grid.shape
     q    = deque([cell])
@@ -132,14 +124,8 @@ def _nearest_free(map_grid, edt, cell):
 
 def _snap_goal_to_closest_free(map_grid, edt, goal, verbose=False):
     """
-    Find the free cell closest (by Euclidean distance) to `goal`.
-
-    Performs a BFS outward from goal in all 8 directions, collecting every
-    reachable cell within a search radius, then returns the one with the
-    smallest Euclidean distance to the original goal.  This guarantees the
-    path terminates as close as physically possible to the turkey regardless
-    of which side of the obstacle rectangle faces the robot.
-
+    Find the free cell (non-obstacle) closest to `goal` by Euclidean distance.
+    BFS outward from goal, returns the nearest reachable free cell.
     Falls back to goal itself if already free.
     """
     if not _is_blocked(map_grid, edt, *goal):
@@ -147,20 +133,17 @@ def _snap_goal_to_closest_free(map_grid, edt, goal, verbose=False):
 
     h, w        = map_grid.shape
     gx, gy      = goal
-    max_radius  = 8       # cells — generous upper bound; stops as soon as any free cell found
+    max_radius  = 8
     q           = deque([(gx, gy, 0)])
     seen        = {(gx, gy)}
-    candidates  = []      # (euclidean_dist_to_goal, cell)
-    found_depth = None    # BFS depth at which the first free cell was found
+    candidates  = []
+    found_depth = None
 
     while q:
         cx, cy, depth = q.popleft()
 
         if found_depth is not None and depth > found_depth + 1:
-            # We've collected all cells at the same BFS depth as the first hit
-            # plus one extra shell — stop here to avoid unnecessary expansion.
             break
-
         if depth > max_radius:
             break
 
@@ -183,26 +166,22 @@ def _snap_goal_to_closest_free(map_grid, edt, goal, verbose=False):
 
     best = min(candidates, key=lambda c: c[0])[1]
     if verbose and best != goal:
-        print(f"[PathGenerator] Goal {goal} blocked — snapped to closest free cell {best} "
+        print(f"[PathGenerator] Goal {goal} blocked — snapped to {best} "
               f"(dist={np.hypot(best[0]-gx, best[1]-gy):.2f}m)")
     return best
 
 
 def _build_bias_map(old_waypoints):
     """
-    Return a dict mapping (x, y) → penalty for cells near the previous path.
-
-    Penalty = PATH_BIAS_PENALTY * (dist / PATH_BIAS_RADIUS), fading linearly
-    from 0 at the path centreline to PATH_BIAS_PENALTY at PATH_BIAS_RADIUS.
-    Cells beyond PATH_BIAS_RADIUS are not in the dict and receive the full
-    PATH_BIAS_PENALTY, so small deviations are gently penalised while large
-    improvements that justify leaving the corridor are still taken.
+    Return a dict (x, y) → penalty for cells near the previous A* path.
+    Penalty fades linearly from 0 at the centreline to PATH_BIAS_PENALTY at
+    PATH_BIAS_RADIUS, so large improvements still override the old route.
     """
     if not old_waypoints:
         return None
-    r     = int(np.ceil(PATH_BIAS_RADIUS))
-    r_sq  = PATH_BIAS_RADIUS ** 2
-    bias  = {}
+    r    = int(np.ceil(PATH_BIAS_RADIUS))
+    r_sq = PATH_BIAS_RADIUS ** 2
+    bias = {}
     for wx, wy in old_waypoints:
         for dx in range(-r, r + 1):
             for dy in range(-r, r + 1):
@@ -211,14 +190,13 @@ def _build_bias_map(old_waypoints):
                     dist    = np.sqrt(dist_sq)
                     penalty = PATH_BIAS_PENALTY * (dist / PATH_BIAS_RADIUS)
                     cell    = (wx + dx, wy + dy)
-                    # Keep the minimum penalty if a cell is near multiple waypoints
                     if cell not in bias or penalty < bias[cell]:
                         bias[cell] = penalty
     return bias
 
 
 # =============================================================================
-# A* with EDT centering, hard + soft clearance, straight-line preference,
+# A* with EDT centering, soft clearance, straight-line preference,
 # and optional old-path bias for smooth replanning
 # =============================================================================
 
@@ -233,19 +211,17 @@ def _astar(map_grid, start, goal, bias_map=None, verbose=False):
     A* on the Zone_Map grid.
 
     Edge cost = move_distance
-              + EDT_WEIGHT / (edt(neighbour) + 0.5)               ← corridor centering
-              + _soft_penalty(edt, x, y)                           ← soft wall margin
-              + STRAIGHT_WEIGHT * direction_changed                 ← straight-line bias
-              + bias_map.get(neighbour, PATH_BIAS_PENALTY)         ← old-path continuity
-                  (fades from 0 at path centreline to PATH_BIAS_PENALTY at radius)
+              + EDT_WEIGHT / (edt(neighbour) + 0.5)          ← corridor centering
+              + _soft_penalty(edt, x, y)                      ← soft wall margin
+              + STRAIGHT_WEIGHT * direction_changed            ← straight-line bias
+              + bias_map.get(neighbour, PATH_BIAS_PENALTY)    ← old-path continuity
 
-    Hard block at cells with EDT <= PLANNING_CLEARANCE — guaranteed by _is_blocked.
+    No hard EDT clearance — only actual obstacle cells are blocked.
 
-    If the goal is unreachable A* terminates at best_node — the closest
-    reachable cell to the goal.
+    If the goal is unreachable A* terminates at the closest reachable cell.
     """
-    edt  = _get_edt(map_grid)
-    h, w = map_grid.shape
+    edt      = _get_edt(map_grid)
+    h, w     = map_grid.shape
     use_bias = bias_map is not None
 
     def edt_cost(x, y):
@@ -312,7 +288,7 @@ def _astar(map_grid, start, goal, bias_map=None, verbose=False):
                 heapq.heappush(open_heap, (fscore, neighbor))
 
     if verbose and best_node != goal:
-        print(f"[PathGenerator] Goal {goal} unreachable — terminating at closest cell {best_node}")
+        print(f"[PathGenerator] Goal {goal} unreachable — terminating at {best_node}")
 
     # Reconstruct path from best_node
     path    = []
@@ -339,15 +315,12 @@ def _astar(map_grid, start, goal, bias_map=None, verbose=False):
 def GenerateTrajectory(map_obj, current_state, desired_state,
                        old_waypoints=None, verbose=False):
     """
-    A* path planner with hard clearance (EDT <= 1.0m blocked), EDT
-    corridor-centering, soft 2m margin, straight-line bias, and optional
-    old-path continuity bias.
+    A* path planner.  Hard EDT clearance has been removed — the planner will
+    now route through narrow gaps that the old 1m buffer would have blocked.
+    Soft penalty (SOFT_CLEARANCE / SOFT_CLEARANCE_PENALTY) still nudges paths
+    toward corridor centres without hard-forbidding tight passages.
 
-    When the goal is inside or too close to an obstacle it is snapped toward
-    the robot along the approach vector.  A* then plans to the snapped goal;
-    if even that is unreachable it falls back to the closest reachable cell.
-    In both cases the MPC drives to the path end, orients toward the original
-    target, and terminates cleanly.
+    Goal snapping and old-path bias are unchanged.
 
     Parameters
     ----------
@@ -355,15 +328,15 @@ def GenerateTrajectory(map_obj, current_state, desired_state,
     current_state : array-like [x, y, ...]
     desired_state : array-like [x, y, ...]  (may be inside an obstacle)
     old_waypoints : list of (int x, int y) or None
-    verbose       : bool — enable diagnostic prints
+    verbose       : bool
 
     Returns
     -------
-    List of (int x, int y) waypoints, never empty (at minimum contains start).
+    List of (int x, int y) waypoints, never empty.
     """
     map_grid = map_obj.Zone_Map
     h, w     = map_grid.shape
-    _get_edt(map_grid)   # ensure cache is warm
+    _get_edt(map_grid)   # warm the cache
 
     start = tuple(np.array(current_state[:2]).round().astype(int))
     goal  = tuple(np.array(desired_state[:2]).round().astype(int))
@@ -373,16 +346,12 @@ def GenerateTrajectory(map_obj, current_state, desired_state,
 
     edt = _get_edt(map_grid)
 
-    # Snap start with plain BFS (robot should always be in free space)
     if _is_blocked(map_grid, edt, *start):
         snapped_start = _nearest_free(map_grid, edt, start)
         if verbose:
             print(f"[PathGenerator] Start {start} blocked — snapped to {snapped_start}")
         start = snapped_start
 
-    # Snap goal to the closest free cell in any direction — this finds the
-    # globally nearest reachable cell to the turkey regardless of which side
-    # of the obstacle the robot is approaching from.
     if _is_blocked(map_grid, edt, *goal):
         goal = _snap_goal_to_closest_free(map_grid, edt, goal, verbose=verbose)
 
@@ -390,7 +359,7 @@ def GenerateTrajectory(map_obj, current_state, desired_state,
     path     = _astar(map_grid, start, goal, bias_map=bias_map, verbose=verbose)
 
     if verbose:
-        print(f"[PathGenerator] Path computed: {len(path)} waypoints, "
+        print(f"[PathGenerator] Path: {len(path)} waypoints, "
               f"start={path[0]}, end={path[-1]}")
 
     return [(int(x), int(y)) for x, y in path]

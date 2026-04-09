@@ -19,12 +19,12 @@ COLUMNS = [
     "theta_rad",
     "theta_deg",
     # MPC mode
-    "mode",                 # idle | trajectory | orient
+    "mode",                 # idle | trajectory | orient | pivot | escape
     # Current target waypoint
     "waypoint_x",
     "waypoint_y",
     # Obstacle proximity
-    "edt_distance_m",       # min distance to nearest fixed obstacle rectangle
+    "edt_distance_m",       # EDT distance to nearest static obstacle
     # Control outputs
     "vl",                   # left wheel speed (m/s)
     "vr",                   # right wheel speed (m/s)
@@ -35,9 +35,9 @@ COLUMNS = [
     # Solver diagnostics
     "solve_time_ms",        # wall-clock time IPOPT took this tick
     "warm_start_used",      # True / False
-    # Theta* replan events
-    "replan_triggered",     # True on ticks where Theta* was re-run
-    "n_waypoints",          # number of waypoints in current Theta* path
+    # Replan events
+    "replan_triggered",     # True on ticks where A* was re-run
+    "n_waypoints",          # number of waypoints in current path
 ]
 
 
@@ -53,23 +53,22 @@ class NavigationLogger:
     -----
     logger = NavigationLogger()
 
-    # Inside MPC tick:
     logger.log(
-        state        = [x, y, theta],
-        mode         = "trajectory",
-        waypoint     = (wx, wy),
-        edt_distance = map.grid_edt_at(x, y),
-        vl           = vl,
-        vr           = vr,
-        n_dynamic    = 2,
-        solve_time_ms= 14.3,
-        warm_start   = True,
-        replan       = False,
-        n_waypoints  = 5,
-        L            = 0.7,
+        state         = [x, y, theta],
+        mode          = "trajectory",
+        waypoint      = (wx, wy),
+        edt_distance  = 2.4,
+        vl            = 1.2,
+        vr            = 1.4,
+        n_dynamic     = 2,
+        solve_time_ms = 14.3,
+        warm_start    = True,
+        replan        = False,
+        n_waypoints   = 5,
+        L             = 0.7,
     )
 
-    logger.close()    # flush + close at shutdown
+    logger.close()
     """
 
     def __init__(self):
@@ -101,7 +100,12 @@ class NavigationLogger:
             replan:        bool,
             n_waypoints:   int,
             L:             float = 0.7):
-
+        """
+        Write one row to the CSV.  All parameters are positional-keyword;
+        the old `turkey_pos` kwarg has been removed — it was being passed by
+        MovementExecutor but not accepted here, silently swallowing every
+        logger.log() call via a TypeError and producing an empty log file.
+        """
         import math
 
         now       = time.monotonic()
@@ -124,7 +128,7 @@ class NavigationLogger:
             "mode":                  mode,
             "waypoint_x":            round(float(waypoint[0]), 3) if waypoint is not None else float("nan"),
             "waypoint_y":            round(float(waypoint[1]), 3) if waypoint is not None else float("nan"),
-            "edt_distance_m":        round(edt_distance, 4),
+            "edt_distance_m":        round(float(edt_distance), 4),
             "vl":                    round(float(vl), 4),
             "vr":                    round(float(vr), 4),
             "v_fwd":                 round(v_fwd, 4),

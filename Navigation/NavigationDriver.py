@@ -24,22 +24,17 @@ class TrajectoryTracker:
             self, DriveTrainPub, MPCFeedback_Navigation_pub,
             verbose=Verbose)
 
-        # Used by stall-replan only — tracks the last planned destination so
-        # replan_to() can re-issue the same move without needing external input.
         self._last_target       = None
         self._last_face_heading = None
+        self._last_waypoints    = []
 
-        # Stores the most recent A* path for old-waypoint bias on replan.
-        self._last_waypoints = []
-
-        # Count of dynamic obstacles last seen — used only for logging.
+        # Count of dynamic obstacles last seen — used for logging.
+        # Written by VisionObject_Receiver; read by MPC_loop.
         self._n_dynamic_obs = 0
 
         asyncio.create_task(self.MPC.DriveTrain_Sender(logger=self.Logger))
 
     # ── Vision receiver ───────────────────────────────────────────────────────
-    # Vision data is used ONLY to update the obstacle map.
-    # The MPC and A* never see turkey/human positions directly.
 
     async def VisionObject_Receiver(self, data):
         if self.Verbose:
@@ -132,9 +127,6 @@ class TrajectoryTracker:
 
         self._last_target = target.copy()
 
-        # Run A* from current position to the requested target.
-        # GenerateTrajectory snaps the goal if it is inside an obstacle and
-        # returns the closest reachable path — the MPC then drives there.
         wps = PathGenerator.GenerateTrajectory(
             self.Map,
             self.Current_State,
@@ -150,10 +142,6 @@ class TrajectoryTracker:
 
         self._last_waypoints = wps
 
-        # If the path end differs from the requested target by more than one
-        # grid cell, the goal was snapped (target is in/near an obstacle).
-        # Compute a face_heading so the robot orients toward the original
-        # target after arriving at the nearest reachable cell.
         path_end   = np.array(wps[-1], dtype=float)
         target_arr = np.array(target,  dtype=float)
         face_heading = None
@@ -196,9 +184,8 @@ class TrajectoryTracker:
 
     async def replan_to(self, target):
         """
-        Called by MPC_loop on stall detection.  Replans A* from current
-        position to the last known target and re-issues Move_CMD_Receiver.
-        Reuses the last face_heading so snapped-goal orientation is preserved.
+        Called by MPC_loop on stall detection or post-escape recovery.
+        Replans A* from current position to `target` and re-issues Move_CMD_Receiver.
         """
         if target is None:
             return
@@ -224,13 +211,7 @@ class TrajectoryTracker:
         await self.MPC.Move_CMD_Receiver(
             wps, target, face_heading=self._last_face_heading)
 
-        # Push the updated path to the UI — Move_CMD_Receiver calls
-        # _pub_reference internally, but only after a mode transition.
-        # Re-publishing here ensures the display stays current after a replan.
         await self.MPC._pub_reference(wps)
-
-        # Move_CMD_Receiver already clears the cooldown flag via the normal
-        # plan-acceptance path, so no extra action needed here.
 
     # ── Shutdown ──────────────────────────────────────────────────────────────
 
