@@ -85,11 +85,11 @@ async def main():
     # SOFTWARE MODULES
     # ─────────────────────────────────────────────────────────────────────────
 
-    Vision = VisionObject(VideoFeed_Vision_pub, VisionObject_Vision_pub, Simulated=True)
+    # Vision = VisionObject(VideoFeed_Vision_pub, VisionObject_Vision_pub, Simulated=True)
 
     TestVision = FakeVision(TESTING_VideoFeed_Vision_pub, TESTING_VisionObject_Vision_pub)
 
-    Canine = CanineDriver(ServoFeedback_Canine_pub, Canine_Canine_pub, Simulated=True, Verbose=False)
+    Canine = CanineDriver(ServoFeedback_Canine_pub, Canine_Canine_pub, Simulated=False, Verbose=False)
 
     Drivetrain = MotorDriver(RobotPose_Drivetrain_pub, SlipFeedback_Drivetrain_pub, Simulated=True, SkipUKFUpdates=True)
 
@@ -97,7 +97,7 @@ async def main():
 
     StatePlanner = StatePlannerReceiver(MacroState_StatePlanner, Canine_StatePlanner_pub, MotionCommand_StatePlanner_pub, Verbose=False)
 
-    PositionDriver = PositioningDriver(UWB_UWBPublisher_pub, Mode="GPS", Simulation=True)
+    PositionDriver = PositioningDriver(UWB_UWBPublisher_pub, Mode="GPS", Simulation=True, Verbose=True)
 
     Accelerometer = IMUDriver(Accelerometer_AccelPublisher_pub, Simulation=True)
 
@@ -141,7 +141,7 @@ async def main():
     """RobotPose"""
     RobotPose_Drivetrain_pub.subscribe(Navigation.RobotPose_Receiver)
     RobotPose_Drivetrain_pub.subscribe(UserInterface.diagnostics.RobotPose_Receiver)
-    RobotPose_Drivetrain_pub.subscribe(Vision.RobotPose_Receiver)
+    # RobotPose_Drivetrain_pub.subscribe(Vision.RobotPose_Receiver)
     RobotPose_Drivetrain_pub.subscribe(StatePlanner.RobotPose_Receiver)
 
     """MacroState"""
@@ -175,8 +175,12 @@ async def main():
         Navigation.MPC.DriveTrain_Sender(),
         Accelerometer.Runner(),
         PositionDriver.Runner(),
+
         #  
     )
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\n[MAIN] Shutting down.")

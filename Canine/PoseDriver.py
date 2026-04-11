@@ -16,7 +16,7 @@ class PoseDriver():
 
     Front_Left_Offset = 0 # Subtract off to be at 0 maybe 0?
     Front_Right_Offset = 44
-    Rear_Left_Offset = 49
+    Rear_Left_Offset = -30
     Rear_Right_Offset = -18
     Head_Offset = -6
 

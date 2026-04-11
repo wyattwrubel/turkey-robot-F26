@@ -1,0 +1,12 @@
+import serial
+
+PORT     = "/dev/ttyUSB1"   # change if needed
+BAUDRATE = 4800
+
+ser = serial.Serial(PORT, baudrate=BAUDRATE, timeout=2)
+print(f"Opened {PORT}, waiting for data...\n")
+
+while True:
+    line = ser.readline().decode('ascii', errors='replace').strip()
+    if line:
+        print(line)

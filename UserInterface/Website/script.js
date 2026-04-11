@@ -93,8 +93,11 @@ function buildAudio() {
 // WEBSOCKET
 // ═══════════════════════════════════════════════
 function connect() {
-  ws = new WebSocket('ws://100.67.22.116:8000/ws')
-  ws.onopen    = ()  => { wsReady = true; _startHeartbeat()}
+  // ws = new WebSocket('ws://100.67.22.116:8000/ws')
+  ws = new WebSocket('ws://192.168.10.2:8000/ws')
+    // ws = new WebSocket('ws://192.168.4.3:8000/ws')
+
+    ws.onopen    = ()  => { wsReady = true; _startHeartbeat()}
   ws.onclose   = ()  => { wsReady = false; _stopHeartbeat(); setTimeout(connect, 1000) }
   ws.onmessage = (e) => {
     try   { handle(JSON.parse(e.data)) }
