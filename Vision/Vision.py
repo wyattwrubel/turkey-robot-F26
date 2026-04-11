@@ -1,95 +1,92 @@
+"""
+Vision/Vision.py
+
+Drop-in replacement for the original VisionObject.
+Hosts two WebSocket servers that the laptop connects to:
+
+    ws://0.0.0.0:8765   /video      — Pi streams raw frames out to all clients;
+                                      laptop sends processed frames back on same socket;
+                                      Pi forwards received frames to VideoFeed_Vision_pub.
+
+    ws://0.0.0.0:8766   /detections — laptop sends camera-local DynamicObjects JSON;
+                                      Pi applies world-frame transform using current
+                                      RobotPose and publishes to VisionObject_Vision_pub.
+
+Simulated=True  → no camera opened; laptop_client.py drives everything via WASD sim.
+                   VisionObject still hosts both servers so the laptop can connect.
+Simulated=False → camera opens immediately and starts streaming.
+
+Constructor signature is unchanged from the original:
+    VisionObject(VideoFeed_Vision_pub, VisionObject_Vision_pub,
+                 Simulated=False, Verbose=False, ...)
+"""
+
 import asyncio
 import threading
-import queue
 import time
+import math
+
 import cv2
 import numpy as np
+import websockets
+from websockets.server import WebSocketServerProtocol
 
-import sys
-import os
-sys.path.append(os.path.dirname(__file__))
-
-from camera import USBCamera
-from model import YOLODetector
-from processing import TemporalManager, PositionEstimator
-from output import CoordinateOutput
+# ── Settings — edit these ─────────────────────────────────────────────────────
+VIDEO_PORT   = 8765
+DETECT_PORT  = 8766
+CAMERA_FPS   = 10          # raw frame broadcast rate
+JPEG_QUALITY = 80
+# ─────────────────────────────────────────────────────────────────────────────
 
 
 class VisionObject:
     """
-    Vision pipeline. Define it, start it, read from it.
-
-    Usage:
-        vision = VisionObject()
-        vision.start()
-
-        outputs = vision.outputs      # latest detections
-        frame   = vision.frame        # latest camera frame
-
-        vision.stop()
+    Hosts camera feed and coordinates with laptop for CV processing.
+    Applies RobotPose world-frame transform before publishing detections.
     """
 
-    # CAMERA_FPS_CAP    = 3
-    # VIDEO_PUB_FPS_CAP = 2
-    # INFERENCE_FPS_CAP = 0.5
+    def __init__(
+        self,
+        VideoFeed_Vision_pub,
+        VisionObject_Vision_pub,
+        Simulated: bool = False,
+        Verbose:   bool = False,
+        debug_draw:  bool = False,
+        debug_print: bool = False,
+    ):
+        self._video_pub   = VideoFeed_Vision_pub
+        self._detect_pub  = VisionObject_Vision_pub
+        self.Verbose      = Verbose
+        self.debug_draw   = debug_draw
+        self.debug_print  = debug_print
+        self.Simulated    = Simulated
 
-    CAMERA_FPS_CAP    = 30
-    VIDEO_PUB_FPS_CAP = 10
-    INFERENCE_FPS_CAP = 10
-
-    def __init__(self, VideoFeed_Vision_pub, VisionObject_Vision_pub, Simulated=False, Verbose=False, debug_draw=False, debug_print=False):
-        self.VideoFeed_Vision_pub    = VideoFeed_Vision_pub
-        self.VisionObject_Vision_pub = VisionObject_Vision_pub
-
-        self.Verbose     = Verbose
-        self.debug_draw  = debug_draw
-        self.debug_print = debug_print
-
-        self.outputs = []
-        self.frame   = None
-
-        self._cam       = USBCamera()
-        self._detector  = YOLODetector()
-        self._manager   = TemporalManager(
-            init_window=10,
-            init_min_hits=7,
-            delete_missing_frames=30,   
-        )
-        self._estimator = PositionEstimator()
-        self._outputter = CoordinateOutput()
-
-        self._outputs_lock  = threading.Lock()
-        self._frame_lock    = threading.Lock()
-
-        # Snapshot of outputs for video publisher — always in sync with inference
-        self._display_outputs      = []
-        self._display_outputs_lock = threading.Lock()
-
-        # Latest robot pose [X, Y, theta] in world frame
+        # Latest robot pose [X, Y, theta] — updated via RobotPose_Receiver
         self._robot_pose      = np.array([0.0, 0.0, 0.0])
         self._robot_pose_lock = threading.Lock()
 
-        self._infer_queue  = queue.Queue(maxsize=1)
-        self._vidpub_queue = queue.Queue(maxsize=1)
+        # Connected /video clients
+        self._video_clients: set = set()
+        self._video_lock = None   # asyncio.Lock — created inside event loop
 
-        self._running          = False
-        self._inference_thread = None
-        self._event_loop       = None
-        self._loop_thread      = None
+        self._latest_raw_frame: bytes | None = None
 
-        if Simulated == False:
-            self.start()
+        # Start the async event loop on its own thread
+        self._loop = asyncio.new_event_loop()
+        self._loop_thread = threading.Thread(
+            target=self._run_loop, daemon=True, name="VisionLoop"
+        )
+        self._loop_thread.start()
 
     # ------------------------------------------------------------------
-    # RobotPose Receiver
-    # Protocol 4: 1x3 numpy array [X (m), Y (m), theta (rad)]
+    # RobotPose receiver  (Protocol 4: 1x3 numpy [X, Y, theta_rad])
     # ------------------------------------------------------------------
 
     async def RobotPose_Receiver(self, pose_array):
         try:
             pose = np.asarray(pose_array, dtype=float).flatten()
             if pose.shape[0] != 3:
-                print(f"[Vision] RobotPose_Receiver: unexpected shape {pose.shape}")
+                print(f"[Vision] RobotPose bad shape: {pose.shape}")
                 return
             with self._robot_pose_lock:
                 self._robot_pose = pose
@@ -97,378 +94,199 @@ class VisionObject:
             print(f"[Vision] RobotPose_Receiver error: {e}")
 
     # ------------------------------------------------------------------
-    # Pose transform helper
+    # World-frame transform
     # ------------------------------------------------------------------
 
-    def _to_world_frame(self, x_cam, y_cam):
+    def _to_world(self, x_cam: float, y_cam: float):
         """
-        Transform camera-relative position into world frame.
+        Convert camera-local (x_cam right, y_cam forward) to world frame.
 
         Map convention:
-          - Origin at top-left
-          - Positive X = right
-          - Positive Y = down
-          - Positive theta = CCW
-          - theta = 0 points RIGHT (East)
+            origin top-left, +X right, +Y down, +theta CCW, theta=0 → East
 
-        Camera mounted on front of robot:
-          - x_cam = lateral (positive = right)
-          - y_cam = forward (positive = away from camera)
+        Camera mounted on robot front:
+            t = robot_theta + pi/2
+            world_x = rx + cos(t)*x_cam + sin(t)*y_cam
+            world_y = ry - sin(t)*x_cam + cos(t)*y_cam   (Y inverted)
         """
         with self._robot_pose_lock:
             rx, ry, rtheta = self._robot_pose
 
-        t = rtheta + (np.pi / 2.0)
-
-        cos_t = np.cos(t)
-        sin_t = np.sin(t)
+        t     = rtheta + (math.pi / 2.0)
+        cos_t = math.cos(t)
+        sin_t = math.sin(t)
 
         world_x = rx + cos_t * x_cam + sin_t * y_cam
         world_y = ry - sin_t * x_cam + cos_t * y_cam
-
         return float(world_x), float(world_y)
-
-    # ------------------------------------------------------------------
-    # Publishers
-    # ------------------------------------------------------------------
-
-    async def VisionObject_sender(self, coord_outputs, frame_w):
-        """
-        Publishes detections in world frame coordinates.
-        Protocol 1A: { Id, Turkeys, Humans, Ghosts }
-        """
-        turkeys = []
-        humans  = []
-
-        for out in coord_outputs:
-            x1, y1, x2, y2 = out.bbox
-            if x2 <= 0 or x1 >= frame_w:
-                if self.Verbose:
-                    print(f"[Vision] Dropping off-screen track: {out.class_name} id={out.target_id}")
-                continue
-
-            world_x, world_y = self._to_world_frame(out.x_m, out.y_m)
-            angle_rad = out.angle_deg * (np.pi / 180.0)
-            entry = [world_x, world_y, angle_rad]
-
-            if out.class_name == "turkey":
-                turkeys.append(entry)
-            elif out.class_name == "person":
-                humans.append(entry)
-
-        payload = {
-            "Id":      "DynamicObjects",
-            "Turkeys": np.array(turkeys, dtype=float).tolist() if turkeys else [],
-            "Humans":  np.array(humans,  dtype=float).tolist() if humans  else [],
-            "Ghosts":  [],
-        }
-
-        if self.Verbose:
-            print(f"[VisionObject] Turkeys={len(turkeys)} Humans={len(humans)}")
-            for out in coord_outputs:
-                print(
-                    f"  [{out.class_name}] "
-                    f"x={out.x_m:.2f}m  y={out.y_m:.2f}m  "
-                    f"angle={out.angle_deg:.1f}deg  "
-                    f"conf={out.confidence:.2f}"
-                )
-
-        await self.VisionObject_Vision_pub.publish(payload)
-
-    async def VideoFeed_sender(self, frame, outputs):
-        annotated = frame.copy()
-        h, w = annotated.shape[:2]
-
-        for out in outputs:
-            x1, y1, x2, y2 = out.bbox
-
-            # Skip off-screen tracks
-            if x2 <= 0 or x1 >= w or y2 <= 0 or y1 >= h:
-                continue
-
-            label = f"{out.class_name} | x={out.x_m:.2f}, y={out.y_m:.2f}"
-            cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            cv2.putText(
-                annotated, label, (x1, max(20, y1 - 8)),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2,
-            )
-
-        if self.Verbose:
-            if outputs:
-                for out in outputs:
-                    print(f"[VideoFeed] bbox={out.bbox}")
-            else:
-                print("[VideoFeed] No targets")
-
-        success, encoded = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 40])
-        if not success:
-            print("[VideoFeed] Failed to encode frame")
-            return
-
-        encoded_bytes = encoded.tobytes()
-        if self.Verbose:
-            print(f"[VideoFeed] Encoded frame: {len(encoded_bytes)} bytes")
-
-        await self.VideoFeed_Vision_pub.publish(encoded_bytes)
-
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-
-    def start(self):
-        self._cam.open()
-        self._cam.print_actual_settings()
-        self._running = True
-
-        self._inference_thread = threading.Thread(
-            target=self._inference_loop, daemon=True, name="InferenceLoop"
-        )
-        self._inference_thread.start()
-
-        self._loop_thread = threading.Thread(
-            target=self._run_event_loop, daemon=True, name="EventLoop"
-        )
-        self._loop_thread.start()
-
-        print("[Vision] Started.")
-
-    def stop(self):
-        self._running = False
-
-        if self._event_loop:
-            self._event_loop.call_soon_threadsafe(self._event_loop.stop)
-
-        if self._loop_thread:
-            self._loop_thread.join(timeout=2.0)
-
-        if self._inference_thread:
-            self._inference_thread.join(timeout=2.0)
-
-        self._cam.release()
-        cv2.destroyAllWindows()
-        print("[Vision] Stopped.")
-
-    # ------------------------------------------------------------------
-    # Output accessors
-    # ------------------------------------------------------------------
-
-    @property
-    def outputs(self):
-        with self._outputs_lock:
-            return list(self._outputs)
-
-    @outputs.setter
-    def outputs(self, value):
-        if not hasattr(self, '_outputs_lock'):
-            self._outputs = value
-        else:
-            with self._outputs_lock:
-                self._outputs = value
-
-    @property
-    def frame(self):
-        with self._frame_lock:
-            return self._frame.copy() if self._frame is not None else None
-
-    @frame.setter
-    def frame(self, value):
-        if not hasattr(self, '_frame_lock'):
-            self._frame = value
-        else:
-            with self._frame_lock:
-                self._frame = value
 
     # ------------------------------------------------------------------
     # Event loop
     # ------------------------------------------------------------------
 
-    def _run_event_loop(self):
-        self._event_loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(self._event_loop)
-        self._event_loop.run_until_complete(self._run_async_tasks())
+    def _run_loop(self):
+        asyncio.set_event_loop(self._loop)
+        self._loop.run_until_complete(self._async_main())
 
-    async def _run_async_tasks(self):
-        await asyncio.gather(
-            self._camera_loop(),
-            self._vidpub_loop(),
-        )
+    async def _async_main(self):
+        self._video_lock = asyncio.Lock()
+
+        tasks = [
+            self._start_detection_server(),
+            self._start_video_server(),
+        ]
+        if not self.Simulated:
+            tasks.append(self._camera_loop())
+
+        await asyncio.gather(*tasks)
 
     # ------------------------------------------------------------------
-    # Async camera loop
+    # Camera loop — only runs when Simulated=False
     # ------------------------------------------------------------------
 
     async def _camera_loop(self):
-        frame_interval = 1.0 / self.CAMERA_FPS_CAP
-        prev_time = time.time()
+        from Vision.UsbCamera import USBCamera
+        cam = USBCamera()
+        cam.open()
+        cam.print_actual_settings()
 
-        print(f"[Vision] Camera loop running ({self.CAMERA_FPS_CAP} FPS cap)")
+        period = 1.0 / CAMERA_FPS
+        loop   = asyncio.get_event_loop()
+        print(f"[Vision] Camera loop running at {CAMERA_FPS} FPS")
 
-        while self._running:
-            loop_start = time.time()
+        try:
+            while True:
+                t0 = loop.time()
 
-            loop = asyncio.get_event_loop()
-            ret, frame = await loop.run_in_executor(None, self._cam.read)
+                ret, frame = await loop.run_in_executor(None, cam.read)
+                if not ret or frame is None:
+                    await asyncio.sleep(0.1)
+                    continue
 
-            if not ret:
-                await asyncio.sleep(0.1)
-                continue
-
-            h, w = frame.shape[:2]
-
-            with self._frame_lock:
-                self._frame = frame
-
-            for q in (self._infer_queue, self._vidpub_queue):
-                try:
-                    q.put_nowait((frame, w, h))
-                except queue.Full:
-                    try:
-                        q.get_nowait()
-                    except queue.Empty:
-                        pass
-                    q.put_nowait((frame, w, h))
-
-            if self.debug_draw:
-                vis = frame.copy()
-                with self._display_outputs_lock:
-                    draw_outputs = list(self._display_outputs)
-                vis = self._draw(vis, draw_outputs)
-
-                curr_time = time.time()
-                fps = 1.0 / max(curr_time - prev_time, 1e-6)
-                prev_time = curr_time
-
-                cv2.putText(vis, f"FPS: {fps:.2f}", (20, 40),
-                            cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)
-                cv2.imshow("CV Pipeline", vis)
-
-            key = cv2.waitKey(1) & 0xFF
-            if key == 27 or key == ord("q"):
-                self._running = False
-                break
-
-            elapsed = time.time() - loop_start
-            await asyncio.sleep(max(0.0, frame_interval - elapsed))
-
-    # ------------------------------------------------------------------
-    # Async video publisher loop
-    # ------------------------------------------------------------------
-
-    async def _vidpub_loop(self):
-        pub_interval = 1.0 / self.VIDEO_PUB_FPS_CAP
-
-        print(f"[Vision] Video publisher running ({self.VIDEO_PUB_FPS_CAP} FPS cap)")
-
-        while self._running:
-            loop_start = time.time()
-
-            try:
-                frame, w, h = self._vidpub_queue.get_nowait()
-            except queue.Empty:
-                await asyncio.sleep(0.01)
-                continue
-
-            # Use snapshot set by inference — never reads stale self.outputs
-            with self._display_outputs_lock:
-                current_outputs = list(self._display_outputs)
-
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, lambda: None)
-            await self.VideoFeed_sender(frame, current_outputs)
-
-            elapsed = time.time() - loop_start
-            await asyncio.sleep(max(0.0, pub_interval - elapsed))
-
-    # ------------------------------------------------------------------
-    # Inference loop
-    # ------------------------------------------------------------------
-
-    def _inference_loop(self):
-        inference_interval = 1.0 / self.INFERENCE_FPS_CAP
-        print(f"[Vision] Inference loop running ({self.INFERENCE_FPS_CAP} inference/sec cap)")
-
-        while self._running:
-            loop_start = time.time()
-
-            try:
-                frame, w, h = self._infer_queue.get(timeout=1.0)
-            except queue.Empty:
-                continue
-
-            detections    = self._detector.detect(frame)
-            confirmed     = self._manager.update(detections)
-            positions     = self._estimator.estimate_all(confirmed, w, h)
-            coord_outputs = self._outputter.convert_all(positions)
-
-            # Filter off-screen tracks
-            visible_outputs = [
-                out for out in coord_outputs
-                if not (out.bbox[2] <= 0 or out.bbox[0] >= w or
-                        out.bbox[3] <= 0 or out.bbox[1] >= h)
-            ]
-
-            # Update both outputs and display snapshot atomically
-            with self._outputs_lock:
-                self._outputs = visible_outputs
-
-            with self._display_outputs_lock:
-                self._display_outputs = visible_outputs   # vidpub reads this
-
-            if visible_outputs:
-                for out in visible_outputs:
-                    print(f"[Inference] {out.class_name} bbox={out.bbox}")
-            else:
-                print("[Inference] No targets")
-
-            if self.debug_print:
-                self._outputter.print_all(visible_outputs)
-
-            # Always publish — downstream gets empty arrays when nothing visible
-            if self._event_loop and self._event_loop.is_running():
-                asyncio.run_coroutine_threadsafe(
-                    self.VisionObject_sender(visible_outputs, w),
-                    self._event_loop,
+                ok, buf = cv2.imencode(
+                    ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY]
                 )
+                if not ok:
+                    continue
 
-            elapsed = time.time() - loop_start
-            sleep_time = inference_interval - elapsed
-            if sleep_time > 0:
-                time.sleep(sleep_time)
+                jpeg = buf.tobytes()
+                self._latest_raw_frame = jpeg
+                await self._broadcast_video(jpeg)
+
+                elapsed = loop.time() - t0
+                await asyncio.sleep(max(0.0, period - elapsed))
+        finally:
+            cam.release()
 
     # ------------------------------------------------------------------
-    # Draw helper
+    # Video WebSocket server  (port 8765)
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _draw(frame, outputs):
-        h, w = frame.shape[:2]
-        for out in outputs:
-            x1, y1, x2, y2 = out.bbox
-            if x2 <= 0 or x1 >= w or y2 <= 0 or y1 >= h:
-                continue
-            label = f"{out.class_name} | x={out.x_m:.2f}, y={out.y_m:.2f}"
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            cv2.putText(frame, label, (x1, max(20, y1 - 8)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-        return frame
+    async def _start_video_server(self):
+        print(f"[Vision] Video WS → ws://0.0.0.0:{VIDEO_PORT}")
+        async with websockets.serve(self._video_handler, "0.0.0.0", VIDEO_PORT):
+            await asyncio.Future()   # run forever
 
+    async def _video_handler(self, ws: WebSocketServerProtocol, path: str = ""):
+        async with self._video_lock:
+            self._video_clients.add(ws)
 
-# ------------------------------------------------------------------
-# Standalone test
-# ------------------------------------------------------------------
+        # Sync new client immediately
+        if self._latest_raw_frame:
+            try:
+                await ws.send(self._latest_raw_frame)
+            except Exception:
+                pass
 
-if __name__ == "__main__":
-    vision = VisionObject(
-        VideoFeed_Vision_pub=None,
-        VisionObject_Vision_pub=None,
-        Verbose=True,
-        debug_draw=True,
-        debug_print=True,
-    )
-    vision.start()
+        print(f"[Vision] Video client connected: {ws.remote_address}")
+        try:
+            async for message in ws:
+                # Only the laptop sends bytes back (processed frames)
+                if isinstance(message, bytes) and self._video_pub is not None:
+                    await self._video_pub.publish(message)
+        except websockets.ConnectionClosed:
+            pass
+        finally:
+            async with self._video_lock:
+                self._video_clients.discard(ws)
+            print(f"[Vision] Video client disconnected: {ws.remote_address}")
 
-    try:
-        while True:
-            time.sleep(0.1)
-    except KeyboardInterrupt:
-        vision.stop()
+    async def _broadcast_video(self, jpeg: bytes):
+        async with self._video_lock:
+            clients = list(self._video_clients)
+        if not clients:
+            return
+
+        async def _send(ws):
+            try:
+                await asyncio.wait_for(ws.send(jpeg), timeout=0.3)
+            except (asyncio.TimeoutError, websockets.ConnectionClosed):
+                pass
+            except Exception as e:
+                print(f"[Vision] Broadcast error: {e}")
+
+        await asyncio.gather(*[_send(ws) for ws in clients])
+
+    # ------------------------------------------------------------------
+    # Detection WebSocket server  (port 8766)
+    # ------------------------------------------------------------------
+
+    async def _start_detection_server(self):
+        print(f"[Vision] Detection WS → ws://0.0.0.0:{DETECT_PORT}")
+        async with websockets.serve(self._detection_handler, "0.0.0.0", DETECT_PORT):
+            await asyncio.Future()
+
+    async def _detection_handler(self, ws: WebSocketServerProtocol, path: str = ""):
+        print(f"[Vision] Detection client connected: {ws.remote_address}")
+        try:
+            async for message in ws:
+                raw = message if isinstance(message, str) else message.decode()
+                try:
+                    import json
+                    payload = json.loads(raw)
+                    await self._handle_detection_payload(payload)
+                except Exception as e:
+                    print(f"[Vision] Detection parse error: {e}")
+        except websockets.ConnectionClosed:
+            pass
+        finally:
+            print(f"[Vision] Detection client disconnected: {ws.remote_address}")
+
+    async def _handle_detection_payload(self, payload: dict):
+        """
+        Receives camera-local payload from laptop.
+        Applies world-frame transform to each entry, then publishes.
+
+        Input  (camera-local):  [[x_cam, y_cam, angle_rad], ...]
+        Output (world frame):   [[world_x, world_y, angle_rad], ...]
+        """
+        turkeys_local = payload.get("Turkeys", [])
+        humans_local  = payload.get("Humans",  [])
+        ghosts_local  = payload.get("Ghosts",  [])
+
+        def _transform(entries):
+            out = []
+            for entry in entries:
+                if len(entry) < 3:
+                    continue
+                x_cam, y_cam, angle_rad = entry[0], entry[1], entry[2]
+                wx, wy = self._to_world(x_cam, y_cam)
+                out.append([round(wx, 4), round(wy, 4), round(angle_rad, 6)])
+            return out
+
+        world_payload = {
+            "Id":      "DynamicObjects",
+            "Turkeys": _transform(turkeys_local),
+            "Humans":  _transform(humans_local),
+            "Ghosts":  _transform(ghosts_local),
+        }
+
+        if self.Verbose:
+            print(
+                f"[Vision] Publishing — "
+                f"Turkeys={len(world_payload['Turkeys'])} "
+                f"Humans={len(world_payload['Humans'])}"
+            )
+
+        if self._detect_pub is not None:
+            await self._detect_pub.publish(world_payload)

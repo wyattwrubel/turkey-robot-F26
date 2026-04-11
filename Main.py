@@ -30,7 +30,6 @@ class AsyncPublisher:
                 print(f"[{self._name}] Subscriber error: {e}")
 
 async def main():
-    
 
     # ─────────────────────────────────────────────────────────────────────────
     # ASYNC PUBLISHERS
@@ -48,7 +47,7 @@ async def main():
     Canine_UI_pub = AsyncPublisher("UI_Canine")
     Canine_StatePlanner_pub = AsyncPublisher("StatePlanner_Canine")
     Canine_Canine_pub = AsyncPublisher("Canine_Canine")
-    
+
     # ServoFeedback Protocol
     ServoFeedback_Canine_pub = AsyncPublisher("CanineServoAngles")
 
@@ -76,22 +75,22 @@ async def main():
 
     # UWB
     UWB_UWBPublisher_pub = AsyncPublisher("UWB")
-    
+
     # Accelerometer
     Accelerometer_AccelPublisher_pub = AsyncPublisher("IMU")
-    
+
 
     # ─────────────────────────────────────────────────────────────────────────
     # SOFTWARE MODULES
     # ─────────────────────────────────────────────────────────────────────────
 
-    # Vision = VisionObject(VideoFeed_Vision_pub, VisionObject_Vision_pub, Simulated=True)
+    Vision = VisionObject(VideoFeed_Vision_pub, VisionObject_Vision_pub, Simulated=False)
 
     TestVision = FakeVision(TESTING_VideoFeed_Vision_pub, TESTING_VisionObject_Vision_pub)
 
     Canine = CanineDriver(ServoFeedback_Canine_pub, Canine_Canine_pub, Simulated=False, Verbose=False)
 
-    Drivetrain = MotorDriver(RobotPose_Drivetrain_pub, SlipFeedback_Drivetrain_pub, Simulated=True, SkipUKFUpdates=True)
+    Drivetrain = MotorDriver(RobotPose_Drivetrain_pub, SlipFeedback_Drivetrain_pub, Simulated=False, SkipUKFUpdates=True)
 
     Navigation = TrajectoryTracker(DriveCommand_Navigation_pub, MotionCommand_Navigation_pub, MPCFeedback_Navigation_pub, Verbose=False)
 
@@ -99,10 +98,9 @@ async def main():
 
     PositionDriver = PositioningDriver(UWB_UWBPublisher_pub, Mode="GPS", Simulation=True, Verbose=True)
 
-    Accelerometer = IMUDriver(Accelerometer_AccelPublisher_pub, Simulation=True)
+    Accelerometer = IMUDriver(Accelerometer_AccelPublisher_pub, Simulation=False, Log=True)
 
     UserInterface = CDSControlServer(DriveCommand_UI_pub, Canine_UI_pub, MacroState_UI_pub, MotionCommand_UI_pub)
-
 
     # ─────────────────────────────────────────────────────────────────────────
     # SUBSCRIPTION PATHS
@@ -118,8 +116,8 @@ async def main():
     TESTING_VisionObject_Vision_pub.subscribe(StatePlanner.VisionObject_Receiver)
 
     """VideoFeed"""
-    VideoFeed_Vision_pub.subscribe(UserInterface.VideoFeed_Receiver)   
-    TESTING_VideoFeed_Vision_pub.subscribe(UserInterface.VideoFeed_Receiver)   
+    VideoFeed_Vision_pub.subscribe(UserInterface.VideoFeed_Receiver)
+    TESTING_VideoFeed_Vision_pub.subscribe(UserInterface.VideoFeed_Receiver)
 
     """Canine"""
     Canine_UI_pub.subscribe(Canine.CanineDriver_Receiver)
@@ -134,14 +132,14 @@ async def main():
     DriveCommand_Navigation_pub.subscribe(Drivetrain.MotorCommandReceiver)
     DriveCommand_Navigation_pub.subscribe(UserInterface.diagnostics.DriveCommand_Receiver)
     DriveCommand_UI_pub.subscribe(Drivetrain.MotorCommandReceiver)
- 
+
     """SlipFeedback"""
     SlipFeedback_Drivetrain_pub.subscribe(UserInterface.diagnostics.Slip_Receiver)
 
     """RobotPose"""
     RobotPose_Drivetrain_pub.subscribe(Navigation.RobotPose_Receiver)
     RobotPose_Drivetrain_pub.subscribe(UserInterface.diagnostics.RobotPose_Receiver)
-    # RobotPose_Drivetrain_pub.subscribe(Vision.RobotPose_Receiver)
+    RobotPose_Drivetrain_pub.subscribe(Vision.RobotPose_Receiver)
     RobotPose_Drivetrain_pub.subscribe(StatePlanner.RobotPose_Receiver)
 
     """MacroState"""
@@ -152,8 +150,8 @@ async def main():
     MotionCommand_UI_pub.subscribe(Navigation.TrajectoryCMD_Receiver)
     MotionCommand_Navigation_pub.subscribe(UserInterface.diagnostics.MotionCommand_Receiver)
     MotionCommand_StatePlanner_pub.subscribe(Navigation.TrajectoryCMD_Receiver)
-     
-    """ MPCFeedback"""
+
+    """MPCFeedback"""
     MPCFeedback_Navigation_pub.subscribe(UserInterface.diagnostics.TrajectoryTracker_Receiver)
 
     """UWB X,Y Values"""
@@ -163,7 +161,7 @@ async def main():
     """Accelerometer Theta Values"""
     Accelerometer_AccelPublisher_pub.subscribe(Drivetrain.Drivetrain_AccelReceiver)
     Accelerometer_AccelPublisher_pub.subscribe(UserInterface.diagnostics.Accelerometer_Receiver)
-    
+
     print("[MAIN] CDS Control Server Starting")
 
     await asyncio.gather(
@@ -175,8 +173,6 @@ async def main():
         Navigation.MPC.DriveTrain_Sender(),
         Accelerometer.Runner(),
         PositionDriver.Runner(),
-
-        #  
     )
 
 if __name__ == "__main__":

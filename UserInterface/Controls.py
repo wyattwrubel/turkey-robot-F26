@@ -44,8 +44,8 @@ from Robot import Robot
 KEY_DIRECTIONS = {
     "w": ( 1.0,  1.0),   # forward
     "s": (-1.0, -1.0),   # reverse
-    "a": (-0.2,  0.2),   # turn left
-    "d": ( 0.2, -0.2),   # turn right
+    "a": (-1,  1),   # turn left
+    "d": ( 1, -1),   # turn right
 }
 
 

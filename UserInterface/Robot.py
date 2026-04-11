@@ -45,7 +45,7 @@ class Robot:
 
         self.cmd_left    = 0.0
         self.cmd_right   = 0.0
-        self.speed_limit = 1.5
+        self.speed_limit = 5
         self._estop      = False
 
         self.sys_state    = "Stop"
@@ -84,7 +84,8 @@ class Robot:
         self.cmd_left, self.cmd_right = left, right
 
     def set_speed(self, speed):
-        self.speed_limit = speed
+        # self.speed_limit = speed
+        self.speed_limit = 3
 
     def set_drivetrain_status(self, status: int) -> None:
         assert status in (0, 1, 2), f"drivetrain_status must be 0, 1, or 2 — got {status}"

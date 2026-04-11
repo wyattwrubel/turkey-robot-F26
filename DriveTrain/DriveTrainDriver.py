@@ -254,7 +254,7 @@ class MotorDriver:
             self.RobotPosePublisher(),
             self.ReadMotorPosition(),
             self.UpdateMotorSpeeds(),
-            self.CheckStall(),
+            # self.CheckStall(),
             self.SlipPublisherBroadcast(),
         )
 

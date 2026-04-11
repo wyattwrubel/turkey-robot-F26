@@ -1,0 +1,91 @@
+import time
+import cv2
+
+
+# ── Camera settings — edit these ─────────────────────────────────────────────
+DEVICE_INDEX = 1
+WIDTH        = 640
+HEIGHT       = 480
+FPS          = 10       # keep in sync with CAMERA_FPS in Vision.py
+FOURCC       = "MJPG"   # MJPG recommended for USB2.0
+BACKEND      = "v4l2" #"dshow"    # "v4l2" on Pi, "dshow" on Windows, "auto" for either
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class USBCamera:
+    def __init__(self):
+        self.device_index = DEVICE_INDEX
+        self.width        = WIDTH
+        self.height       = HEIGHT
+        self.fps          = FPS
+        self.fourcc       = FOURCC
+        self.backend      = BACKEND
+        self.cap          = None
+
+    def _create_capture(self):
+        if self.backend == "dshow":
+            return cv2.VideoCapture(self.device_index, cv2.CAP_DSHOW)
+        elif self.backend == "msmf":
+            return cv2.VideoCapture(self.device_index, cv2.CAP_MSMF)
+        elif self.backend == "v4l2":
+            return cv2.VideoCapture(self.device_index, cv2.CAP_V4L2)
+        else:
+            return cv2.VideoCapture(self.device_index)
+
+    def open(self) -> None:
+        self.cap = self._create_capture()
+        if not self.cap.isOpened():
+            raise RuntimeError(f"[Camera] Failed to open camera index {self.device_index}")
+
+        # Attempt A: set FOURCC first, then resolution/FPS
+        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*self.fourcc))
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH,  self.width)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+        self.cap.set(cv2.CAP_PROP_FPS,          self.fps)
+        time.sleep(0.3)
+
+        # Attempt B: if FOURCC didn't take, try reversed order
+        if self.get_actual_settings()["fourcc"] != self.fourcc:
+            self.release()
+            self.cap = self._create_capture()
+            if not self.cap.isOpened():
+                raise RuntimeError(f"[Camera] Failed to reopen camera index {self.device_index}")
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH,  self.width)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+            self.cap.set(cv2.CAP_PROP_FPS,          self.fps)
+            self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*self.fourcc))
+            time.sleep(0.3)
+
+    def read(self):
+        if self.cap is None:
+            raise RuntimeError("[Camera] Camera has not been opened yet")
+        ret, frame = self.cap.read()
+        if not ret or frame is None:
+            return False, None
+        return True, frame
+
+    def release(self) -> None:
+        if self.cap is not None:
+            self.cap.release()
+            self.cap = None
+
+    def get_actual_settings(self) -> dict:
+        if self.cap is None:
+            raise RuntimeError("[Camera] Camera has not been opened yet")
+        fourcc_int = int(self.cap.get(cv2.CAP_PROP_FOURCC))
+        fourcc_str = (
+            "".join(chr((fourcc_int >> (8 * i)) & 0xFF) for i in range(4))
+            if fourcc_int > 0 else "UNKNOWN"
+        )
+        return {
+            "device_index": self.device_index,
+            "width":  int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
+            "height": int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
+            "fps":    self.cap.get(cv2.CAP_PROP_FPS),
+            "fourcc": fourcc_str,
+        }
+
+    def print_actual_settings(self) -> None:
+        print("[Camera] Actual settings:")
+        for key, value in self.get_actual_settings().items():
+            print(f"  {key}: {value}")

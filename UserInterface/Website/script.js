@@ -94,8 +94,8 @@ function buildAudio() {
 // ═══════════════════════════════════════════════
 function connect() {
   // ws = new WebSocket('ws://100.67.22.116:8000/ws')
-  ws = new WebSocket('ws://192.168.10.2:8000/ws')
-    // ws = new WebSocket('ws://192.168.4.3:8000/ws')
+  // ws = new WebSocket('ws://192.168.10.2:8000/ws')
+    ws = new WebSocket('ws://192.168.4.2:8000/ws')
 
     ws.onopen    = ()  => { wsReady = true; _startHeartbeat()}
   ws.onclose   = ()  => { wsReady = false; _stopHeartbeat(); setTimeout(connect, 1000) }
@@ -318,7 +318,7 @@ function onSpeedRange(el) {
   const v = parseFloat(el.value)
   updateSliderBg(el)
   set('spd-disp', v.toFixed(1))
-  send({ type: 'speed_limit', speed: v })
+  send({ type: 'speed_limit', speed: 5 })
 }
 
 function setSpeed(v) {
@@ -326,7 +326,7 @@ function setSpeed(v) {
   el.value = v
   updateSliderBg(el)
   set('spd-disp', v.toFixed(1))
-  send({ type: 'speed_limit', speed: v })
+  send({ type: 'speed_limit', speed: 5 })
 }
 
 // ═══════════════════════════════════════════════

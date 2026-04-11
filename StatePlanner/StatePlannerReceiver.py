@@ -297,7 +297,7 @@ class StatePlannerReceiver:
             await self.MotionCommand_Publisher.publish(
                 {"Id": "Move", "Cmd": self._scan_target[:2].tolist()}
             )
-            await self._SpeedCap_Publish(2.0)
+            await self._SpeedCap_Publish(10.0)
             await self._module_scan._travel_to_waypoint()
 
             while True:
