@@ -47,7 +47,7 @@ class CDSControlServer:
 
     def __init__(self, drivetrain_publisher, canine_publisher, macrostate_publisher, navigation_publisher):
         self.robot = Robot()
-
+        self._last_frame_time: float = 0.0
         self.camera      = PanelCamera()
         self.map         = PanelMap(MAP_CSV, WAYPOINTS_CSV, self.robot)
         self.diagnostics = PanelDiagnostics(self.robot)

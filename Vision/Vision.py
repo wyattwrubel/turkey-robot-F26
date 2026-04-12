@@ -19,6 +19,22 @@ Simulated=False → camera opens immediately and starts streaming.
 Constructor signature is unchanged from the original:
     VisionObject(VideoFeed_Vision_pub, VisionObject_Vision_pub,
                  Simulated=False, Verbose=False, ...)
+
+Cross-loop fix
+--------------
+VisionObject runs its WebSocket servers on its own private event loop (loop B)
+spawned on a dedicated thread. The pub/sub subscribers (e.g. UserInterface) live
+on uvicorn's event loop (loop A, the one running main()).
+
+Calling `await pub.publish(...)` from inside loop B would attach the resulting
+coroutines to loop B, but those coroutines internally schedule work on loop A —
+causing the "Future attached to a different loop" RuntimeError.
+
+Fix: capture loop A at construction time (VisionObject is instantiated inside
+main(), which runs on loop A, so asyncio.get_event_loop() returns loop A).
+Then use asyncio.run_coroutine_threadsafe() to hand publish calls from loop B
+across to loop A, blocking briefly with future.result(timeout) so we don't
+flood the queue.
 """
 
 import asyncio
@@ -71,7 +87,13 @@ class VisionObject:
 
         self._latest_raw_frame: bytes | None = None
 
-        # Start the async event loop on its own thread
+        # Capture the caller's event loop (uvicorn/main — loop A).
+        # VisionObject is constructed inside main() which runs on loop A,
+        # so get_event_loop() here gives us loop A. We use this to safely
+        # schedule pub/sub calls from Vision's own thread (loop B).
+        self._main_loop: asyncio.AbstractEventLoop = asyncio.get_event_loop()
+
+        # Start Vision's private async event loop on its own thread (loop B)
         self._loop = asyncio.new_event_loop()
         self._loop_thread = threading.Thread(
             target=self._run_loop, daemon=True, name="VisionLoop"
@@ -79,7 +101,26 @@ class VisionObject:
         self._loop_thread.start()
 
     # ------------------------------------------------------------------
+    # Cross-loop publish helper
+    # ------------------------------------------------------------------
+
+    def _publish_to_main(self, coro, label: str = "publish") -> None:
+        """
+        Schedule a coroutine onto loop A (uvicorn/main) from loop B (VisionLoop).
+        Blocks until the coroutine completes or times out, then returns.
+        Called from inside loop B's async context via run_in_executor or directly.
+        """
+        future = asyncio.run_coroutine_threadsafe(coro, self._main_loop)
+        try:
+            future.result(timeout=1.0)
+        except TimeoutError:
+            print(f"[Vision] {label} timed out — data dropped")
+        except Exception as e:
+            print(f"[Vision] {label} error: {e}")
+
+    # ------------------------------------------------------------------
     # RobotPose receiver  (Protocol 4: 1x3 numpy [X, Y, theta_rad])
+    # Called from loop A via pub/sub — only touches threading.Lock, safe.
     # ------------------------------------------------------------------
 
     async def RobotPose_Receiver(self, pose_array):
@@ -121,7 +162,7 @@ class VisionObject:
         return float(world_x), float(world_y)
 
     # ------------------------------------------------------------------
-    # Event loop
+    # Event loop (loop B)
     # ------------------------------------------------------------------
 
     def _run_loop(self):
@@ -191,7 +232,7 @@ class VisionObject:
         async with self._video_lock:
             self._video_clients.add(ws)
 
-        # Sync new client immediately
+        # Sync new client immediately with the latest raw frame
         if self._latest_raw_frame:
             try:
                 await ws.send(self._latest_raw_frame)
@@ -201,9 +242,19 @@ class VisionObject:
         print(f"[Vision] Video client connected: {ws.remote_address}")
         try:
             async for message in ws:
-                # Only the laptop sends bytes back (processed frames)
+                # Only the laptop sends bytes back (processed/annotated frames).
+                # We are on loop B here — use run_coroutine_threadsafe to hand
+                # the publish coroutine to loop A (uvicorn/main) where all the
+                # pub/sub subscribers live. Blocking briefly with future.result()
+                # prevents frame flooding while keeping loop B responsive.
                 if isinstance(message, bytes) and self._video_pub is not None:
-                    await self._video_pub.publish(message)
+                    loop_b = asyncio.get_event_loop()
+                    await loop_b.run_in_executor(
+                        None,
+                        self._publish_to_main,
+                        self._video_pub.publish(message),
+                        "VideoFeed publish",
+                    )
         except websockets.ConnectionClosed:
             pass
         finally:
@@ -255,7 +306,7 @@ class VisionObject:
     async def _handle_detection_payload(self, payload: dict):
         """
         Receives camera-local payload from laptop.
-        Applies world-frame transform to each entry, then publishes.
+        Applies world-frame transform to each entry, then publishes to loop A.
 
         Input  (camera-local):  [[x_cam, y_cam, angle_rad], ...]
         Output (world frame):   [[world_x, world_y, angle_rad], ...]
@@ -289,4 +340,11 @@ class VisionObject:
             )
 
         if self._detect_pub is not None:
-            await self._detect_pub.publish(world_payload)
+            # Same cross-loop handoff as _video_handler.
+            loop_b = asyncio.get_event_loop()
+            await loop_b.run_in_executor(
+                None,
+                self._publish_to_main,
+                self._detect_pub.publish(world_payload),
+                "Detection publish",
+            )

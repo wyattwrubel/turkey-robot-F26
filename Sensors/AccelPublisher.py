@@ -147,7 +147,7 @@ class IMUDriver:
 
     def __init__(self, AccelPublisher, Simulation: bool = False, Log: bool = False):
         self.Simulation = Simulation
-        self.logger = DataLogger() if Log else None
+        self.logger = DataLogger() if (Log and not Simulation) else None
 
         if not Simulation:
             self.bus = smbus2.SMBus(3)

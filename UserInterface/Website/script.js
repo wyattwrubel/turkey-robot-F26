@@ -28,33 +28,55 @@ const AUDIO_DEFS = [
 ]
 
 // ═══════════════════════════════════════════════
-// STATE
+// STATE — all let declarations hoisted here so
+// the init block at the bottom can reference them
+// safely (let is block-scoped, not hoisted like var)
 // ═══════════════════════════════════════════════
-let ws       = null
-let wsReady  = false
+
+// WebSocket
+let ws      = null
+let wsReady = false
+
+// Mode
 let isManual = false
-let isStopped= false
+let isStopped = false
 
 // Map state
-let mapTurkeys        = []
-let mapHumans         = []
-let mapObstacles      = []
-let mapWaypoints      = []
-let selectedWaypoint  = null
-let mapRobot          = { x: 0, y: 0, theta: 0 }
-let mapReferenceTraj  = []   // Protocol 6.1 — full reference path  [[x,y],...]
-let mapMPCHorizon     = []   // Protocol 6.2 — live lookahead       [[x,y],...]
-let _dashOffset       = 0    // animated dash phase for reference path
+let mapTurkeys       = []
+let mapHumans        = []
+let mapObstacles     = []
+let mapWaypoints     = []
+let selectedWaypoint = null
+let mapRobot         = { x: 0, y: 0, theta: 0 }
+let mapReferenceTraj = []
+let mapMPCHorizon    = []
+let _dashOffset      = 0
 
-// Camera state
+// Map viewport
+let MAP_W      = 100.0
+let MAP_H      = 100.0
+let mapZoom    = 1.0
+let mapPanX    = 0.0
+let mapPanY    = 0.0
+let _dragActive = false
+let _dragLast   = { x: 0, y: 0 }
+let _lastS      = 1
+
+// Camera
 let camImg = null
 
-// Persistent active pose (state machine — no timeout)
-let _activePose = null
-
-// Persistent macrostate + sub-command (state machines — persist until next command)
+// Pose / macrostate
+let _activePose       = null
 let _activeMacrostate = null
 let _activeSubCmd     = null
+
+// Heartbeat
+let _heartbeatTimer = null
+
+// Camera watchdog
+let _lastFrameTime  = 0
+let _camOverlay     = null
+const CAM_TIMEOUT_MS = 3000
 
 // ═══════════════════════════════════════════════
 // BUILD DYNAMIC UI
@@ -93,11 +115,11 @@ function buildAudio() {
 // WEBSOCKET
 // ═══════════════════════════════════════════════
 function connect() {
-  // ws = new WebSocket('ws://100.67.22.116:8000/ws')
-  ws = new WebSocket('ws://192.168.10.2:8000/ws')
-    // ws = new WebSocket('ws://192.168.4.2:8000/ws')
+  ws = new WebSocket('ws://100.67.22.116:8000/ws')
+  // ws = new WebSocket('ws://192.168.10.2:8000/ws')
+  // ws = new WebSocket('ws://192.168.4.2:8000/ws')
 
-    ws.onopen    = ()  => { wsReady = true; _startHeartbeat()}
+  ws.onopen    = ()  => { wsReady = true;  _startHeartbeat() }
   ws.onclose   = ()  => { wsReady = false; _stopHeartbeat(); setTimeout(connect, 1000) }
   ws.onmessage = (e) => {
     try   { handle(JSON.parse(e.data)) }
@@ -152,7 +174,7 @@ function handle(m) {
     }
 
     if (m.is_estopped !== undefined) {
-     _applyEstopUI(m.is_estopped)
+      _applyEstopUI(m.is_estopped)
     }
 
     // Current destination
@@ -202,17 +224,24 @@ function handle(m) {
 
     // ── Protocol 6.1 — Reference trajectory ──────────────────
     if (m.reference_trajectory != null) {
-      mapReferenceTraj = m.reference_trajectory   // [[x,y], [x,y], ...]
+      mapReferenceTraj = m.reference_trajectory
     }
 
     // ── Protocol 6.2 — MPC horizon ────────────────────────────
     if (m.mpc_horizon != null) {
-      mapMPCHorizon = m.mpc_horizon               // [[x,y], [x,y], ...]
+      mapMPCHorizon = m.mpc_horizon
+    }
+
+    // Mode sync
+    if (m.is_manual !== undefined) {
+      isManual = m.is_manual
+      _applyModeUI()
     }
   }
 
   // ── Camera frame ───────────────────────────────────────────
   if (m.type === 'frame') {
+    _onFrameReceived()
     const ph = document.getElementById('cam-ph')
     if (!camImg) {
       camImg = document.createElement('img')
@@ -234,11 +263,6 @@ function handle(m) {
     if (m.map_h) MAP_H = m.map_h
     const sub = document.getElementById('map-sub')
     if (sub) sub.textContent = `${MAP_W} × ${MAP_H} M · 10 HZ`
-  }
-
-  if (m.type === 'state' && m.is_manual !== undefined) {
-  isManual = m.is_manual
-  _applyModeUI()
   }
 
   // ── Vision detections ────────────────────────────────────────
@@ -421,7 +445,6 @@ function _applyModeUI() {
   document.getElementById('mode-btn').className     = isManual ? 'modetog m' : 'modetog'
   document.getElementById('ctrl-tag').textContent   = isManual ? 'MODE: MANUAL — INPUTS ACTIVE' : 'MODE: AUTO — INPUTS LOCKED'
   applyModeToControls()
-
 }
 
 function applyModeToControls() {
@@ -455,28 +478,94 @@ function flash(el, duration=1200) {
 }
 
 // ═══════════════════════════════════════════════
+// HEARTBEAT
+// ═══════════════════════════════════════════════
+function _startHeartbeat() {
+  _stopHeartbeat()
+  _heartbeatTimer = setInterval(() => {
+    send({ type: 'heartbeat' })
+  }, 500)
+}
+
+function _stopHeartbeat() {
+  if (_heartbeatTimer) { clearInterval(_heartbeatTimer); _heartbeatTimer = null }
+}
+
+function _applyEstopUI(estopped) {
+  const b = document.getElementById('estop-btn')
+  if (!b) return
+  if (estopped) {
+    b.textContent      = '⬡ STOPPED — CLICK TO RESET'
+    b.style.background = 'rgba(255,34,51,.35)'
+    b.onclick          = resetEStop
+  } else {
+    b.textContent      = '⬡ EMERGENCY STOP'
+    b.style.background = ''
+    b.onclick          = emergencyStop
+  }
+}
+
+// ═══════════════════════════════════════════════
+// CAMERA WATCHDOG
+// ═══════════════════════════════════════════════
+function _initCamWatchdog() {
+  const container = document.getElementById('cam-ph')?.parentElement
+  if (!container) return
+
+  _camOverlay = document.createElement('div')
+  _camOverlay.style.cssText = `
+    position: absolute;
+    inset: 0;
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: rgba(5, 8, 12, 0.82);
+    color: #00d4ff;
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    gap: 8px;
+    z-index: 10;
+  `
+  _camOverlay.innerHTML = `
+    <div style="font-size:22px;opacity:0.6">⬡</div>
+    <div>SIGNAL LOST</div>
+    <div id="cam-stale-timer" style="opacity:0.5;font-size:10px">— s</div>
+  `
+  container.appendChild(_camOverlay)
+
+  setInterval(() => {
+    const elapsed = Date.now() - _lastFrameTime
+    if (_lastFrameTime === 0 || elapsed > CAM_TIMEOUT_MS) {
+      _camOverlay.style.display = 'flex'
+      const secs = _lastFrameTime === 0 ? '—' : Math.floor(elapsed / 1000)
+      const el = document.getElementById('cam-stale-timer')
+      if (el) el.textContent = `${secs}s ago`
+    } else {
+      _camOverlay.style.display = 'none'
+    }
+  }, 500)
+}
+
+function _onFrameReceived() {
+  _lastFrameTime = Date.now()
+}
+
+// ═══════════════════════════════════════════════
 // INIT
 // ═══════════════════════════════════════════════
 buildServos()
 buildAudio()
 updateSliderBg(document.getElementById('spd-range'))
 _applyModeUI()
+_initCamWatchdog()
 connect()
 requestAnimationFrame(initMap)
 
 // ═══════════════════════════════════════════════
 // MAP — 2D Top-Down Canvas
 // ═══════════════════════════════════════════════
-let MAP_W = 100.0
-let MAP_H = 100.0
-
-let mapZoom     = 1.0
-let mapPanX     = 0.0
-let mapPanY     = 0.0
-let _dragActive = false
-let _dragLast   = { x: 0, y: 0 }
-let _lastS      = 1
-
 function initMap() {
   const canvas = document.getElementById('map-canvas')
   if (!canvas) return
@@ -736,37 +825,35 @@ function drawMap(canvas) {
   })
 
   // ─── REFERENCE TRAJECTORY (Protocol 6.1) ─────────────────────
-    if (mapReferenceTraj.length > 1) {
-      ctx.save()
-      ctx.beginPath()
-      const [rsx, rsy] = proj(mapReferenceTraj[0][0], mapReferenceTraj[0][1])
-      ctx.moveTo(rsx, rsy)
-      mapReferenceTraj.slice(1).forEach(pt => {
-        const [rx, ry] = proj(pt[0], pt[1])
-        ctx.lineTo(rx, ry)
-      })
-      ctx.strokeStyle = 'rgba(0,212,255,0.3)'
-      ctx.lineWidth   = 0.8
-      ctx.setLineDash([4, 6])
-      ctx.stroke()
-      ctx.restore()
-      ctx.setLineDash([])
+  if (mapReferenceTraj.length > 1) {
+    ctx.save()
+    ctx.beginPath()
+    const [rsx, rsy] = proj(mapReferenceTraj[0][0], mapReferenceTraj[0][1])
+    ctx.moveTo(rsx, rsy)
+    mapReferenceTraj.slice(1).forEach(pt => {
+      const [rx, ry] = proj(pt[0], pt[1])
+      ctx.lineTo(rx, ry)
+    })
+    ctx.strokeStyle = 'rgba(0,212,255,0.3)'
+    ctx.lineWidth   = 0.8
+    ctx.setLineDash([4, 6])
+    ctx.stroke()
+    ctx.restore()
+    ctx.setLineDash([])
 
-      // Static dots at each waypoint node
-      mapReferenceTraj.forEach((pt, i) => {
-        const [px, py] = proj(pt[0], pt[1])
-        ctx.beginPath()
-        ctx.arc(px, py, 1.5, 0, Math.PI * 2)
-        ctx.fillStyle = 'rgba(0,212,255,0.3)'
-        ctx.fill()
-      })
-    }
+    mapReferenceTraj.forEach((pt, i) => {
+      const [px, py] = proj(pt[0], pt[1])
+      ctx.beginPath()
+      ctx.arc(px, py, 1.5, 0, Math.PI * 2)
+      ctx.fillStyle = 'rgba(0,212,255,0.3)'
+      ctx.fill()
+    })
+  }
 
   // ─── MPC HORIZON (Protocol 6.2) ──────────────────────────────
   if (mapMPCHorizon.length > 1) {
     const [robX, robY] = proj(mapRobot.x, mapRobot.y)
 
-    // Glow underlay
     ctx.save()
     ctx.shadowColor = 'rgba(255,160,0,0.45)'
     ctx.shadowBlur  = 8
@@ -781,7 +868,6 @@ function drawMap(canvas) {
     ctx.stroke()
     ctx.restore()
 
-    // Main MPC line — tapers opacity toward tip
     for (let i = 0; i < mapMPCHorizon.length; i++) {
       const [ax, ay] = i === 0
         ? [robX, robY]
@@ -796,7 +882,6 @@ function drawMap(canvas) {
       ctx.stroke()
     }
 
-    // Tick dots along horizon
     mapMPCHorizon.forEach((pt, i) => {
       const [mx, my] = proj(pt[0], pt[1])
       const alpha     = 1.0 - (i / mapMPCHorizon.length) * 0.7
@@ -806,7 +891,6 @@ function drawMap(canvas) {
       ctx.fill()
     })
 
-    // Pulsing tip dot
     const tip      = mapMPCHorizon[mapMPCHorizon.length - 1]
     const [tx, ty] = proj(tip[0], tip[1])
     const pulse    = 0.5 + 0.5 * Math.sin(t * 6)
@@ -819,7 +903,6 @@ function drawMap(canvas) {
     ctx.fill()
     ctx.restore()
 
-    // Label at tip
     ctx.fillStyle = 'rgba(255,180,40,0.7)'
     ctx.font      = '7px Courier New'
     ctx.textAlign = 'left'
@@ -892,34 +975,4 @@ function drawMap(canvas) {
     : `scroll to zoom`, cw - 8, ch - 8)
 
   ctx.restore()
-}
-
-// ═══════════════════════════════════════════════
-// HEARTBEAT
-// ═══════════════════════════════════════════════
-let _heartbeatTimer = null
-
-function _startHeartbeat() {
-  _stopHeartbeat()
-  _heartbeatTimer = setInterval(() => {
-    send({ type: 'heartbeat' })
-  }, 500)
-}
-
-function _stopHeartbeat() {
-  if (_heartbeatTimer) { clearInterval(_heartbeatTimer); _heartbeatTimer = null }
-}
-
-function _applyEstopUI(estopped) {
-  const b = document.getElementById('estop-btn')
-  if (!b) return
-  if (estopped) {
-    b.textContent      = '⬡ STOPPED — CLICK TO RESET'
-    b.style.background = 'rgba(255,34,51,.35)'
-    b.onclick          = resetEStop
-  } else {
-    b.textContent      = '⬡ EMERGENCY STOP'
-    b.style.background = ''
-    b.onclick          = emergencyStop
-  }
 }
