@@ -83,7 +83,7 @@ class MotorDriver:
         # ── Dead-reckoning state ──────────────────────────────────────
         # Default position until first GPS fix sets x, y as true origin.
         # Theta is always overridden by the accelerometer.
-        self._dr_state = np.array([10.0, 75.0, 45.0], dtype=np.float64)  # [x, y, theta_rad]
+        self._dr_state = np.array([15.0, 74.0, 0], dtype=np.float64)  # [x, y, theta_rad]
         self._gps_initialised = False   # True after first GPS fix sets x, y
 
         # ── Runtime state ─────────────────────────────────────────────
@@ -290,7 +290,7 @@ class MotorDriver:
         Args:
             data: scalar heading in radians
         """
-        theta = float(data)
+        theta = float(np.squeeze(data))   # works for scalar, (1,), or (1,1)
         async with self._state_lock:
             self._dr_state[2] = self._wrap(theta)
         if self.Verbose:
@@ -406,7 +406,7 @@ class MotorDriver:
             self.RobotPosePublisher(),
             self.ReadMotorPosition(),
             self.UpdateMotorSpeeds(),
-            self._CurrentMonitor(),
+            # self._CurrentMonitor(),
             self.SlipPublisherBroadcast(),
         )
 

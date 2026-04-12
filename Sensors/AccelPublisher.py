@@ -241,7 +241,7 @@ class IMUDriver:
             if reading is not None:
                 # --- original publish (heading only) ---
                 pose = np.array([reading.heading_rad])
-                await self.AccelPublisher.publish(pose)
+                await self.AccelPublisher.publish(-1* pose + 26)
 
                 # --- optional full log ---
                 if self.logger is not None:

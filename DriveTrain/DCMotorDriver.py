@@ -60,7 +60,7 @@ class DC_Driver:
     max_linear_speed = 5.0    # m/s -- used for input clamping only
     wheel_radius     = 0.08   # metres
 
-    encoder_CPR          = 256
+    encoder_CPR          = 1024
     encoder_quadrature_x = 4
     encoder_CPR_effective = encoder_CPR * encoder_quadrature_x   # 4096
 
@@ -79,7 +79,7 @@ class DC_Driver:
     #   D: leave at 0 until P+I are tuned; encoder noise amplifies D
     #
     pid_QPPS = 41000   # counts/sec  ← update if max speed changes
-    pid_P    = 0.3     # proportional gain
+    pid_P    = 1.6     # proportional gain
     pid_I    = 0.15    # integral gain
     pid_D    = 0.0     # derivative gain (start at 0, tune last)
 

@@ -297,7 +297,7 @@ class StatePlannerReceiver:
             await self.MotionCommand_Publisher.publish(
                 {"Id": "Move", "Cmd": self._scan_target[:2].tolist()}
             )
-            await self._SpeedCap_Publish(10.0)
+            await self._SpeedCap_Publish(3.0)
             await self._module_scan._travel_to_waypoint()
 
             while True:
@@ -323,7 +323,8 @@ class StatePlannerReceiver:
                 await self.MotionCommand_Publisher.publish(
                     {"Id": "Orient", "Cmd": [robot_pos[0], robot_pos[1], target_heading]}
                 )
-                await asyncio.sleep(1.0)
+                # await asyncio.sleep(1.0)
+                await asyncio.sleep(3.0)
 
             self._scan_idx   += 1
             self._scan_target = self._next_target()
@@ -395,7 +396,7 @@ class StatePlannerReceiver:
             await self._SpeedCap_Publish(0.5)
             await self._module_chase._growl_and_chase()
             # await self._SpeedCap_Publish(3.0)
-            await self._SpeedCap_Publish(1.0)
+            await self._SpeedCap_Publish(5.0)
 
             while True:
                 turkey_pos = _nearest_turkey()
@@ -447,10 +448,12 @@ class StatePlannerReceiver:
                 Silently stops publishing if turkey leaves sight — warning
                 substates continue unaffected."""
                 while True:
-                    await asyncio.sleep(1.0)
+                    # await asyncio.sleep(1.0)
+                    await asyncio.sleep(2.0)
                     if not self.turkey_detected or self.last_known_turkey_pos is None:
                         self._dbg("[Alert/Path1] Turkey out of sight — orient tracking paused")
-                        await asyncio.sleep(1.0)
+                        # await asyncio.sleep(1.0)
+                        await asyncio.sleep(2.0)
                         continue
                     rx, ry  = float(self.Current_RobotPose[0]), float(self.Current_RobotPose[1])
                     tx, ty  = float(self.last_known_turkey_pos[0]), float(self.last_known_turkey_pos[1])
@@ -561,7 +564,8 @@ class StatePlannerReceiver:
             else:
                 self._dbg(f"[ManualChase] {name} completed early — idle 1 s")
 
-            await asyncio.sleep(1.0)
+            # await asyncio.sleep(1.0)
+            await asyncio.sleep(2.0)
             idx += 1
 
     # ------------------------------------------------------------------

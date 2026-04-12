@@ -116,9 +116,12 @@ function buildAudio() {
 // ═══════════════════════════════════════════════
 function connect() {
   // ws = new WebSocket('ws://100.67.22.116:8000/ws')
-  // ws = new WebSocket('ws://192.168.10.2:8000/ws')
+  ws = new WebSocket('ws://192.168.10.2:8000/ws')
   // ws = new WebSocket('ws://192.168.4.2:8000/ws')
-    ws = new WebSocket('ws://35.3.137.208:8000/ws')
+    // ws = new WebSocket('ws://35.3.137.208:8000/ws')
+  // ws = new WebSocket('ws://172.20.10.2:8000/ws')
+    
+    
 
   ws.onopen    = ()  => { wsReady = true;  _startHeartbeat() }
   ws.onclose   = ()  => { wsReady = false; _stopHeartbeat(); setTimeout(connect, 1000) }
