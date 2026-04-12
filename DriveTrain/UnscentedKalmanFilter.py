@@ -154,27 +154,28 @@ class UKF:
         Expects accel_theta in the same convention as the state: CCW positive.
         If your IMU returns a different convention, negate before calling this.
         """
-        z  = np.array([accel_theta])
-        sp = self._sigma_points()
+        # z  = np.array([accel_theta])
+        # sp = self._sigma_points()
 
-        z_sigma = sp[:, 2]
-        z_pred  = self._mean_angle(z_sigma, self._wm)
+        # z_sigma = sp[:, 2]
+        # z_pred  = self._mean_angle(z_sigma, self._wm)
 
-        Pyy = self.R_accel.copy()
-        Pxy = np.zeros((self.L, 1))
+        # Pyy = self.R_accel.copy()
+        # Pxy = np.zeros((self.L, 1))
 
-        for i in range(2 * self.L + 1):
-            dz   = self._wrap_angle(z_sigma[i] - z_pred)
-            dx   = sp[i] - self.x
-            dx[2] = self._wrap_angle(dx[2])
-            Pyy += self._wc[i] * np.array([[dz**2]])
-            Pxy += self._wc[i] * dx.reshape(-1, 1) * dz
+        # for i in range(2 * self.L + 1):
+        #     dz   = self._wrap_angle(z_sigma[i] - z_pred)
+        #     dx   = sp[i] - self.x
+        #     dx[2] = self._wrap_angle(dx[2])
+        #     Pyy += self._wc[i] * np.array([[dz**2]])
+        #     Pxy += self._wc[i] * dx.reshape(-1, 1) * dz
 
-        K          = Pxy / Pyy[0, 0]
-        innovation = self._wrap_angle(float(z[0]) - z_pred)
-        self.x     = self.x + K.flatten() * innovation
-        self.x[2]  = self._wrap_angle(self.x[2])
-        self.P     = self.P - K @ Pyy @ K.T
+        # K          = Pxy / Pyy[0, 0]
+        # innovation = self._wrap_angle(float(z[0]) - z_pred)
+        # self.x     = self.x + K.flatten() * innovation
+        # self.x[2]  = self._wrap_angle(self.x[2])
+        # self.P     = self.P - K @ Pyy @ K.T
+        self.x[2] = accel_theta
 
     @property
     def state(self) -> np.ndarray:
