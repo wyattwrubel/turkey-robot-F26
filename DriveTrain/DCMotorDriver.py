@@ -54,10 +54,10 @@ class DC_Driver:
     """
 
     # Serial ports
-    port_fl = "/dev/ttyACM0"
-    port_fr = "/dev/ttyACM1"
-    port_rl = "/dev/ttyACM2"
-    port_rr = "/dev/ttyACM3"
+    port_fl = "/dev/ttyMotor0"
+    port_fr = "/dev/ttyMotor1"
+    port_rl = "/dev/ttyMotor2"
+    port_rr = "/dev/ttyMotor3"
 
     baudrate = 115200
     timeout  = 0.1

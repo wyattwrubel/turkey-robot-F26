@@ -1,6 +1,6 @@
 import serial
 
-PORT     = "/dev/ttyUSB1"   # change if needed
+PORT     = "/dev/ttyUSB2"   # change if needed
 BAUDRATE = 4800
 
 ser = serial.Serial(PORT, baudrate=BAUDRATE, timeout=2)

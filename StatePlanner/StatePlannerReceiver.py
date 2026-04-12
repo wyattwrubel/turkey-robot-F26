@@ -394,7 +394,8 @@ class StatePlannerReceiver:
             """
             await self._SpeedCap_Publish(0.5)
             await self._module_chase._growl_and_chase()
-            await self._SpeedCap_Publish(3.0)
+            # await self._SpeedCap_Publish(3.0)
+            await self._SpeedCap_Publish(1.0)
 
             while True:
                 turkey_pos = _nearest_turkey()

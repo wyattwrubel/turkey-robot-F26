@@ -1,20 +1,13 @@
-import math
 import time
 import serial
 
 PORTS = {
-
-    "front_left":  "/dev/ttyACM0",
-    "front_right": "/dev/ttyACM1",
-    "rear_left":   "/dev/ttyACM2",
-    "rear_right":  "/dev/ttyACM3",
-    # "front_left":  "COM13",
-    # "front_right": "COM14",
-    # "rear_left":   "COM15",
-    # "rear_right":  "COM16",
+    "front_left":  "/dev/ttyMotor0",
+    "front_right": "/dev/ttyMotor1",
+    "rear_left":   "/dev/ttyMotor2",
+    "rear_right":  "/dev/ttyMotor3",
 }
 
-# Left side motors are physically mirrored, so negate them
 MOTOR_DIRECTION = {
     "front_left":  -1,
     "front_right":  1,
@@ -22,16 +15,13 @@ MOTOR_DIRECTION = {
     "rear_right":   1,
 }
 
-BAUDRATE    = 115200
-TIMEOUT     = 0.1
-ADR         = 0x80
-CMD_CURRENT = 49
-CMD_M1_DUTY = 32
-RUN_TIME    = 3.0
-
+BAUDRATE          = 115200
+TIMEOUT           = 0.1
+ADR               = 0x80
+CMD_CURRENT       = 49
+CMD_M1_DUTY       = 32
 MAX_DUTY_FRACTION = 0.2
 MAX_DUTY_VALUE    = 32767
-TARGET_DUTY       = int(MAX_DUTY_FRACTION * MAX_DUTY_VALUE)
 
 def crc16(data: bytes) -> int:
     crc = 0x0000
@@ -47,10 +37,6 @@ def make_packet(addr, cmd, payload=b""):
     return base + bytes([c >> 8, c & 0xFF])
 
 def drive_duty(ser, fraction, direction=1):
-    """
-    fraction : -1.0 to +1.0, clamped to MAX_DUTY_FRACTION
-    direction: 1 or -1, applied before sending to flip motor orientation
-    """
     fraction = max(-MAX_DUTY_FRACTION, min(MAX_DUTY_FRACTION, fraction))
     duty = int(direction * fraction * MAX_DUTY_VALUE)
     duty = max(-MAX_DUTY_VALUE, min(MAX_DUTY_VALUE, duty))
@@ -61,23 +47,15 @@ def drive_duty(ser, fraction, direction=1):
     ser.reset_input_buffer()
     return ack == b"\xff"
 
-def read_current(ser):
-    req = bytes([ADR, CMD_CURRENT])
-    ser.reset_input_buffer()
-    ser.write(make_packet(ADR, CMD_CURRENT))
-    time.sleep(0.02)
-    r = ser.read(6)
-    if len(r) < 6:
-        return None
-    if crc16(req + r[:4]) != int.from_bytes(r[4:6], "big"):
-        return None
-    return int.from_bytes(r[:2], "big") / 100.0
+mapping = {}  # will store: physical_label -> port
 
-for name, port in PORTS.items():
-    direction = MOTOR_DIRECTION[name]
-    print(f"\n{'='*50}")
-    print(f"  Testing: {name.upper()}  ({port})  direction={'NORMAL' if direction == 1 else 'REVERSED'}")
-    print(f"{'='*50}")
+print("\n=== MOTOR MAPPING TEST ===")
+print("Each motor will spin forward briefly.")
+print("Note which wheel moves and enter its position.\n")
+
+for port_index in range(4):
+    port = f"/dev/ttyMotor{port_index}"
+    print(f"\n--- Spinning motor on {port} ---")
 
     try:
         ser = serial.Serial(port=port, baudrate=BAUDRATE, timeout=TIMEOUT)
@@ -88,24 +66,42 @@ for name, port in PORTS.items():
     time.sleep(0.1)
     ser.reset_input_buffer()
 
-    cur = read_current(ser)
-    print(f"  [at rest]  current={cur}A")
-
-    ack = drive_duty(ser, MAX_DUTY_FRACTION, direction)
-    print(f"  Drive ACK ({int(MAX_DUTY_FRACTION*100)}% duty, value={TARGET_DUTY * direction}): {'✓' if ack else '✗ NACK'}")
-
-    for i in range(int(RUN_TIME / 0.5)):
-        time.sleep(0.5)
-        cur = read_current(ser)
-        print(f"  [t={0.5*(i+1):.1f}s]  current={cur}A")
-
-    drive_duty(ser, 0.0, direction)
-    time.sleep(0.3)
-    cur = read_current(ser)
-    print(f"  [stopped]  current={cur}A")
-
+    # Spin forward at 20% for 2 seconds (no direction flip yet — raw forward)
+    ack = drive_duty(ser, MAX_DUTY_FRACTION, direction=1)
+    print(f"  Drive ACK: {'✓' if ack else '✗ NACK'}")
+    time.sleep(2.0)
+    drive_duty(ser, 0.0)
     ser.close()
-    print(f"  Port closed. Waiting 1s before next motor...")
+
+    # Ask user which wheel moved
+    print("  Which wheel just moved?")
+    print("    1) front_left")
+    print("    2) front_right")
+    print("    3) rear_left")
+    print("    4) rear_right")
+    print("    s) skip")
+    choice = input("  > ").strip().lower()
+
+    label_map = {
+        "1": "front_left",
+        "2": "front_right",
+        "3": "rear_left",
+        "4": "rear_right",
+    }
+
+    if choice in label_map:
+        mapping[label_map[choice]] = port
+        print(f"  Mapped {label_map[choice]} -> {port}")
+    else:
+        print("  Skipped.")
+
     time.sleep(1.0)
 
-print("\n=== All motors tested ===")
+# Print results
+print("\n=== MAPPING RESULTS ===")
+print("Update your PORTS dict to:\n")
+print("PORTS = {")
+for label in ["front_left", "front_right", "rear_left", "rear_right"]:
+    port = mapping.get(label, "UNKNOWN")
+    print(f'    "{label}": "{port}",')
+print("}")

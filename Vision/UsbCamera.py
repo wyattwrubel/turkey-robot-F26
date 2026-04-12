@@ -3,18 +3,18 @@ import cv2
 
 
 # ── Camera settings — edit these ─────────────────────────────────────────────
-DEVICE_INDEX = 1
+DEVICE_PATH  = "/dev/video_camera"
 WIDTH        = 640
 HEIGHT       = 480
 FPS          = 10       # keep in sync with CAMERA_FPS in Vision.py
 FOURCC       = "MJPG"   # MJPG recommended for USB2.0
-BACKEND      = "v4l2" #"dshow"    # "v4l2" on Pi, "dshow" on Windows, "auto" for either
+BACKEND      = "v4l2"   # "v4l2" on Pi, "dshow" on Windows, "auto" for either
 # ─────────────────────────────────────────────────────────────────────────────
 
 
 class USBCamera:
     def __init__(self):
-        self.device_index = DEVICE_INDEX
+        self.device_path  = DEVICE_PATH
         self.width        = WIDTH
         self.height       = HEIGHT
         self.fps          = FPS
@@ -24,18 +24,18 @@ class USBCamera:
 
     def _create_capture(self):
         if self.backend == "dshow":
-            return cv2.VideoCapture(self.device_index, cv2.CAP_DSHOW)
+            return cv2.VideoCapture(self.device_path, cv2.CAP_DSHOW)
         elif self.backend == "msmf":
-            return cv2.VideoCapture(self.device_index, cv2.CAP_MSMF)
+            return cv2.VideoCapture(self.device_path, cv2.CAP_MSMF)
         elif self.backend == "v4l2":
-            return cv2.VideoCapture(self.device_index, cv2.CAP_V4L2)
+            return cv2.VideoCapture(self.device_path, cv2.CAP_V4L2)
         else:
-            return cv2.VideoCapture(self.device_index)
+            return cv2.VideoCapture(self.device_path)
 
     def open(self) -> None:
         self.cap = self._create_capture()
         if not self.cap.isOpened():
-            raise RuntimeError(f"[Camera] Failed to open camera index {self.device_index}")
+            raise RuntimeError(f"[Camera] Failed to open camera at {self.device_path}")
 
         # Attempt A: set FOURCC first, then resolution/FPS
         self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*self.fourcc))
@@ -49,7 +49,7 @@ class USBCamera:
             self.release()
             self.cap = self._create_capture()
             if not self.cap.isOpened():
-                raise RuntimeError(f"[Camera] Failed to reopen camera index {self.device_index}")
+                raise RuntimeError(f"[Camera] Failed to reopen camera at {self.device_path}")
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH,  self.width)
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
             self.cap.set(cv2.CAP_PROP_FPS,          self.fps)
@@ -78,7 +78,7 @@ class USBCamera:
             if fourcc_int > 0 else "UNKNOWN"
         )
         return {
-            "device_index": self.device_index,
+            "device_path": self.device_path,
             "width":  int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
             "height": int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
             "fps":    self.cap.get(cv2.CAP_PROP_FPS),

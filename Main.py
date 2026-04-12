@@ -74,7 +74,7 @@ async def main():
     MPCFeedback_Navigation_pub = AsyncPublisher("Nav_MPC")
 
     # UWB
-    UWB_UWBPublisher_pub = AsyncPublisher("UWB")
+    GPS_GPSPublisher_pub = AsyncPublisher("GPS")
 
     # Accelerometer
     Accelerometer_AccelPublisher_pub = AsyncPublisher("IMU")
@@ -96,9 +96,9 @@ async def main():
 
     StatePlanner = StatePlannerReceiver(MacroState_StatePlanner, Canine_StatePlanner_pub, MotionCommand_StatePlanner_pub, Verbose=False)
 
-    PositionDriver = PositioningDriver(UWB_UWBPublisher_pub, Mode="GPS", Simulation=True, Verbose=True)
+    PositionDriver = PositioningDriver(GPS_GPSPublisher_pub, Simulation=True, Verbose=True)
 
-    Accelerometer = IMUDriver(Accelerometer_AccelPublisher_pub, Simulation=False, Log=True)
+    Accelerometer = IMUDriver(Accelerometer_AccelPublisher_pub, Simulation=True, Log=False)
 
     UserInterface = CDSControlServer(DriveCommand_UI_pub, Canine_UI_pub, MacroState_UI_pub, MotionCommand_UI_pub)
 
@@ -154,9 +154,9 @@ async def main():
     """MPCFeedback"""
     MPCFeedback_Navigation_pub.subscribe(UserInterface.diagnostics.TrajectoryTracker_Receiver)
 
-    """UWB X,Y Values"""
-    UWB_UWBPublisher_pub.subscribe(Drivetrain.Drivetrain_UWBReceiver)
-    UWB_UWBPublisher_pub.subscribe(UserInterface.diagnostics.UWB_Sensors_Receiver)
+    """GPS X,Y Values"""
+    GPS_GPSPublisher_pub.subscribe(Drivetrain.Drivetrain_UWBReceiver)
+    GPS_GPSPublisher_pub.subscribe(UserInterface.diagnostics.UWB_Sensors_Receiver)
 
     """Accelerometer Theta Values"""
     Accelerometer_AccelPublisher_pub.subscribe(Drivetrain.Drivetrain_AccelReceiver)

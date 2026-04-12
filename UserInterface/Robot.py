@@ -84,8 +84,7 @@ class Robot:
         self.cmd_left, self.cmd_right = left, right
 
     def set_speed(self, speed):
-        # self.speed_limit = speed
-        self.speed_limit = 3
+        self.speed_limit = speed
 
     def set_drivetrain_status(self, status: int) -> None:
         assert status in (0, 1, 2), f"drivetrain_status must be 0, 1, or 2 — got {status}"
