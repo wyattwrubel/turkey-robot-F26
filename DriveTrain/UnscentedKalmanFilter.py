@@ -175,6 +175,7 @@ class UKF:
         # self.x     = self.x + K.flatten() * innovation
         # self.x[2]  = self._wrap_angle(self.x[2])
         # self.P     = self.P - K @ Pyy @ K.T
+        
         self.x[2] = accel_theta
 
     @property

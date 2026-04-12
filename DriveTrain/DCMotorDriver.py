@@ -9,51 +9,45 @@ class DC_Driver:
     Hardware layout -- 4 RoboClaw Solo 60A units, each on its own serial port,
     each controlling a single motor on M1:
 
-      front_left  : port_fl  (default /dev/ttyACM0)
-      front_right : port_fr  (default /dev/ttyACM1)
-      rear_left   : port_rl  (default /dev/ttyACM2)
-      rear_right  : port_rr  (default /dev/ttyACM3)
+      front_left  : port_fl  (default /dev/ttyMotor0)
+      front_right : port_fr  (default /dev/ttyMotor1)
+      rear_left   : port_rl  (default /dev/ttyMotor2)
+      rear_right  : port_rr  (default /dev/ttyMotor3)
 
     All four units share the same address (0x80) since they are on
     independent serial buses. All communication uses RoboClaw Packet
     Serial mode -- every transmitted packet (including read requests)
     must be terminated with a CRC16-CCITT checksum.
 
-    OPEN LOOP MODE:
-    Drive command is cmd 32 (Drive M1 With Signed Duty Cycle).
-    Duty is a signed 16-bit int: -32767 to +32767.
-    Max physical speed (4.0 m/s) is mapped to 0.3 duty fraction,
-    i.e. duty = (v / 4.0) * 0.3 * 32767.
+    CLOSED LOOP MODE (cmd 35 -- Drive M1 With Signed Speed):
+    Speed is a signed 32-bit int in encoder counts/sec.
+    Conversion: counts/sec = (v / (2π * wheel_radius)) * encoder_CPR_effective
+    where encoder_CPR_effective = encoder_CPR * 4  (full quadrature, 4x mode).
+
+    PID gains are sent to the RoboClaw at startup via cmd 28 (SetM1VelocityPID).
+    Tune these via the class-level variables below. QPPS is the maximum expected
+    encoder speed in counts/sec -- it acts as the feedforward ceiling.
+
+    ---- TUNING GUIDE ----
+    1. Start with P only (I=0, D=0). Increase P until the robot tracks velocity
+       commands with acceptable responsiveness without oscillating.
+    2. Add I slowly to eliminate steady-state error (robot not reaching target speed).
+       Too much I causes wind-up and overshoot.
+    3. Add D only if you see overshoot. Encoder noise amplifies D -- keep it small.
+    4. QPPS should match your actual max encoder speed at full throttle. If the robot
+       stalls or behaves erratically at high speeds, reduce QPPS.
+    ----------------------
 
     Left-side motors are physically mirrored so their direction is
     negated in software via motor_directions. Right side is correct.
 
-    Speed reads (AverageLinearSpeed) still use the encoder feedback
-    via cmd 18 and convert counts/sec back to m/s. The direction
-    sign flip is applied on read as well so returned speeds are
-    always in the robot frame (positive = forward).
-
-    ---- CLOSED LOOP (original implementation, kept for reference) ----
-    # _CMD_M1_DRIVE_SPEED = 35   -- Drive M1 with signed encoder counts/sec
-    #
-    # def _DriveMotor_ClosedLoop(self, ser, velocity):
-    #     if abs(velocity) > self.max_linear_speed:
-    #         velocity = math.copysign(self.max_linear_speed, velocity)
-    #     rev_per_sec    = velocity / (2.0 * math.pi * self.wheel_radius)
-    #     counts_per_sec = int(rev_per_sec * self.encoder_CPR)
-    #     counts_per_sec = max(-2_147_483_648, min(2_147_483_647, counts_per_sec))
-    #     payload     = counts_per_sec.to_bytes(4, byteorder='big', signed=True)
-    #     packet      = bytes([self._ADR, 35]) + payload
-    #     crc         = self._crc16(packet)
-    #     full_packet = packet + bytes([crc >> 8, crc & 0xFF])
-    #     ser.write(full_packet)
-    #     ack = ser.read(1)
-    #     if ack != b'\xFF':
-    #         print(f"[DC_Driver] NACK on port {ser.port}")
-    # ------------------------------------------------------------------
+    Speed reads (AverageLinearSpeed) use encoder feedback via cmd 18
+    and convert counts/sec back to m/s. The direction sign flip is
+    applied on read as well so returned speeds are always in the robot
+    frame (positive = forward).
     """
 
-    # Serial ports
+    # ── Serial ports ──────────────────────────────────────────────────
     port_fl = "/dev/ttyMotor0"
     port_fr = "/dev/ttyMotor1"
     port_rl = "/dev/ttyMotor2"
@@ -62,17 +56,35 @@ class DC_Driver:
     baudrate = 115200
     timeout  = 0.1
 
-    # Physical speed limit -- used for input clamping and speed read conversion
-    max_linear_speed = 5.0   # m/s
-    encoder_CPR      = 1024  # quadrature counts per revolution
-    wheel_radius     = 0.08  # metres
+    # ── Physical parameters ───────────────────────────────────────────
+    max_linear_speed = 5.0    # m/s -- used for input clamping only
+    wheel_radius     = 0.08   # metres
 
-    # Open-loop scaling:
-    # 0.3 duty fraction corresponds to max_linear_speed (4.0 m/s)
-    max_duty_fraction = 1
-    max_duty_value    = 32767  # signed 16-bit ceiling for cmd 32
+    encoder_CPR          = 256
+    encoder_quadrature_x = 4
+    encoder_CPR_effective = encoder_CPR * encoder_quadrature_x   # 4096
 
-    # Left motors are physically mirrored -- negate their duty and speed reads
+    # ── Velocity PID gains (sent to RoboClaw at startup via cmd 28) ───
+    #
+    # QPPS: max encoder counts/sec at full speed
+    #   = (max_linear_speed / (2π * wheel_radius)) * encoder_CPR_effective
+    #   = (5.0 / 0.5027) * 4096 ≈ 40,744 → rounded to 41000
+    #
+    # P, I, D: RoboClaw encodes these as uint32 = float * 65536 internally.
+    #   Pass floats here -- _SetPID() handles the encoding.
+    #
+    # CONSERVATIVE STARTING VALUES -- tune on the bench:
+    #   P: increase first until tracking is responsive but stable
+    #   I: add slowly to eliminate steady-state error
+    #   D: leave at 0 until P+I are tuned; encoder noise amplifies D
+    #
+    pid_QPPS = 41000   # counts/sec  ← update if max speed changes
+    pid_P    = 0.3     # proportional gain
+    pid_I    = 0.15    # integral gain
+    pid_D    = 0.0     # derivative gain (start at 0, tune last)
+
+    # ── Motor direction map ───────────────────────────────────────────
+    # Left motors are physically mirrored -- negate their speed command
     motor_directions = {
         "fl": -1,
         "fr":  1,
@@ -80,11 +92,15 @@ class DC_Driver:
         "rr":  1,
     }
 
-    _ADR               = 0x80
-    _CMD_M1_DUTY       = 32
-    _CMD_M1_READ_SPEED = 18
-    _CMD_READ_CURRENTS = 49
+    # ── RoboClaw protocol constants ───────────────────────────────────
+    _ADR                  = 0x80
+    _CMD_M1_DRIVE_SPEED   = 35    # closed-loop signed counts/sec
+    _CMD_M1_SET_PID       = 28    # SetM1VelocityPID
+    _CMD_M1_READ_SPEED    = 18    # read M1 encoder speed
+    _CMD_READ_CURRENTS    = 49    # read M1+M2 currents
 
+    # ── Max counts/sec ceiling (safety clamp on command) ─────────────
+    _MAX_COUNTS_PER_SEC = 2_147_483_647   # signed 32-bit max
 
     def __init__(self):
         self._ser_fl = serial.Serial(port=self.port_fl, baudrate=self.baudrate, timeout=self.timeout)
@@ -92,18 +108,22 @@ class DC_Driver:
         self._ser_rl = serial.Serial(port=self.port_rl, baudrate=self.baudrate, timeout=self.timeout)
         self._ser_rr = serial.Serial(port=self.port_rr, baudrate=self.baudrate, timeout=self.timeout)
 
+        # Push PID gains to all four controllers at startup
+        for ser in (self._ser_fl, self._ser_fr, self._ser_rl, self._ser_rr):
+            self._SetPID(ser)
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
     def UpdateMotorSpeeds(self, MotorSpeed: list) -> None:
         """
-        Command all four wheels simultaneously using open-loop duty control.
+        Command all four wheels simultaneously using closed-loop velocity control.
 
         Args:
             MotorSpeed: [left_speed_m_s, right_speed_m_s]
-                        Positive = forward. Clamped to +/- max_linear_speed.
-                        Scaled to duty: 4.0 m/s -> 0.3 duty fraction -> int 9830.
+                        Positive = forward. Clamped to ±max_linear_speed.
+                        Converted to encoder counts/sec for cmd 35.
         """
         left_v, right_v = MotorSpeed[0], MotorSpeed[1]
 
@@ -117,8 +137,7 @@ class DC_Driver:
         Read back encoder speeds and return the average for each side.
 
         The direction sign flip is applied per motor so that the returned
-        values are always in the robot frame (positive = forward), matching
-        the convention used by UpdateMotorSpeeds.
+        values are always in the robot frame (positive = forward).
 
         Returns:
             (left_speed_m_s, right_speed_m_s)
@@ -153,34 +172,71 @@ class DC_Driver:
     # Private helpers
     # ------------------------------------------------------------------
 
-    def _DriveMotor(self, ser: serial.Serial, velocity: float, direction: int) -> None:
+    def _SetPID(self, ser: serial.Serial) -> None:
         """
-        Send an open-loop M1 duty command to one RoboClaw Solo.
+        Send velocity PID gains to one RoboClaw Solo (cmd 28, SetM1VelocityPID).
 
-        Scaling:
-            duty_fraction = (velocity / max_linear_speed) * max_duty_fraction
-            duty_int      = direction * duty_fraction * max_duty_value
+        Packet format: [addr, 28, D(4), P(4), I(4), QPPS(4), CRC16(2)]
+        Each float gain is encoded as uint32 = round(gain * 65536).
+        QPPS is an unsigned 32-bit integer (max counts/sec).
 
-        At max_linear_speed (4.0 m/s):
-            duty_fraction = 1.0 * 0.3 = 0.3
-            duty_int      = 0.3 * 32767 = 9830
+        Response: [0xFF]  (ACK)
 
-        Packet format: [addr, 32, duty_BE_signed_16, CRC16_BE]
-        Response:      [0xFF]  (ACK)
+        Note: gains are stored in RoboClaw EEPROM only if you issue a
+        WriteNVM command after this call. Here we set RAM values only --
+        they reset on power cycle. This is intentional so code is always
+        the source of truth for gains.
         """
-        velocity  = max(-self.max_linear_speed, min(self.max_linear_speed, velocity))
+        def float_to_u32(f: float) -> int:
+            return max(0, min(0xFFFFFFFF, round(f * 65536)))
 
-        duty_fraction = (velocity / self.max_linear_speed) * self.max_duty_fraction
-        duty_int      = int(direction * duty_fraction * self.max_duty_value)
-        duty_int      = max(-self.max_duty_value, min(self.max_duty_value, duty_int))
+        d_enc    = float_to_u32(self.pid_D)
+        p_enc    = float_to_u32(self.pid_P)
+        i_enc    = float_to_u32(self.pid_I)
+        qpps_enc = max(0, min(0xFFFFFFFF, int(self.pid_QPPS)))
 
-        payload     = duty_int.to_bytes(2, byteorder='big', signed=True)
-        packet      = bytes([self._ADR, self._CMD_M1_DUTY]) + payload
+        payload = (
+            d_enc.to_bytes(4, byteorder='big')
+            + p_enc.to_bytes(4, byteorder='big')
+            + i_enc.to_bytes(4, byteorder='big')
+            + qpps_enc.to_bytes(4, byteorder='big')
+        )
+        packet      = bytes([self._ADR, self._CMD_M1_SET_PID]) + payload
         crc         = self._crc16(packet)
         full_packet = packet + bytes([crc >> 8, crc & 0xFF])
 
         ser.write(full_packet)
+        ack = ser.read(1)
+        if ack != b'\xFF':
+            print(f"[DC_Driver] PID set NACK on port {ser.port} "
+                  f"(P={self.pid_P}, I={self.pid_I}, D={self.pid_D}, QPPS={self.pid_QPPS})")
 
+    def _DriveMotor(self, ser: serial.Serial, velocity: float, direction: int) -> None:
+        """
+        Send a closed-loop M1 velocity command to one RoboClaw Solo (cmd 35).
+
+        Conversion:
+            rev_per_sec    = velocity / (2π * wheel_radius)
+            counts_per_sec = rev_per_sec * encoder_CPR_effective
+                           = rev_per_sec * (encoder_CPR * 4)
+
+        The direction sign flip accounts for physically mirrored motors.
+
+        Packet format: [addr, 35, speed_BE_signed_32, CRC16_BE]
+        Response:      [0xFF]  (ACK)
+        """
+        velocity = max(-self.max_linear_speed, min(self.max_linear_speed, velocity))
+
+        rev_per_sec    = velocity / (2.0 * math.pi * self.wheel_radius)
+        counts_per_sec = int(direction * rev_per_sec * self.encoder_CPR_effective)
+        counts_per_sec = max(-self._MAX_COUNTS_PER_SEC, min(self._MAX_COUNTS_PER_SEC, counts_per_sec))
+
+        payload     = counts_per_sec.to_bytes(4, byteorder='big', signed=True)
+        packet      = bytes([self._ADR, self._CMD_M1_DRIVE_SPEED]) + payload
+        crc         = self._crc16(packet)
+        full_packet = packet + bytes([crc >> 8, crc & 0xFF])
+
+        ser.write(full_packet)
         ack = ser.read(1)
         if ack != b'\xFF':
             print(f"[DC_Driver] NACK on port {ser.port}")
@@ -192,10 +248,9 @@ class DC_Driver:
         Request packet:  [addr, 18, CRC16_BE]
         Response:        [speed_BE_signed_32 (4), status (1), CRC16_BE (2)]  = 7 bytes
 
-        The 4-byte speed value is a signed two's-complement integer.
-        direction is applied to the result so the returned speed is always
-        in the robot frame (positive = forward), cancelling out the physical
-        mirror flip on the left-side motors.
+        The 4-byte speed is signed counts/sec in the RoboClaw's quadrature
+        count domain. Converted back to m/s and direction-corrected so the
+        returned value is always in the robot frame (positive = forward).
 
         Returns linear speed in m/s, or None on failure.
         """
@@ -218,7 +273,7 @@ class DC_Driver:
             return None
 
         pulses_per_sec = int.from_bytes(response[0:4], byteorder='big', signed=True)
-        rev_per_sec    = pulses_per_sec / self.encoder_CPR
+        rev_per_sec    = pulses_per_sec / self.encoder_CPR_effective
         linear_speed   = direction * rev_per_sec * (2.0 * math.pi * self.wheel_radius)
 
         return linear_speed
