@@ -60,13 +60,66 @@ class CDSControlServer:
         )
 
         self.connections: set[WebSocket] = set()
+        self._video_queues:  dict[WebSocket, asyncio.Queue] = {}
+        self._video_workers: dict[WebSocket, asyncio.Task]  = {}
         self.app = self._build_app()
+
+    # ------------------------------------------------------------------
+    # Per-client video queue management
+    # ------------------------------------------------------------------
+
+    def _add_client(self, ws: WebSocket) -> None:
+        q = asyncio.Queue(maxsize=1)
+        self._video_queues[ws] = q
+        self._video_workers[ws] = asyncio.create_task(
+            self._video_worker(ws, q)
+        )
+
+    def _remove_client(self, ws: WebSocket) -> None:
+        self.connections.discard(ws)
+        if ws in self._video_workers:
+            self._video_workers.pop(ws).cancel()
+        self._video_queues.pop(ws, None)
+
+    async def _video_worker(self, ws: WebSocket, q: asyncio.Queue) -> None:
+        """Drains one client's video queue. Blocking here only affects this client."""
+        while True:
+            frame_text = await q.get()
+            if ws.client_state != WebSocketState.CONNECTED:
+                self._remove_client(ws)
+                return
+            try:
+                await ws.send_text(frame_text)
+            except Exception as e:
+                print(f"[WS] Video worker error, dropping client: {e}")
+                self._remove_client(ws)
+                return
 
     # ------------------------------------------------------------------
     # Broadcast
     # ------------------------------------------------------------------
 
+    async def _broadcast_video(self, msg: dict) -> None:
+        """Non-blocking video broadcast — drops stale frames if client is behind."""
+        try:
+            text = _to_json(msg)
+        except TypeError as e:
+            print(f"[Broadcast] Video serialization error: {e}")
+            return
+
+        for ws, q in list(self._video_queues.items()):
+            if q.full():
+                try:
+                    q.get_nowait()      # evict stale frame
+                except asyncio.QueueEmpty:
+                    pass
+            try:
+                q.put_nowait(text)
+            except asyncio.QueueFull:
+                pass                    # race condition — skip
+
     async def _broadcast(self, msg: dict) -> None:
+        """State/control broadcast — small messages, sent directly."""
         if not self.connections:
             return
         try:
@@ -81,17 +134,16 @@ class CDSControlServer:
         )
 
     async def _safe_send(self, ws: WebSocket, text: str) -> None:
-        # Guard against sending to a connection that isn't fully open
         if ws.client_state != WebSocketState.CONNECTED:
-            self.connections.discard(ws)
+            self._remove_client(ws)
             return
         try:
             await asyncio.wait_for(ws.send_text(text), timeout=2)
         except (asyncio.TimeoutError, WebSocketDisconnect, AssertionError):
-            self.connections.discard(ws)
+            self._remove_client(ws)
             print(f"[WS] Removed dead client {ws.client.host}:{ws.client.port}")
         except Exception as e:
-            self.connections.discard(ws)
+            self._remove_client(ws)
             print(f"[WS] Client error, removed: {type(e).__name__}: {e}")
 
     # ------------------------------------------------------------------
@@ -102,7 +154,7 @@ class CDSControlServer:
         await self.diagnostics.VisionObject_Receiver(data, self._broadcast)
 
     async def VideoFeed_Receiver(self, data) -> None:
-        await self.camera.VideoFeed_Receiver(data, self._broadcast)
+        await self.camera.VideoFeed_Receiver(data, self._broadcast_video)
 
     # ------------------------------------------------------------------
     # 10 Hz state broadcast
@@ -153,6 +205,7 @@ class CDSControlServer:
         @asynccontextmanager
         async def lifespan(app: FastAPI):
             print("[SERVER] Starting — http://localhost:8000")
+            self.camera.start(self._broadcast_video)
             asyncio.create_task(self._broadcast_state())
             yield
 
@@ -178,8 +231,6 @@ class CDSControlServer:
             await ws.accept()
             print(f"[WS] Connected    {ws.client.host}:{ws.client.port}")
 
-            # Sync before adding to connections — prevents _broadcast_state
-            # from hitting this client before it's ready
             try:
                 for coro in [
                     self.controls.sync_client(ws),
@@ -195,10 +246,10 @@ class CDSControlServer:
 
             except Exception as e:
                 print(f"[WS] Sync failed, dropping client: {type(e).__name__}: {e}")
-                return  # don't add to connections if sync failed
+                return
 
-            # Only add to broadcast pool once fully ready
             self.connections.add(ws)
+            self._add_client(ws)
 
             try:
                 while True:
@@ -209,6 +260,6 @@ class CDSControlServer:
             except Exception as e:
                 print(f"[WS] Error: {type(e).__name__}: {e}")
             finally:
-                self.connections.discard(ws)
+                self._remove_client(ws)
 
         return app

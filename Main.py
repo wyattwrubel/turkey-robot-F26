@@ -84,7 +84,7 @@ async def main():
     # SOFTWARE MODULES
     # ─────────────────────────────────────────────────────────────────────────
 
-    Vision = VisionObject(VideoFeed_Vision_pub, VisionObject_Vision_pub, Simulated=False)
+    Vision = VisionObject(VideoFeed_Vision_pub, VisionObject_Vision_pub, Simulated=False, Verbose=False)
 
     TestVision = FakeVision(TESTING_VideoFeed_Vision_pub, TESTING_VisionObject_Vision_pub)
 

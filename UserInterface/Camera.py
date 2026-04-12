@@ -13,56 +13,76 @@ class PanelCamera:
 
     def __init__(self):
         self._current_frame: str | None = None
+        self._frame_event = asyncio.Event()
         self._broadcast_fn = None
+        self._loop_task: asyncio.Task | None = None
+
+    # ── Start broadcast loop (call once after the event loop is running) ──────
+
+    def start(self, broadcast_fn) -> None:
+        """Call this from the FastAPI lifespan, after the event loop exists."""
+        self._broadcast_fn = broadcast_fn
+        self._loop_task = asyncio.create_task(self._broadcast_loop())
 
     # ── Inbound receiver ──────────────────────────────────────────────────────
 
     async def VideoFeed_Receiver(self, data, broadcast_fn) -> None:
         """
-        Accepts either raw JPEG bytes or an already-base64-encoded string.
-        Stores frame immediately, then broadcasts to clients in the background
-        so a slow client never stalls the next incoming frame.
+        Stores the latest frame and signals the broadcast loop.
+        Never spawns tasks — just updates the slot and sets an event.
+        If frames arrive faster than the loop can send, intermediate
+        frames are naturally dropped (only latest is kept).
         """
+        if self._loop_task is None:
+            self.start(broadcast_fn)
+
         if isinstance(data, (bytes, bytearray)):
             b64 = base64.b64encode(data).decode("ascii")
         else:
             b64 = str(data)
 
-        self._current_frame = b64
+        self._current_frame = b64      # overwrite — only latest matters
+        self._frame_event.set()        # wake the broadcast loop
 
-        # Fire and forget — don't await broadcast, so slow clients
-        # can't back up the receiver and stall the video pipeline
-        asyncio.create_task(
-            self._broadcast_latest(broadcast_fn, b64)
-        )
+    # ── Single long-running broadcast loop ───────────────────────────────────
 
-    async def _broadcast_latest(self, broadcast_fn, b64: str) -> None:
+    async def _broadcast_loop(self) -> None:
         """
-        Broadcasts to all clients. Each client gets a timeout so one
-        frozen browser can't hang everyone else.
+        Wakes whenever a new frame arrives, broadcasts it once, then sleeps.
+        This serializes all video sends through a single coroutine, so
+        there's no task pile-up and backpressure is implicit.
         """
-        try:
-            await asyncio.wait_for(
-                broadcast_fn({"type": "frame", "image": b64}),
-                timeout=0.3,   # drop frame to this client if it can't receive in 300ms
-            )
-        except asyncio.TimeoutError:
-            pass  # slow client — frame dropped, next one will come
-        except Exception as e:
-            print(f"[PanelCamera] Broadcast error: {e}")
+        while True:
+            await self._frame_event.wait()
+            self._frame_event.clear()
+
+            frame = self._current_frame
+            if frame is None or self._broadcast_fn is None:
+                continue
+
+            try:
+                await asyncio.wait_for(
+                    self._broadcast_fn({"type": "frame", "image": frame}),
+                    timeout=0.15,   # whole-broadcast budget; tune to your fps target
+                )
+            except asyncio.TimeoutError:
+                pass   # fell behind — next frame will catch up
+            except Exception as e:
+                print(f"[PanelCamera] Broadcast error: {e}")
 
     # ── On-connect sync ───────────────────────────────────────────────────────
 
     async def sync_client(self, ws: WebSocket) -> None:
         """Send the latest frame to a newly connected client, if one exists."""
-        if self._current_frame:
-            try:
-                await asyncio.wait_for(
-                    ws.send_text(json.dumps({
-                        "type":  "frame",
-                        "image": self._current_frame,
-                    })),
-                    timeout=1.0,
-                )
-            except (asyncio.TimeoutError, Exception) as e:
-                print(f"[PanelCamera] sync_client error: {e}")
+        if self._current_frame is None:
+            return
+        try:
+            await asyncio.wait_for(
+                ws.send_text(json.dumps({
+                    "type":  "frame",
+                    "image": self._current_frame,
+                })),
+                timeout=1.0,
+            )
+        except Exception as e:
+            print(f"[PanelCamera] sync_client error: {e}")
