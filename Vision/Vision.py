@@ -43,6 +43,12 @@ _latest_detections is cleared and the clean frame is published.
 If the laptop disconnects, _latest_detections is cleared immediately so stale
 boxes don't persist on screen indefinitely.
 
+Annotation style
+----------------
+Each class has a distinct BGR color. Bounding boxes have a semi-transparent
+filled overlay (25% opacity) inside, a solid border, and a label with a filled
+background rect and black outline pass for legibility at low JPEG quality.
+
 Simulated=True  → no camera opened; laptop_client.py drives everything via WASD sim.
 Simulated=False → camera opens immediately and starts streaming.
 
@@ -73,15 +79,25 @@ from websockets.server import WebSocketServerProtocol
 # ── Settings — edit these ─────────────────────────────────────────────────────
 VIDEO_PORT   = 8765
 DETECT_PORT  = 8766
-CAMERA_FPS   = 10          # raw frame broadcast rate
+CAMERA_FPS   = 10
 JPEG_QUALITY = 40
 
-# Annotation appearance (mirrors yolo_detector.annotate on the laptop)
-BBOX_COLOR     = (0, 255, 0)
-BBOX_THICKNESS = 2
-FONT           = cv2.FONT_HERSHEY_SIMPLEX
-FONT_SCALE     = 0.6
-FONT_THICKNESS = 2
+# Per-class colors in BGR
+CLASS_COLORS = {
+    "turkey":  (0,   165, 255),   # amber/orange
+    "person":  (255, 100,   0),   # blue
+    "vehicle": (0,     0, 220),   # red
+}
+DEFAULT_COLOR = (0, 255, 0)       # green fallback for unknown classes
+
+BBOX_THICKNESS  = 2
+FILL_ALPHA      = 0.25            # opacity of the filled box interior
+
+FONT            = cv2.FONT_HERSHEY_SIMPLEX
+FONT_SCALE      = 0.65
+FONT_THICKNESS  = 2               # foreground text stroke
+OUTLINE_OFFSETS = [(-1,-1),(1,-1),(-1,1),(1,1)]  # 4-direction black outline
+LABEL_PAD       = 4               # pixels of padding inside the label background rect
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -107,28 +123,20 @@ class VisionObject:
         self.debug_print  = debug_print
         self.Simulated    = Simulated
 
-        # Latest robot pose [X, Y, theta] — updated via RobotPose_Receiver
         self._robot_pose      = np.array([0.0, 0.0, 0.0])
         self._robot_pose_lock = threading.Lock()
 
-        # Latest raw frame bytes — stored for the initial client sync frame
         self._latest_raw_frame: bytes | None = None
         self._raw_frame_lock = threading.Lock()
 
-        # Last known detections from the laptop.
-        # Applied to every camera frame. Replaced on each laptop message.
-        # Cleared to [] only when the laptop sends an empty list, or disconnects.
         self._latest_detections: list = []
         self._detections_lock = threading.Lock()
 
-        # Connected /video clients
         self._video_clients: set = set()
-        self._video_lock = None   # asyncio.Lock — created inside event loop
+        self._video_lock = None
 
-        # Capture the caller's event loop (uvicorn/main — loop A).
         self._main_loop: asyncio.AbstractEventLoop = asyncio.get_event_loop()
 
-        # Start Vision's private async event loop on its own thread (loop B)
         self._loop = asyncio.new_event_loop()
         self._loop_thread = threading.Thread(
             target=self._run_loop, daemon=True, name="VisionLoop"
@@ -140,10 +148,6 @@ class VisionObject:
     # ------------------------------------------------------------------
 
     def _publish_to_main(self, coro, label: str = "publish") -> None:
-        """
-        Schedule a coroutine onto loop A (uvicorn/main) from loop B (VisionLoop).
-        Blocks until the coroutine completes or times out, then returns.
-        """
         future = asyncio.run_coroutine_threadsafe(coro, self._main_loop)
         try:
             future.result(timeout=1.0)
@@ -153,7 +157,7 @@ class VisionObject:
             print(f"[Vision] {label} error: {e}")
 
     # ------------------------------------------------------------------
-    # RobotPose receiver  (Protocol 4: 1x3 numpy [X, Y, theta_rad])
+    # RobotPose receiver
     # ------------------------------------------------------------------
 
     async def RobotPose_Receiver(self, pose_array):
@@ -172,9 +176,6 @@ class VisionObject:
     # ------------------------------------------------------------------
 
     def _to_world(self, x_cam: float, y_cam: float):
-        """
-        Convert camera-local (x_cam right, y_cam forward) to world frame.
-        """
         with self._robot_pose_lock:
             rx, ry, rtheta = self._robot_pose
 
@@ -192,21 +193,67 @@ class VisionObject:
 
     def _annotate(self, frame: np.ndarray, detections: list) -> np.ndarray:
         """
-        Draw bounding boxes onto a decoded frame in-place and return it.
-        Mirrors the annotation style of yolo_detector.annotate() on the laptop.
+        Draw per-class colored bounding boxes with:
+          - Semi-transparent filled interior (FILL_ALPHA)
+          - Solid border
+          - Label on a filled background rect
+          - Black outline pass on text for legibility at low JPEG quality
         """
         for det in detections:
             try:
                 x1, y1, x2, y2 = map(int, det["bbox"])
-                label = f"{det['class_name']} {det['confidence']:.2f}"
-                cv2.rectangle(frame, (x1, y1), (x2, y2), BBOX_COLOR, BBOX_THICKNESS)
+                class_name      = det["class_name"]
+                confidence      = det["confidence"]
+                color           = CLASS_COLORS.get(class_name, DEFAULT_COLOR)
+                label           = f"{class_name} {confidence:.2f}"
+
+                # ── Semi-transparent fill ──────────────────────────────
+                overlay = frame.copy()
+                cv2.rectangle(overlay, (x1, y1), (x2, y2), color, cv2.FILLED)
+                cv2.addWeighted(overlay, FILL_ALPHA, frame, 1 - FILL_ALPHA, 0, frame)
+
+                # ── Solid border ───────────────────────────────────────
+                cv2.rectangle(frame, (x1, y1), (x2, y2), color, BBOX_THICKNESS)
+
+                # ── Label background rect ──────────────────────────────
+                (tw, th), baseline = cv2.getTextSize(
+                    label, FONT, FONT_SCALE, FONT_THICKNESS
+                )
+                label_y  = max(y1 - 1, th + LABEL_PAD * 2)
+                label_x1 = x1
+                label_x2 = x1 + tw + LABEL_PAD * 2
+                label_y1 = label_y - th - LABEL_PAD * 2
+                label_y2 = label_y + baseline
+
+                cv2.rectangle(
+                    frame,
+                    (label_x1, label_y1),
+                    (label_x2, label_y2),
+                    color, cv2.FILLED,
+                )
+
+                # ── Text: black outline pass then colored foreground ───
+                text_x = x1 + LABEL_PAD
+                text_y = label_y - LABEL_PAD
+
+                for dx, dy in OUTLINE_OFFSETS:
+                    cv2.putText(
+                        frame, label,
+                        (text_x + dx, text_y + dy),
+                        FONT, FONT_SCALE, (0, 0, 0), FONT_THICKNESS + 1,
+                        cv2.LINE_AA,
+                    )
+
                 cv2.putText(
                     frame, label,
-                    (x1, max(20, y1 - 8)),
-                    FONT, FONT_SCALE, BBOX_COLOR, FONT_THICKNESS,
+                    (text_x, text_y),
+                    FONT, FONT_SCALE, (255, 255, 255), FONT_THICKNESS,
+                    cv2.LINE_AA,
                 )
+
             except (KeyError, TypeError, ValueError) as e:
                 print(f"[Vision] Annotation error for det={det}: {e}")
+
         return frame
 
     # ------------------------------------------------------------------
@@ -230,7 +277,7 @@ class VisionObject:
         await asyncio.gather(*tasks)
 
     # ------------------------------------------------------------------
-    # Camera loop — only runs when Simulated=False
+    # Camera loop
     # ------------------------------------------------------------------
 
     async def _camera_loop(self):
@@ -252,11 +299,9 @@ class VisionObject:
                     await asyncio.sleep(0.1)
                     continue
 
-                # Snapshot detections under lock — don't hold lock during encode
                 with self._detections_lock:
                     detections = list(self._latest_detections)
 
-                # Annotate with last known detections (empty list = clean frame)
                 if detections:
                     frame = self._annotate(frame, detections)
 
@@ -299,7 +344,6 @@ class VisionObject:
         async with self._video_lock:
             self._video_clients.add(ws)
 
-        # Sync new client with the latest frame immediately
         with self._raw_frame_lock:
             latest = self._latest_raw_frame
         if latest:
@@ -311,8 +355,6 @@ class VisionObject:
         print(f"[Vision] Video client connected: {ws.remote_address}")
         try:
             async for message in ws:
-                # Laptop sends BBoxes JSON on this socket.
-                # Just update _latest_detections — the camera loop does the rest.
                 raw = message if isinstance(message, str) else message.decode("utf-8")
                 try:
                     payload = json.loads(raw)
@@ -332,7 +374,6 @@ class VisionObject:
         finally:
             async with self._video_lock:
                 self._video_clients.discard(ws)
-            # Laptop disconnected — clear overlays immediately
             with self._detections_lock:
                 self._latest_detections = []
             print(f"[Vision] Video client disconnected: {ws.remote_address}")

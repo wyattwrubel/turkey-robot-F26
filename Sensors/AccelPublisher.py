@@ -87,7 +87,7 @@ class DataLogger:
     ):
         if path is None:
             date_str = datetime.utcnow().strftime("%Y%m%dT%H%M%S")
-            path = f"imu_log_{date_str}.csv"
+            path = f"/home/turkeysquad/ME450/MainDesign/Sensors/AccelReadings/imu_log_{date_str}.csv"
 
         self.path        = path
         self.flush_every = flush_every
