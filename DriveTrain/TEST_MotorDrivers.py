@@ -20,7 +20,7 @@ TIMEOUT           = 0.1
 ADR               = 0x80
 CMD_CURRENT       = 49
 CMD_M1_DUTY       = 32
-MAX_DUTY_FRACTION = 0.8
+MAX_DUTY_FRACTION = 0.3
 MAX_DUTY_VALUE    = 32767
 
 def crc16(data: bytes) -> int:
@@ -83,9 +83,9 @@ for port_index in range(4):
     choice = input("  > ").strip().lower()
 
     label_map = {
-        # "1": "front_left",
-        # "2": "front_right",
-        # "3": "rear_left",
+        "1": "front_left",
+        "2": "front_right",
+        "3": "rear_left",
         "4": "rear_right",
     }
 

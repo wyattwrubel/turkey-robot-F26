@@ -21,22 +21,28 @@ class DC_Driver:
 
     CLOSED LOOP MODE (cmd 35 -- Drive M1 With Signed Speed):
     Speed is a signed 32-bit int in encoder counts/sec.
-    Conversion: counts/sec = (v / (2π * wheel_radius)) * encoder_CPR_effective
+    Conversion: counts/sec = (v / (2pi * wheel_radius)) * encoder_CPR_effective
     where encoder_CPR_effective = encoder_CPR * 4  (full quadrature, 4x mode).
 
-    PID gains are sent to the RoboClaw at startup via cmd 28 (SetM1VelocityPID).
-    Tune these via the class-level variables below. QPPS is the maximum expected
-    encoder speed in counts/sec -- it acts as the feedforward ceiling.
+    PID gains are tuned and stored directly on each RoboClaw unit via
+    BasicMicro Motion Studio. This driver does NOT write PID values at
+    startup -- the EEPROM values on each controller are the source of truth.
+    Use Motion Studio Auto Tune or manual tuning to set P, I, D, and QPPS
+    per unit. Changes survive power cycles automatically.
 
-    ---- TUNING GUIDE ----
-    1. Start with P only (I=0, D=0). Increase P until the robot tracks velocity
-       commands with acceptable responsiveness without oscillating.
-    2. Add I slowly to eliminate steady-state error (robot not reaching target speed).
-       Too much I causes wind-up and overshoot.
-    3. Add D only if you see overshoot. Encoder noise amplifies D -- keep it small.
-    4. QPPS should match your actual max encoder speed at full throttle. If the robot
-       stalls or behaves erratically at high speeds, reduce QPPS.
-    ----------------------
+    SPEED COMMAND ZONES (both sides evaluated together in UpdateMotorSpeeds):
+
+      Both |v| < ol_zero_threshold  (default 0.5 m/s):
+          Open-loop duty 0 (cmd 32). Bypasses PID entirely.
+          Prevents closed-loop oscillation when robot should be stopped.
+
+      Both |v| < snap_threshold  (default 1.0 m/s):
+          Closed-loop cmd 35 at exact speed, no ramp.
+          Enforced upstream in MotorDriver._ramp_speeds, documented here
+          for reference.
+
+      Either |v| >= snap_threshold:
+          Closed-loop cmd 35. Ramp applied upstream by MotorDriver.
 
     Left-side motors are physically mirrored so their direction is
     negated in software via motor_directions. Right side is correct.
@@ -47,7 +53,7 @@ class DC_Driver:
     frame (positive = forward).
     """
 
-    # ── Serial ports ──────────────────────────────────────────────────
+    # -- Serial ports --------------------------------------------------
     port_fl = "/dev/ttyMotor0"
     port_fr = "/dev/ttyMotor1"
     port_rl = "/dev/ttyMotor2"
@@ -56,34 +62,32 @@ class DC_Driver:
     baudrate = 115200
     timeout  = 0.1
 
-    # ── Physical parameters ───────────────────────────────────────────
-    max_linear_speed = 5.0    # m/s -- used for input clamping only
-    wheel_radius     = 0.08   # metres
+    # -- Physical parameters -------------------------------------------
+    max_linear_speed  = 8.7    # m/s -- measured via Motion Studio Auto Tune (71280 counts/sec)
+    wheel_radius      = 0.08   # metres
 
-    encoder_CPR          = 1024
-    encoder_quadrature_x = 4
+    encoder_CPR           = 1024
+    encoder_quadrature_x  = 4
     encoder_CPR_effective = encoder_CPR * encoder_quadrature_x   # 4096
 
-    # ── Velocity PID gains (sent to RoboClaw at startup via cmd 28) ───
+    # -- Speed command zone thresholds ---------------------------------
     #
-    # QPPS: max encoder counts/sec at full speed
-    #   = (max_linear_speed / (2π * wheel_radius)) * encoder_CPR_effective
-    #   = (5.0 / 0.5027) * 4096 ≈ 40,744 → rounded to 41000
+    # ol_zero_threshold:
+    #   If BOTH |v_l| and |v_r| are below this, send open-loop duty 0
+    #   (cmd 32) instead of a closed-loop speed command. Prevents PID
+    #   integrator wind-up and oscillation at near-zero speeds.
+    #   Raise if oscillation persists; lower if dead zone feels too large.
     #
-    # P, I, D: RoboClaw encodes these as uint32 = float * 65536 internally.
-    #   Pass floats here -- _SetPID() handles the encoding.
+    # snap_threshold:
+    #   If BOTH |v_l| and |v_r| are below this (and above ol_zero_threshold),
+    #   MotorDriver sends the command instantly without ramping.
+    #   DC_Driver receives the value and sends it directly via cmd 35.
+    #   Must be > ol_zero_threshold.
     #
-    # CONSERVATIVE STARTING VALUES -- tune on the bench:
-    #   P: increase first until tracking is responsive but stable
-    #   I: add slowly to eliminate steady-state error
-    #   D: leave at 0 until P+I are tuned; encoder noise amplifies D
-    #
-    pid_QPPS = 41000   # counts/sec  ← update if max speed changes
-    pid_P    = 1.6     # proportional gain
-    pid_I    = 0.15    # integral gain
-    pid_D    = 0.0     # derivative gain (start at 0, tune last)
+    ol_zero_threshold = 0.5   # m/s -- both sides below -> OL duty 0
+    snap_threshold    = 1.0   # m/s -- both sides below -> CL instant, no ramp (enforced in MotorDriver)
 
-    # ── Motor direction map ───────────────────────────────────────────
+    # -- Motor direction map -------------------------------------------
     # Left motors are physically mirrored -- negate their speed command
     motor_directions = {
         "fl": -1,
@@ -92,14 +96,14 @@ class DC_Driver:
         "rr":  1,
     }
 
-    # ── RoboClaw protocol constants ───────────────────────────────────
-    _ADR                  = 0x80
-    _CMD_M1_DRIVE_SPEED   = 35    # closed-loop signed counts/sec
-    _CMD_M1_SET_PID       = 28    # SetM1VelocityPID
-    _CMD_M1_READ_SPEED    = 18    # read M1 encoder speed
-    _CMD_READ_CURRENTS    = 49    # read M1+M2 currents
+    # -- RoboClaw protocol constants -----------------------------------
+    _ADR                = 0x80
+    _CMD_M1_DRIVE_SPEED = 35   # closed-loop signed counts/sec
+    _CMD_M1_DRIVE_DUTY  = 32   # open-loop signed duty cycle (+-32767)
+    _CMD_M1_READ_SPEED  = 18   # read M1 encoder speed
+    _CMD_READ_CURRENTS  = 49   # read M1+M2 currents
 
-    # ── Max counts/sec ceiling (safety clamp on command) ─────────────
+    # -- Max counts/sec ceiling (safety clamp on command) -------------
     _MAX_COUNTS_PER_SEC = 2_147_483_647   # signed 32-bit max
 
     def __init__(self):
@@ -108,9 +112,8 @@ class DC_Driver:
         self._ser_rl = serial.Serial(port=self.port_rl, baudrate=self.baudrate, timeout=self.timeout)
         self._ser_rr = serial.Serial(port=self.port_rr, baudrate=self.baudrate, timeout=self.timeout)
 
-        # Push PID gains to all four controllers at startup
-        for ser in (self._ser_fl, self._ser_fr, self._ser_rl, self._ser_rr):
-            self._SetPID(ser)
+        # PID gains are stored in each RoboClaw's EEPROM and loaded
+        # automatically at power-up. No startup write needed here.
 
     # ------------------------------------------------------------------
     # Public API
@@ -118,19 +121,35 @@ class DC_Driver:
 
     def UpdateMotorSpeeds(self, MotorSpeed: list) -> None:
         """
-        Command all four wheels simultaneously using closed-loop velocity control.
+        Command all four wheels simultaneously.
+
+        Zone logic (both sides evaluated together):
+
+          Both |v| < ol_zero_threshold:
+              Open-loop duty 0 via cmd 32. Kills oscillation at near-zero
+              speed by bypassing the PID loop entirely.
+
+          Otherwise:
+              Closed-loop cmd 35. Ramping and snap decisions are made
+              upstream in MotorDriver before this call.
 
         Args:
             MotorSpeed: [left_speed_m_s, right_speed_m_s]
-                        Positive = forward. Clamped to ±max_linear_speed.
-                        Converted to encoder counts/sec for cmd 35.
+                        Positive = forward. Clamped to +-max_linear_speed.
         """
-        left_v, right_v = MotorSpeed[0], MotorSpeed[1]
+        left_v  = float(MotorSpeed[0])
+        right_v = float(MotorSpeed[1])
 
-        self._DriveMotor(self._ser_fl, left_v,  self.motor_directions["fl"])
-        self._DriveMotor(self._ser_fr, right_v, self.motor_directions["fr"])
-        self._DriveMotor(self._ser_rl, left_v,  self.motor_directions["rl"])
-        self._DriveMotor(self._ser_rr, right_v, self.motor_directions["rr"])
+        if abs(left_v) < self.ol_zero_threshold and abs(right_v) < self.ol_zero_threshold:
+            self._DutyZero(self._ser_fl)
+            self._DutyZero(self._ser_fr)
+            self._DutyZero(self._ser_rl)
+            self._DutyZero(self._ser_rr)
+        else:
+            self._DriveMotor(self._ser_fl, left_v,  self.motor_directions["fl"])
+            self._DriveMotor(self._ser_fr, right_v, self.motor_directions["fr"])
+            self._DriveMotor(self._ser_rl, left_v,  self.motor_directions["rl"])
+            self._DriveMotor(self._ser_rr, right_v, self.motor_directions["rr"])
 
     def AverageLinearSpeed(self):
         """
@@ -172,53 +191,38 @@ class DC_Driver:
     # Private helpers
     # ------------------------------------------------------------------
 
-    def _SetPID(self, ser: serial.Serial) -> None:
+    def _DutyZero(self, ser: serial.Serial) -> None:
         """
-        Send velocity PID gains to one RoboClaw Solo (cmd 28, SetM1VelocityPID).
+        Send open-loop duty cycle 0 to one RoboClaw Solo (cmd 32).
 
-        Packet format: [addr, 28, D(4), P(4), I(4), QPPS(4), CRC16(2)]
-        Each float gain is encoded as uint32 = round(gain * 65536).
-        QPPS is an unsigned 32-bit integer (max counts/sec).
+        Bypasses the closed-loop PID entirely and commands zero PWM duty.
+        Prevents integrator wind-up and oscillation when both wheel speeds
+        are below ol_zero_threshold.
+
+        Packet format: [addr, 32, duty_BE_signed_16, CRC16_BE]
+        Duty range: -32767 to +32767. 0 = no drive.
+        Motor behaviour at zero duty (freewheel vs brake) is set by the
+        Idle Mode setting in Motion Studio.
 
         Response: [0xFF]  (ACK)
-
-        Note: gains are stored in RoboClaw EEPROM only if you issue a
-        WriteNVM command after this call. Here we set RAM values only --
-        they reset on power cycle. This is intentional so code is always
-        the source of truth for gains.
         """
-        def float_to_u32(f: float) -> int:
-            return max(0, min(0xFFFFFFFF, round(f * 65536)))
-
-        d_enc    = float_to_u32(self.pid_D)
-        p_enc    = float_to_u32(self.pid_P)
-        i_enc    = float_to_u32(self.pid_I)
-        qpps_enc = max(0, min(0xFFFFFFFF, int(self.pid_QPPS)))
-
-        payload = (
-            d_enc.to_bytes(4, byteorder='big')
-            + p_enc.to_bytes(4, byteorder='big')
-            + i_enc.to_bytes(4, byteorder='big')
-            + qpps_enc.to_bytes(4, byteorder='big')
-        )
-        packet      = bytes([self._ADR, self._CMD_M1_SET_PID]) + payload
+        payload     = (0).to_bytes(2, byteorder='big', signed=True)
+        packet      = bytes([self._ADR, self._CMD_M1_DRIVE_DUTY]) + payload
         crc         = self._crc16(packet)
         full_packet = packet + bytes([crc >> 8, crc & 0xFF])
 
         ser.write(full_packet)
         ack = ser.read(1)
         if ack != b'\xFF':
-            print(f"[DC_Driver] PID set NACK on port {ser.port} "
-                  f"(P={self.pid_P}, I={self.pid_I}, D={self.pid_D}, QPPS={self.pid_QPPS})")
+            print(f"[DC_Driver] NACK (duty zero) on port {ser.port}")
 
     def _DriveMotor(self, ser: serial.Serial, velocity: float, direction: int) -> None:
         """
         Send a closed-loop M1 velocity command to one RoboClaw Solo (cmd 35).
 
         Conversion:
-            rev_per_sec    = velocity / (2π * wheel_radius)
+            rev_per_sec    = velocity / (2pi * wheel_radius)
             counts_per_sec = rev_per_sec * encoder_CPR_effective
-                           = rev_per_sec * (encoder_CPR * 4)
 
         The direction sign flip accounts for physically mirrored motors.
 
@@ -247,10 +251,6 @@ class DC_Driver:
 
         Request packet:  [addr, 18, CRC16_BE]
         Response:        [speed_BE_signed_32 (4), status (1), CRC16_BE (2)]  = 7 bytes
-
-        The 4-byte speed is signed counts/sec in the RoboClaw's quadrature
-        count domain. Converted back to m/s and direction-corrected so the
-        returned value is always in the robot frame (positive = forward).
 
         Returns linear speed in m/s, or None on failure.
         """
