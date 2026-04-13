@@ -73,6 +73,9 @@ class Mode(Enum):
 class StatePlannerReceiver:
 
     ARRIVE_THRESHOLD_M       = 1.0    # metres — considered "arrived"
+    HEADING_THRESHOLD_RAD    = 0.10   # radians — considered "on heading" (~6°)
+    HEADING_TIMEOUT_S        = 10.0   # seconds — max wait per Orient step before giving up
+    HEADING_POLL_S           = 0.05   # seconds — RobotPose poll interval inside heading waits
     GHOST_DEDUP_RADIUS_M     = 5.0    # metres — minimum separation between ghost points
     CHASE_NAV_RATE_S         = 0.5    # seconds — Move replan interval in chase
     STOPPED_WINDOW_S         = 1.0    # seconds — interval to measure robot displacement
@@ -175,6 +178,43 @@ class StatePlannerReceiver:
         self._dbg("[Mode] -> STOP")
         self._mode = Mode.STOP
         self._start_task(self.Stop_Routine())
+
+    # ------------------------------------------------------------------
+    # Heading helper — closed-loop wait for Orient to settle
+    # ------------------------------------------------------------------
+
+    async def _wait_for_heading(self, target_rad: float) -> bool:
+        """
+        Poll RobotPose theta until within HEADING_THRESHOLD_RAD of target_rad,
+        or until HEADING_TIMEOUT_S elapses.
+
+        Returns True  if heading was reached within the timeout.
+        Returns False if the timeout expired (robot stuck / MPC slow).
+
+        Always cancellable — CancelledError propagates normally so the
+        surrounding routine (Scan, Alert) can be preempted as usual.
+
+        target_rad should already be wrapped to (-π, π].
+        """
+        elapsed = 0.0
+        while elapsed < self.HEADING_TIMEOUT_S:
+            current = float(self.Current_RobotPose[2])
+            # Shortest signed angular distance, wrapped to (-π, π]
+            err = (target_rad - current + np.pi) % (2 * np.pi) - np.pi
+            if abs(err) < self.HEADING_THRESHOLD_RAD:
+                self._dbg(
+                    f"[Heading] Reached {np.degrees(target_rad):.1f}° "
+                    f"(err={np.degrees(err):.1f}°) in {elapsed:.2f}s"
+                )
+                return True
+            await asyncio.sleep(self.HEADING_POLL_S)
+            elapsed += self.HEADING_POLL_S
+
+        self._dbg(
+            f"[Heading] Timeout ({self.HEADING_TIMEOUT_S}s) waiting for "
+            f"{np.degrees(target_rad):.1f}° — proceeding anyway"
+        )
+        return False
 
     # ------------------------------------------------------------------
     # Receivers
@@ -318,13 +358,18 @@ class StatePlannerReceiver:
                 await self._module_scan._stationary_crouch()
 
             for i in range(1, 5):
-                robot_pos      = np.array(self.Current_RobotPose[:3])
-                target_heading = ((base_heading + i * np.pi / 2) + np.pi) % (2 * np.pi) - np.pi
+                robot_pos    = np.array(self.Current_RobotPose[:3])
+                # Physical heading the robot will actually reach (what RobotPose reports)
+                wait_heading = (base_heading + i * np.pi / 2 + np.pi) % (2 * np.pi) - np.pi
+                # MPC Orient convention applies +pi flip to the commanded heading
+                drive_heading = (wait_heading + np.pi) % (2 * np.pi) - np.pi
                 await self.MotionCommand_Publisher.publish(
-                    {"Id": "Orient", "Cmd": [robot_pos[0], robot_pos[1], target_heading]}
+                    {"Id": "Orient", "Cmd": [robot_pos[0], robot_pos[1], drive_heading]}
                 )
-                # await asyncio.sleep(1.0)
-                await asyncio.sleep(3.0)
+                # Closed-loop: wait for theta to settle, with timeout preemption guard
+                await self._wait_for_heading(wait_heading)
+                # Dwell at heading to allow vision scan before rotating to next step
+                await asyncio.sleep(1.0)
 
             self._scan_idx   += 1
             self._scan_target = self._next_target()
@@ -444,36 +489,40 @@ class StatePlannerReceiver:
 
         if end_of_chase:
             async def _orient_track_loop() -> None:
-                """Re-orient toward turkey every 1 s while it remains visible.
-                Silently stops publishing if turkey leaves sight — warning
-                substates continue unaffected."""
+                """Re-orient toward turkey every cycle while it remains visible.
+                Uses closed-loop heading wait so each Orient command actually
+                settles before the next one fires. Silently loops if turkey
+                leaves sight — warning substates continue unaffected."""
                 while True:
-                    # await asyncio.sleep(1.0)
                     await asyncio.sleep(2.0)
                     if not self.turkey_detected or self.last_known_turkey_pos is None:
                         self._dbg("[Alert/Path1] Turkey out of sight — orient tracking paused")
-                        # await asyncio.sleep(1.0)
                         await asyncio.sleep(2.0)
                         continue
-                    rx, ry  = float(self.Current_RobotPose[0]), float(self.Current_RobotPose[1])
-                    tx, ty  = float(self.last_known_turkey_pos[0]), float(self.last_known_turkey_pos[1])
-                    heading = np.arctan2(-(ty - ry), tx - rx)
-                    heading = ((heading + np.pi) % (2 * np.pi)) - np.pi
-                    self._dbg(f"[Alert/Path1] Orient -> ({tx:.2f},{ty:.2f}), heading={np.degrees(heading):.1f}°")
+                    rx, ry       = float(self.Current_RobotPose[0]), float(self.Current_RobotPose[1])
+                    tx, ty       = float(self.last_known_turkey_pos[0]), float(self.last_known_turkey_pos[1])
+                    wait_heading  = np.arctan2(-(ty - ry), tx - rx)
+                    wait_heading  = ((wait_heading + np.pi) % (2 * np.pi)) - np.pi
+                    drive_heading = (wait_heading + np.pi) % (2 * np.pi) - np.pi
+                    self._dbg(f"[Alert/Path1] Orient -> ({tx:.2f},{ty:.2f}), heading={np.degrees(wait_heading):.1f}°")
                     await self.MotionCommand_Publisher.publish(
-                        {"Id": "Orient", "Cmd": [rx, ry, heading]}
+                        {"Id": "Orient", "Cmd": [rx, ry, drive_heading]}
                     )
+                    # Closed-loop: wait for theta to settle before next re-orient
+                    await self._wait_for_heading(wait_heading)
 
             # Initial orient before substates begin
             if self.last_known_turkey_pos is not None:
-                rx, ry    = float(self.Current_RobotPose[0]), float(self.Current_RobotPose[1])
-                tx, ty    = float(self.last_known_turkey_pos[0]), float(self.last_known_turkey_pos[1])
-                heading   = np.arctan2(-(ty - ry), tx - rx)
-                heading   = ((heading + np.pi) % (2 * np.pi)) - np.pi
-                self._dbg(f"[Alert] Path1 — initial orient toward ({tx:.2f},{ty:.2f}), heading={np.degrees(heading):.1f}°")
+                rx, ry        = float(self.Current_RobotPose[0]), float(self.Current_RobotPose[1])
+                tx, ty        = float(self.last_known_turkey_pos[0]), float(self.last_known_turkey_pos[1])
+                wait_heading  = np.arctan2(-(ty - ry), tx - rx)
+                wait_heading  = ((wait_heading + np.pi) % (2 * np.pi)) - np.pi
+                drive_heading = (wait_heading + np.pi) % (2 * np.pi) - np.pi
+                self._dbg(f"[Alert] Path1 — initial orient toward ({tx:.2f},{ty:.2f}), heading={np.degrees(wait_heading):.1f}°")
                 await self.MotionCommand_Publisher.publish(
-                    {"Id": "Orient", "Cmd": [rx, ry, heading]}
+                    {"Id": "Orient", "Cmd": [rx, ry, drive_heading]}
                 )
+                await self._wait_for_heading(wait_heading)
 
             self._dbg("[Alert] Path1 — boundary chase exit (2 min)")
             orient_task = asyncio.get_event_loop().create_task(_orient_track_loop())
@@ -495,25 +544,23 @@ class StatePlannerReceiver:
                     {"Id": "Move", "Cmd": self.last_known_turkey_pos[:2].tolist()}
                 )
 
-            # Duration matches the behavior substate that runs alongside rotations
-            alert_duration_s = 30.0
-            step_s           = 1.0
-
             async def _rotation_loop() -> None:
-                """Continuous 90° rotation steps for the duration of the alert."""
+                """Continuous 90° rotation steps, closed-loop on RobotPose theta.
+                Each Orient command waits for heading to settle (or times out)
+                before issuing the next — no more open-loop sleeps."""
                 base_heading = float(self.Current_RobotPose[2])
                 step = 0
-                elapsed = 0.0
-                while elapsed < alert_duration_s:
+                while True:
                     step += 1
-                    robot_pos      = np.array(self.Current_RobotPose[:3])
-                    target_heading = ((base_heading + step * np.pi / 2) + np.pi) % (2 * np.pi) - np.pi
+                    robot_pos     = np.array(self.Current_RobotPose[:3])
+                    wait_heading  = (base_heading + step * np.pi / 2 + np.pi) % (2 * np.pi) - np.pi
+                    drive_heading = (wait_heading + np.pi) % (2 * np.pi) - np.pi
                     await self.MotionCommand_Publisher.publish(
-                        {"Id": "Orient", "Cmd": [robot_pos[0], robot_pos[1], target_heading]}
+                        {"Id": "Orient", "Cmd": [robot_pos[0], robot_pos[1], drive_heading]}
                     )
-                    self._dbg(f"[Alert/Rotate] step={step}, heading={np.degrees(target_heading):.1f}°")
-                    await asyncio.sleep(step_s)
-                    elapsed += step_s
+                    self._dbg(f"[Alert/Rotate] step={step}, heading={np.degrees(wait_heading):.1f}°")
+                    # Closed-loop: block until theta settles or timeout fires
+                    await self._wait_for_heading(wait_heading)
 
             if use_path2:
                 self._dbg(f"[Alert] Path2 (lose-visual #{self._lose_visual_count}) — TerritorialWarning + rotation")

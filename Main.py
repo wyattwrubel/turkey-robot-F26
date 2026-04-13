@@ -89,7 +89,7 @@ async def main():
 
     Canine = CanineDriver(ServoFeedback_Canine_pub, Canine_Canine_pub, Simulated=False, Verbose=False)
 
-    Drivetrain = MotorDriver(RobotPose_Drivetrain_pub, SlipFeedback_Drivetrain_pub, Simulated=False, EncoderLogging=True)
+    Drivetrain = MotorDriver(RobotPose_Drivetrain_pub, SlipFeedback_Drivetrain_pub, Simulated=True, EncoderLogging=True)
 
     Navigation = TrajectoryTracker(DriveCommand_Navigation_pub, MotionCommand_Navigation_pub, MPCFeedback_Navigation_pub, Verbose=False)
 

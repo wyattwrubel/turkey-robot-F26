@@ -102,7 +102,7 @@ class MotorDriver:
     WheelBase = 0.6   # metres between left and right contact patches
 
     # -- Simulation parameters ----------------------------------------
-    _sim_omega_scale = 0.06
+    _sim_omega_scale = 0.5
 
     def __init__(self, PosePublisher, SlipPublisher, Simulated=False, Verbose=False, EncoderLogging=False):
         self.PosePublisher  = PosePublisher
