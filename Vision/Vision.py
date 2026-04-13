@@ -5,15 +5,45 @@ Drop-in replacement for the original VisionObject.
 Hosts two WebSocket servers that the laptop connects to:
 
     ws://0.0.0.0:8765   /video      — Pi streams raw frames out to all clients;
-                                      laptop sends processed frames back on same socket;
-                                      Pi forwards received frames to VideoFeed_Vision_pub.
+                                      laptop sends bounding-box detection JSON back
+                                      on the same socket. Pi draws boxes on every
+                                      outgoing frame using the last known detections,
+                                      clearing only when the laptop explicitly sends
+                                      an empty list. No flashing between updates.
 
     ws://0.0.0.0:8766   /detections — laptop sends camera-local DynamicObjects JSON;
                                       Pi applies world-frame transform using current
                                       RobotPose and publishes to VisionObject_Vision_pub.
+                                      Unchanged from original.
+
+No image data travels laptop → Pi. The laptop returns only lightweight JSON:
+
+    Port 8765 payload (BBoxes):
+    {
+        "Id": "BBoxes",
+        "detections": [
+            {"class_id": 0, "class_name": "turkey", "confidence": 0.91,
+             "bbox": [x1, y1, x2, y2]},
+            ...
+        ]
+    }
+
+    An empty "detections" list means no objects in frame — Pi clears overlays.
+    The laptop sends this payload on every processed frame, including empty ones.
+
+    Port 8766 payload: unchanged DynamicObjects format.
+
+Persistent overlay
+------------------
+_latest_detections holds the last bbox list received from the laptop. The
+camera loop annotates every outgoing frame with these detections, so boxes
+stay fixed between laptop updates. When the laptop sends an empty list,
+_latest_detections is cleared and the clean frame is published.
+
+If the laptop disconnects, _latest_detections is cleared immediately so stale
+boxes don't persist on screen indefinitely.
 
 Simulated=True  → no camera opened; laptop_client.py drives everything via WASD sim.
-                   VisionObject still hosts both servers so the laptop can connect.
 Simulated=False → camera opens immediately and starts streaming.
 
 Constructor signature is unchanged from the original:
@@ -26,21 +56,14 @@ VisionObject runs its WebSocket servers on its own private event loop (loop B)
 spawned on a dedicated thread. The pub/sub subscribers (e.g. UserInterface) live
 on uvicorn's event loop (loop A, the one running main()).
 
-Calling `await pub.publish(...)` from inside loop B would attach the resulting
-coroutines to loop B, but those coroutines internally schedule work on loop A —
-causing the "Future attached to a different loop" RuntimeError.
-
-Fix: capture loop A at construction time (VisionObject is instantiated inside
-main(), which runs on loop A, so asyncio.get_event_loop() returns loop A).
-Then use asyncio.run_coroutine_threadsafe() to hand publish calls from loop B
-across to loop A, blocking briefly with future.result(timeout) so we don't
-flood the queue.
+Fix: capture loop A at construction time. Then use asyncio.run_coroutine_threadsafe()
+to hand publish calls from loop B across to loop A.
 """
 
 import asyncio
-import threading
-import time
+import json
 import math
+import threading
 
 import cv2
 import numpy as np
@@ -51,7 +74,14 @@ from websockets.server import WebSocketServerProtocol
 VIDEO_PORT   = 8765
 DETECT_PORT  = 8766
 CAMERA_FPS   = 10          # raw frame broadcast rate
-JPEG_QUALITY = 80
+JPEG_QUALITY = 40
+
+# Annotation appearance (mirrors yolo_detector.annotate on the laptop)
+BBOX_COLOR     = (0, 255, 0)
+BBOX_THICKNESS = 2
+FONT           = cv2.FONT_HERSHEY_SIMPLEX
+FONT_SCALE     = 0.6
+FONT_THICKNESS = 2
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -81,16 +111,21 @@ class VisionObject:
         self._robot_pose      = np.array([0.0, 0.0, 0.0])
         self._robot_pose_lock = threading.Lock()
 
+        # Latest raw frame bytes — stored for the initial client sync frame
+        self._latest_raw_frame: bytes | None = None
+        self._raw_frame_lock = threading.Lock()
+
+        # Last known detections from the laptop.
+        # Applied to every camera frame. Replaced on each laptop message.
+        # Cleared to [] only when the laptop sends an empty list, or disconnects.
+        self._latest_detections: list = []
+        self._detections_lock = threading.Lock()
+
         # Connected /video clients
         self._video_clients: set = set()
         self._video_lock = None   # asyncio.Lock — created inside event loop
 
-        self._latest_raw_frame: bytes | None = None
-
         # Capture the caller's event loop (uvicorn/main — loop A).
-        # VisionObject is constructed inside main() which runs on loop A,
-        # so get_event_loop() here gives us loop A. We use this to safely
-        # schedule pub/sub calls from Vision's own thread (loop B).
         self._main_loop: asyncio.AbstractEventLoop = asyncio.get_event_loop()
 
         # Start Vision's private async event loop on its own thread (loop B)
@@ -108,7 +143,6 @@ class VisionObject:
         """
         Schedule a coroutine onto loop A (uvicorn/main) from loop B (VisionLoop).
         Blocks until the coroutine completes or times out, then returns.
-        Called from inside loop B's async context via run_in_executor or directly.
         """
         future = asyncio.run_coroutine_threadsafe(coro, self._main_loop)
         try:
@@ -120,7 +154,6 @@ class VisionObject:
 
     # ------------------------------------------------------------------
     # RobotPose receiver  (Protocol 4: 1x3 numpy [X, Y, theta_rad])
-    # Called from loop A via pub/sub — only touches threading.Lock, safe.
     # ------------------------------------------------------------------
 
     async def RobotPose_Receiver(self, pose_array):
@@ -141,14 +174,6 @@ class VisionObject:
     def _to_world(self, x_cam: float, y_cam: float):
         """
         Convert camera-local (x_cam right, y_cam forward) to world frame.
-
-        Map convention:
-            origin top-left, +X right, +Y down, +theta CCW, theta=0 → East
-
-        Camera mounted on robot front:
-            t = robot_theta + pi/2
-            world_x = rx + cos(t)*x_cam + sin(t)*y_cam
-            world_y = ry - sin(t)*x_cam + cos(t)*y_cam   (Y inverted)
         """
         with self._robot_pose_lock:
             rx, ry, rtheta = self._robot_pose
@@ -160,6 +185,29 @@ class VisionObject:
         world_x = rx + cos_t * x_cam + sin_t * y_cam
         world_y = ry - sin_t * x_cam + cos_t * y_cam
         return float(world_x), float(world_y)
+
+    # ------------------------------------------------------------------
+    # Pi-side annotation
+    # ------------------------------------------------------------------
+
+    def _annotate(self, frame: np.ndarray, detections: list) -> np.ndarray:
+        """
+        Draw bounding boxes onto a decoded frame in-place and return it.
+        Mirrors the annotation style of yolo_detector.annotate() on the laptop.
+        """
+        for det in detections:
+            try:
+                x1, y1, x2, y2 = map(int, det["bbox"])
+                label = f"{det['class_name']} {det['confidence']:.2f}"
+                cv2.rectangle(frame, (x1, y1), (x2, y2), BBOX_COLOR, BBOX_THICKNESS)
+                cv2.putText(
+                    frame, label,
+                    (x1, max(20, y1 - 8)),
+                    FONT, FONT_SCALE, BBOX_COLOR, FONT_THICKNESS,
+                )
+            except (KeyError, TypeError, ValueError) as e:
+                print(f"[Vision] Annotation error for det={det}: {e}")
+        return frame
 
     # ------------------------------------------------------------------
     # Event loop (loop B)
@@ -204,6 +252,14 @@ class VisionObject:
                     await asyncio.sleep(0.1)
                     continue
 
+                # Snapshot detections under lock — don't hold lock during encode
+                with self._detections_lock:
+                    detections = list(self._latest_detections)
+
+                # Annotate with last known detections (empty list = clean frame)
+                if detections:
+                    frame = self._annotate(frame, detections)
+
                 ok, buf = cv2.imencode(
                     ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY]
                 )
@@ -211,8 +267,19 @@ class VisionObject:
                     continue
 
                 jpeg = buf.tobytes()
-                self._latest_raw_frame = jpeg
+
+                with self._raw_frame_lock:
+                    self._latest_raw_frame = jpeg
+
                 await self._broadcast_video(jpeg)
+
+                if self._video_pub is not None:
+                    await loop.run_in_executor(
+                        None,
+                        self._publish_to_main,
+                        self._video_pub.publish(jpeg),
+                        "VideoFeed publish",
+                    )
 
                 elapsed = loop.time() - t0
                 await asyncio.sleep(max(0.0, period - elapsed))
@@ -226,40 +293,48 @@ class VisionObject:
     async def _start_video_server(self):
         print(f"[Vision] Video WS → ws://0.0.0.0:{VIDEO_PORT}")
         async with websockets.serve(self._video_handler, "0.0.0.0", VIDEO_PORT):
-            await asyncio.Future()   # run forever
+            await asyncio.Future()
 
     async def _video_handler(self, ws: WebSocketServerProtocol, path: str = ""):
         async with self._video_lock:
             self._video_clients.add(ws)
 
-        # Sync new client immediately with the latest raw frame
-        if self._latest_raw_frame:
+        # Sync new client with the latest frame immediately
+        with self._raw_frame_lock:
+            latest = self._latest_raw_frame
+        if latest:
             try:
-                await ws.send(self._latest_raw_frame)
+                await ws.send(latest)
             except Exception:
                 pass
 
         print(f"[Vision] Video client connected: {ws.remote_address}")
         try:
             async for message in ws:
-                # Only the laptop sends bytes back (processed/annotated frames).
-                # We are on loop B here — use run_coroutine_threadsafe to hand
-                # the publish coroutine to loop A (uvicorn/main) where all the
-                # pub/sub subscribers live. Blocking briefly with future.result()
-                # prevents frame flooding while keeping loop B responsive.
-                if isinstance(message, bytes) and self._video_pub is not None:
-                    loop_b = asyncio.get_event_loop()
-                    await loop_b.run_in_executor(
-                        None,
-                        self._publish_to_main,
-                        self._video_pub.publish(message),
-                        "VideoFeed publish",
-                    )
+                # Laptop sends BBoxes JSON on this socket.
+                # Just update _latest_detections — the camera loop does the rest.
+                raw = message if isinstance(message, str) else message.decode("utf-8")
+                try:
+                    payload = json.loads(raw)
+                except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                    print(f"[Vision] BBoxes parse error: {e}")
+                    continue
+
+                if payload.get("Id") != "BBoxes":
+                    print(f"[Vision] Unexpected payload Id on port {VIDEO_PORT}: {payload.get('Id')}")
+                    continue
+
+                with self._detections_lock:
+                    self._latest_detections = payload.get("detections", [])
+
         except websockets.ConnectionClosed:
             pass
         finally:
             async with self._video_lock:
                 self._video_clients.discard(ws)
+            # Laptop disconnected — clear overlays immediately
+            with self._detections_lock:
+                self._latest_detections = []
             print(f"[Vision] Video client disconnected: {ws.remote_address}")
 
     async def _broadcast_video(self, jpeg: bytes):
@@ -279,7 +354,7 @@ class VisionObject:
         await asyncio.gather(*[_send(ws) for ws in clients])
 
     # ------------------------------------------------------------------
-    # Detection WebSocket server  (port 8766)
+    # Detection WebSocket server  (port 8766) — unchanged
     # ------------------------------------------------------------------
 
     async def _start_detection_server(self):
@@ -293,7 +368,6 @@ class VisionObject:
             async for message in ws:
                 raw = message if isinstance(message, str) else message.decode()
                 try:
-                    import json
                     payload = json.loads(raw)
                     await self._handle_detection_payload(payload)
                 except Exception as e:
@@ -305,11 +379,9 @@ class VisionObject:
 
     async def _handle_detection_payload(self, payload: dict):
         """
-        Receives camera-local payload from laptop.
-        Applies world-frame transform to each entry, then publishes to loop A.
-
-        Input  (camera-local):  [[x_cam, y_cam, angle_rad], ...]
-        Output (world frame):   [[world_x, world_y, angle_rad], ...]
+        Receives camera-local DynamicObjects payload from laptop on port 8766.
+        Applies world-frame transform, publishes to VisionObject_Vision_pub.
+        Unchanged from original.
         """
         turkeys_local = payload.get("Turkeys", [])
         humans_local  = payload.get("Humans",  [])
@@ -340,7 +412,6 @@ class VisionObject:
             )
 
         if self._detect_pub is not None:
-            # Same cross-loop handoff as _video_handler.
             loop_b = asyncio.get_event_loop()
             await loop_b.run_in_executor(
                 None,
