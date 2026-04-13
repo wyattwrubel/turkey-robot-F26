@@ -97,7 +97,7 @@ async def main():
 
     PositionDriver = PositioningDriver(GPS_GPSPublisher_pub, Simulation=True, Verbose=True)
 
-    Accelerometer = IMUDriver(Accelerometer_AccelPublisher_pub, Simulation=True, Log=True)
+    Accelerometer = IMUDriver(Accelerometer_AccelPublisher_pub, Simulation=False, Log=True)
 
     UserInterface = CDSControlServer(DriveCommand_UI_pub, Canine_UI_pub, MacroState_UI_pub, MotionCommand_UI_pub)
 
