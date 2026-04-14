@@ -112,10 +112,10 @@ function buildAudio() {
 function connect() {
   
   // CHANGE HERE
-  ws = new WebSocket('ws://100.67.22.116:8000/ws')
+  // ws = new WebSocket('ws://100.67.22.116:8000/ws')
   // ws = new WebSocket('ws://192.168.10.2:8000/ws')
   
-  // ws = new WebSocket('ws://192.168.4.2:8000/ws')
+  ws = new WebSocket('ws://192.168.4.2:8000/ws')
   // ws = new WebSocket('ws://35.3.137.208:8000/ws')
   // ws = new WebSocket('ws://172.20.10.2:8000/ws')
 
