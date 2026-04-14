@@ -33,27 +33,57 @@ LOOKAHEAD_DIST = 2.5  # metres
 # Pre-move pivot: only fire if heading error exceeds this.  Raised from 10 deg
 # to 70 deg so the robot skips the pivot on shallow angles and drives directly.
 PIVOT_THRESHOLD_DEG    = 70.0
-PIVOT_ALIGN_DEG        =  3.0
-PIVOT_KP               =  3.0
+
+# Loosened from 3° to 10° — now tightened back to 2° for aggressive closed-loop
+# alignment.  The P controller runs continuously and re-reads live pose every
+# DT tick, so the robot keeps correcting until it genuinely reaches this threshold.
+PIVOT_ALIGN_DEG        =  2.0
+
+# Closed-loop P gain for pivot.  Output is wheel speed (m/s) via:
+#   wheel_speed = clip(PIVOT_KP * |error_rad|, PIVOT_MIN_SPEED, v_max)
+# Raised from 3.0 to 8.0: a 90° error → ~12.6 m/s before clip, ensuring the
+# robot always commands full available speed on large errors.  The live heading
+# error is re-read from RobotPose every DT tick so this is truly closed-loop.
+PIVOT_KP               =  8.0
+
+# Minimum wheel speed during a pivot so small residual errors still overcome
+# drivetrain stiction.  Applied after the P formula, before v_max clipping.
+PIVOT_MIN_SPEED        =  0.3   # m/s — tune to your drivetrain's stall threshold
+
 PIVOT_ALIGN_SEGMENTS   =  3     # leading path segments used for pre-move heading
 
 # Pivot stall: abort pivot if heading error hasn't improved by this many degrees
 # over PIVOT_STALL_WINDOW ticks.
-PIVOT_STALL_WINDOW     = 15     # ticks (~3 s at DT=0.2)
+PIVOT_STALL_WINDOW     = 15     # ticks (~1.5 s at DT=0.1)
 PIVOT_STALL_DEG        =  5.0   # minimum heading progress over the window
 
+# Terminal orient: abort after this many consecutive stall windows, then idle.
+# 3 × 1.5 s ≈ 4.5 s total before giving up.
+PIVOT_STALL_MAX_ATTEMPTS = 3
+
 # Obstacle escape (targeted cell + MPC):
-# When the robot is inside an obstacle cell (EDT == 0) it enters "escape" mode.
-# A target escape cell is chosen by BFS: candidates must have EDT >= this floor,
-# and are scored by EDT value + ESCAPE_BEHIND_WEIGHT * cos(angle behind robot).
-# The cosine bias strongly prefers cells behind the robot (opposite to heading)
-# so the escape naturally retraces the path that caused the collision rather
-# than pushing through into more obstacle.  The robot then drives to the chosen
-# cell under normal MPC control (no open-loop wheel commands), then replans.
 ESCAPE_EDT_FLOOR      = 2.0   # minimum EDT a candidate cell must have
 ESCAPE_BEHIND_WEIGHT  = 3.0   # how strongly cells behind the robot are preferred
 ESCAPE_SEARCH_RADIUS  = 12    # BFS radius in grid cells
 
+# Direct-chase mode parameters:
+# Activated when Mode=="Chase" flag is in the Move command AND the robot is
+# within CHASE_ENGAGE_DIST of the turkey AND the corridor is clear.
+CHASE_ENGAGE_DIST      = 5.0   # metres — switch to direct-chase inside this radius
+CHASE_CORRIDOR_WIDTH   = 1.0   # metres — half-width of obstacle corridor check
+CHASE_CORRIDOR_STEP    = 1.0   # metres — sample interval along corridor
+CHASE_TARGET_MOVE_DIST = 1.0   # metres — recompute intercept if turkey moves this far
+CHASE_ARRIVE_DIST      = 1.5   # metres — stop chasing when this close
+CHASE_MIN_DIST         = 2.0   # metres — hold position when closer than this
+
+# Direct-chase MPC cost weights (override run weights for close-range pursuit).
+W_CHASE_XY       =  5.0   # position tracking toward turkey
+W_CHASE_HEADING  = 20.0   # stronger heading weight to keep turkey centred in FOV
+W_CHASE_FOV      = 15.0   # cost on camera angle offset (col 2 of turkey array)
+W_CHASE_OMEGA    =  1.0
+W_CHASE_INPUT_DIFF = 0.5
+
+# Standard trajectory MPC weights
 W_XY_RUN     =  5.0
 W_XY_TERM    = 80.0
 W_HEADING    = 12.0
@@ -134,10 +164,9 @@ def _find_escape_cell(map_obj, robot_xy, robot_heading, verbose=False):
     gx = int(np.clip(round(robot_xy[0]), 0, w - 1))
     gy = int(np.clip(round(robot_xy[1]), 0, h - 1))
 
-    # Direction directly behind the robot.
     behind_angle = wrap(robot_heading + np.pi)
 
-    candidates    = []   # (score, cell) — only cells that clear ESCAPE_EDT_FLOOR
+    candidates    = []
     fallback_best  = None
     fallback_score = -np.inf
 
@@ -157,7 +186,7 @@ def _find_escape_cell(map_obj, robot_xy, robot_heading, verbose=False):
             if dx == 0 and dy == 0:
                 behind_score = 0.0
             else:
-                angle_to_cell = np.arctan2(-dy, dx)   # y-flipped robot convention
+                angle_to_cell = np.arctan2(-dy, dx)
                 behind_score  = float(np.cos(angle_to_cell - behind_angle))
 
             score = cell_edt + ESCAPE_BEHIND_WEIGHT * behind_score
@@ -172,7 +201,7 @@ def _find_escape_cell(map_obj, robot_xy, robot_heading, verbose=False):
                 nx, ny = cx + ndx, cy + ndy
                 if (nx, ny) not in visited and 0 <= nx < w and 0 <= ny < h:
                     cell = gz[ny, nx]
-                    if cell != 1 and cell != -1:   # don't expand into hard walls
+                    if cell != 1 and cell != -1:
                         visited.add((nx, ny))
                         next_queue.append((nx, ny, depth + 1))
 
@@ -198,13 +227,43 @@ def _find_escape_cell(map_obj, robot_xy, robot_heading, verbose=False):
     return None
 
 
+def _corridor_clear(map_grid, robot_xy, turkey_xy, half_width=CHASE_CORRIDOR_WIDTH,
+                    step=CHASE_CORRIDOR_STEP):
+    """
+    Sample cells along the straight line from robot_xy to turkey_xy at `step`
+    metre intervals, checking a ±half_width perpendicular band at each sample.
+
+    Returns True if no sampled cell contains a static obstacle (1 or -1).
+    Dynamic obstacles (2) are intentionally ignored — the turkey itself is
+    dynamic and we don't want to abort the chase due to its own footprint.
+    """
+    h, w   = map_grid.shape
+    vec    = np.array(turkey_xy, dtype=float) - np.array(robot_xy, dtype=float)
+    dist   = np.linalg.norm(vec)
+    if dist < 1e-6:
+        return True
+
+    unit    = vec / dist
+    perp    = np.array([-unit[1], unit[0]])  # 90° rotation
+
+    n_steps = max(1, int(dist / step))
+    offsets = np.arange(-int(half_width), int(half_width) + 1)
+
+    for i in range(n_steps + 1):
+        t      = min(i * step, dist)
+        centre = np.array(robot_xy, dtype=float) + unit * t
+        for o in offsets:
+            pt = centre + perp * o
+            gx = int(np.clip(round(pt[0]), 0, w - 1))
+            gy = int(np.clip(round(pt[1]), 0, h - 1))
+            cell = map_grid[gy, gx]
+            if cell == 1 or cell == -1:
+                return False
+    return True
+
+
 # =============================================================================
-# Unified MPC solver
-# =============================================================================
-# Obstacle avoidance is fully delegated to A*.
-# Speed limits are applied by patching lbx/ubx before each solve.
-#
-# Parameter vector: X0(3) | lookahead(2) | u_prev(2)   (total: 7)
+# Unified MPC solver (standard trajectory)
 # =============================================================================
 
 def build_solver(n_steps=N):
@@ -270,6 +329,91 @@ def build_solver(n_steps=N):
 
     return dict(solver=slv, lbx=lbx, ubx=ubx, lbg=lbg, ubg=ubg,
                 n_dec=nd, ctrl_start=cs, ns=ns, nu=nu, N=n, n_p=p.numel())
+
+
+# =============================================================================
+# Direct-chase MPC solver
+# =============================================================================
+# Parameter vector: X0(3) | turkey_xy(2) | fov_angle(1) | u_prev(2)  (total: 8)
+# fov_angle: relative angle of turkey from camera centre (radians, col 2 of
+#            the Turkeys array).  Zero means turkey is centred in FOV.
+# =============================================================================
+
+def build_chase_solver(n_steps=N):
+    n = n_steps; ns = 3; nu = 2
+
+    xs, ys, ths = ca.SX.sym('x'), ca.SX.sym('y'), ca.SX.sym('th')
+    vls, vrs    = ca.SX.sym('vl'), ca.SX.sym('vr')
+    vs  = (vls + vrs) / 2
+    ws  = (vrs - vls) / L
+    f   = ca.Function('f',
+        [ca.vertcat(xs, ys, ths), ca.vertcat(vls, vrs)],
+        [ca.vertcat(xs, ys, ths) + DT * ca.vertcat(
+            vs * ca.cos(ths), -vs * ca.sin(ths), ws)])
+
+    X      = ca.SX.sym('X',   ns, n + 1)
+    U      = ca.SX.sym('U',   nu, n)
+    PX0    = ca.SX.sym('X0',  ns)
+    Ptxy   = ca.SX.sym('txy', 2)       # turkey world position
+    Pfov   = ca.SX.sym('fov', 1)       # current FOV angle offset (radians)
+    Pup    = ca.SX.sym('up',  nu)
+    p      = ca.vertcat(PX0, Ptxy, Pfov, Pup)
+
+    obj = 0
+    geq = [X[:, 0] - PX0]
+
+    for k in range(n):
+        xk, yk, thk = X[0, k], X[1, k], X[2, k]
+        vlk, vrk     = U[0, k], U[1, k]
+
+        # Drive toward turkey XY
+        obj += W_CHASE_XY * ((xk - Ptxy[0])**2 + (yk - Ptxy[1])**2)
+
+        # Align robot heading toward turkey world position
+        wdx  = Ptxy[0] - xk
+        wdy  = Ptxy[1] - yk
+        wreg = ca.sqrt(wdx**2 + wdy**2 + 1e-6)
+        aw   = ca.atan2(-wdy / wreg, wdx / wreg)
+        obj += W_CHASE_HEADING * ca.atan2(ca.sin(aw - thk), ca.cos(aw - thk))**2
+
+        # FOV centering: penalise camera angle offset directly.
+        # Pfov is the *current* measured offset — we want it driven to zero.
+        # We apply it at every step with a decaying weight so the solver
+        # prioritises early correction (when the offset is most observable).
+        decay = float(n - k) / float(n)
+        obj  += W_CHASE_FOV * decay * Pfov**2
+
+        # Smoothness
+        obj += W_CHASE_OMEGA * ((vrk - vlk) / L)**2
+        upk  = Pup if k == 0 else U[:, k - 1]
+        obj += W_CHASE_INPUT_DIFF * ca.sumsqr(U[:, k] - upk)
+
+        geq.append(X[:, k + 1] - f(X[:, k], U[:, k]))
+
+    # Terminal cost
+    obj += W_CHASE_XY * 10.0 * ((X[0, n] - Ptxy[0])**2 + (X[1, n] - Ptxy[1])**2)
+
+    ov  = ca.vertcat(ca.reshape(X, -1, 1), ca.reshape(U, -1, 1))
+    nd  = ov.numel()
+    cs  = ns * (n + 1)
+
+    lbx = -np.inf * np.ones(nd); ubx = np.inf * np.ones(nd)
+    lbx[cs:] = V_MIN_DEFAULT;    ubx[cs:] = V_MAX_DEFAULT
+
+    gc  = ca.vertcat(*geq)
+    ne  = gc.numel()
+    lbg = np.zeros(ne); ubg = np.zeros(ne)
+
+    slv = ca.nlpsol('chase_solver', 'ipopt',
+        {'f': obj, 'x': ov, 'g': gc, 'p': p},
+        {'ipopt.print_level': 0, 'print_time': 0,
+         'ipopt.tol': 1e-2, 'ipopt.max_iter': 50,
+         'ipopt.warm_start_init_point': 'yes',
+         'ipopt.mu_strategy': 'adaptive'})
+
+    return dict(solver=slv, lbx=lbx, ubx=ubx, lbg=lbg, ubg=ubg,
+                n_dec=nd, ctrl_start=cs, ns=ns, nu=nu, N=n, n_p=p.numel())
+
 
 # =============================================================================
 # Warm-start helpers
@@ -355,6 +499,8 @@ class MPC_loop:
         self._pivot_target_hdg         = 0.0
         self._pivot_is_terminal_orient = False
         self._pivot_err_history        = deque(maxlen=PIVOT_STALL_WINDOW)
+        # Count of consecutive stall windows for terminal orient abort logic.
+        self._pivot_stall_attempts     = 0
 
         self._dist_history = deque(maxlen=STALL_WINDOW)
         self._solving      = False
@@ -362,20 +508,31 @@ class MPC_loop:
         self._stall_replan_task     = None
         self._stall_replan_cooldown = False
 
-        # Escape state — set to the target (int x, int y) cell on first obstacle
-        # entry; None means escape is not active.  Locked for the full escape so
-        # we don't recompute a different cell every tick.
-        self._escape_target_cell = None   # None = not escaping
+        # Escape state
+        self._escape_target_cell = None
 
-        self._guess  = None
-        self._u_prev = np.zeros(2)
+        self._guess       = None
+        self._chase_guess = None
+        self._u_prev      = np.zeros(2)
 
         self._v_max = V_MAX_DEFAULT
         self._v_min = V_MIN_DEFAULT
 
-        print(f"[MPC] Building unified solver (N={N})...")
+        # ── Direct-chase state ─────────────────────────────────────────────
+        # Set True when the current Move command carries Mode=="Chase".
+        self._chase_mode            = False
+        # Locked intercept point — recomputed only when turkey moves > threshold.
+        self._chase_intercept       = None   # np.ndarray [x, y] or None
+        # Last turkey position used to compute the intercept.
+        self._chase_last_turkey_pos = None   # np.ndarray [x, y] or None
+        # Latest FOV angle offset from the turkey array (col 2).
+        self._chase_fov_angle       = 0.0
+
+        print(f"[MPC] Building standard solver (N={N})...")
         self._mpc = build_solver(N)
-        print(f"[MPC] Solver ready. n_dec={self._mpc['n_dec']}")
+        print(f"[MPC] Building chase solver (N={N})...")
+        self._chase_mpc = build_chase_solver(N)
+        print(f"[MPC] Solvers ready. n_dec={self._mpc['n_dec']}")
 
     # ── Speed cap ─────────────────────────────────────────────────────────────
 
@@ -385,9 +542,10 @@ class MPC_loop:
         cap = max(0.0, min(cap, V_MAX_DEFAULT))
         self._v_max =  cap
         self._v_min = -cap
-        cs = self._mpc['ctrl_start']
-        self._mpc['lbx'][cs:] = self._v_min
-        self._mpc['ubx'][cs:] = self._v_max
+        for mpc in (self._mpc, self._chase_mpc):
+            cs = mpc['ctrl_start']
+            mpc['lbx'][cs:] = self._v_min
+            mpc['ubx'][cs:] = self._v_max
         if self._verbose:
             print(f"[MPC] Speed cap updated: [{self._v_min:.2f}, {self._v_max:.2f}] m/s")
 
@@ -404,7 +562,20 @@ class MPC_loop:
     # ── Command receivers ─────────────────────────────────────────────────────
 
     async def Orient_CMD_Receiver(self, data):
-        # Cancel any in-flight stall replan.
+        new_hdg = wrap(float(data[2]))
+
+        # If already pivoting to the same heading (within PIVOT_ALIGN_DEG),
+        # just refresh the target without resetting history or u_prev.
+        # This lets _wait_for_heading re-publish Orient for drift correction
+        # without destroying the warm state of an in-progress pivot.
+        if (self._mode == "pivot"
+                and not self._pivot_is_terminal_orient
+                and abs(np.degrees(wrap(new_hdg - self._pivot_target_hdg)))
+                    < PIVOT_ALIGN_DEG):
+            self._pivot_target_hdg = new_hdg   # refresh (effectively a no-op)
+            return
+
+        # New or significantly different heading — full reset.
         if self._stall_replan_task is not None and not self._stall_replan_task.done():
             self._stall_replan_task.cancel()
             self._stall_replan_task = None
@@ -415,33 +586,42 @@ class MPC_loop:
         self._dist_history.clear()
         self._stall_replan_cooldown = False
         self._escape_target_cell    = None
+        self._chase_mode            = False
+        self._chase_intercept       = None
+        self._chase_last_turkey_pos = None
 
         self._u_prev = np.zeros(2)
         self._guess  = None
 
         self._mode                     = "pivot"
         self._pivot_is_terminal_orient = False
-        self._pivot_target_hdg         = wrap(float(data[2]))
+        self._pivot_target_hdg         = new_hdg
+        self._pivot_err_history.clear()
+        self._pivot_stall_attempts     = 0
 
         await self._pub_clear()
 
         if self._verbose:
-            print(f"[MPC] Orient interrupt — pivoting to "
+            print(f"[MPC] Orient — pivoting to "
                   f"{np.degrees(self._pivot_target_hdg):.1f} deg")
 
-    async def Move_CMD_Receiver(self, waypoints, target_xy, face_heading=None):
+    async def Move_CMD_Receiver(self, waypoints, target_xy, face_heading=None,
+                                chase_mode=False, turkey_data=None):
         """
-        Begin tracking a new A* path.
+        Begin tracking a new A* path, or enter direct-chase mode.
 
         Parameters
         ----------
         waypoints    : list of (int x, int y)
         target_xy    : (x, y) — original requested destination
         face_heading : float (radians) or None — terminal orient heading
+        chase_mode   : bool — if True, attempt direct-chase (no A* path needed)
+        turkey_data  : list/array [x, y, fov_angle] or None — live turkey data
+                       used by direct-chase; fov_angle is col 2 of Turkeys array
         """
-        if not waypoints:
+        if not waypoints and not chase_mode:
             if self._verbose:
-                print("[MPC] Move_CMD_Receiver: empty waypoints — ignored")
+                print("[MPC] Move_CMD_Receiver: empty waypoints and not chase — ignored")
             return
 
         dest_changed = (
@@ -449,13 +629,44 @@ class MPC_loop:
             or np.linalg.norm(np.array(target_xy) - np.array(self._target)) > 3.0
         )
 
-        self._waypoints    = waypoints
         self._target       = target_xy
         self._face_heading = face_heading
-        self._guess        = None   # invalidate warm start on new plan
+        self._chase_mode   = chase_mode
 
-        # If escape is active, update target/waypoints but let the escape
-        # complete — interrupting it would send the robot back into the obstacle.
+        # Update live turkey data for chase solver if provided.
+        if turkey_data is not None:
+            td = np.array(turkey_data, dtype=float)
+            new_turkey_xy = td[:2]
+            self._chase_fov_angle = float(td[2]) if len(td) > 2 else 0.0
+
+            # Recompute intercept only if turkey has moved significantly.
+            if (self._chase_last_turkey_pos is None or
+                    np.linalg.norm(new_turkey_xy - self._chase_last_turkey_pos)
+                    > CHASE_TARGET_MOVE_DIST):
+                self._chase_intercept       = new_turkey_xy.copy()
+                self._chase_last_turkey_pos = new_turkey_xy.copy()
+                self._chase_guess           = None   # invalidate warm start
+                if self._verbose:
+                    print(f"[MPC] Chase intercept updated: {self._chase_intercept}")
+
+        if chase_mode:
+            # In direct-chase mode we bypass the A* path entirely.
+            # The corridor check was already done in TrajectoryTracker; we trust it.
+            self._waypoints = waypoints   # may be empty
+            self._guess     = None
+            if dest_changed:
+                self._dist_history.clear()
+            self._stall_replan_cooldown = False
+            self._mode = "chase"
+            if self._verbose:
+                print(f"[MPC] Direct-chase mode engaged. "
+                      f"Intercept={self._chase_intercept}")
+            return
+
+        # ── Standard A* path tracking ──────────────────────────────────────
+        self._waypoints = waypoints
+        self._guess     = None   # invalidate warm start on new plan
+
         if self._escape_target_cell is not None:
             if self._verbose:
                 print("[MPC] Move received during escape — updating target, "
@@ -490,6 +701,7 @@ class MPC_loop:
                 self._pivot_target_hdg         = hdg
                 self._pivot_is_terminal_orient = False
                 self._pivot_err_history.clear()
+                self._pivot_stall_attempts     = 0
                 self._mode                     = "pivot"
                 if self._verbose:
                     print(f"[MPC] Pre-move pivot: {np.degrees(err):.1f} deg error "
@@ -522,21 +734,42 @@ class MPC_loop:
             err_deg = abs(np.degrees(err))
 
             self._pivot_err_history.append(err_deg)
-            pivot_stalled = (
-                len(self._pivot_err_history) == PIVOT_STALL_WINDOW
-                and (self._pivot_err_history[0] - err_deg) < PIVOT_STALL_DEG
-            )
-            if pivot_stalled:
-                if self._verbose:
-                    print(f"[MPC] Pivot stall — aborting, resuming trajectory")
-                self._pivot_err_history.clear()
-                self._u_prev = np.zeros(2)
-                self._guess  = None
-                self._mode   = "trajectory" if self._waypoints else "idle"
-                if self._mode == "idle":
-                    await self._send(np.zeros(2))
-                    await self._pub_clear()
-                return
+
+            # Check for a stall only once the window is full.
+            if len(self._pivot_err_history) == PIVOT_STALL_WINDOW:
+                window_improvement = self._pivot_err_history[0] - err_deg
+                if window_improvement < PIVOT_STALL_DEG:
+                    self._pivot_stall_attempts += 1
+                    self._pivot_err_history.clear()   # start a fresh window
+
+                    if self._verbose:
+                        print(f"[MPC] Pivot stall #{self._pivot_stall_attempts} "
+                              f"(improvement={window_improvement:.1f} deg < "
+                              f"{PIVOT_STALL_DEG} deg required)")
+
+                    abort = (self._pivot_stall_attempts >= PIVOT_STALL_MAX_ATTEMPTS
+                             if self._pivot_is_terminal_orient
+                             else True)   # non-terminal: abort immediately (original behaviour)
+
+                    if abort:
+                        if self._verbose:
+                            if self._pivot_is_terminal_orient:
+                                print(f"[MPC] Terminal orient stall — "
+                                      f"aborted after {self._pivot_stall_attempts} attempts, "
+                                      f"going idle")
+                            else:
+                                print("[MPC] Pivot stall — aborting, resuming trajectory")
+                        self._pivot_err_history.clear()
+                        self._pivot_stall_attempts = 0
+                        self._u_prev = np.zeros(2)
+                        self._guess  = None
+                        self._mode   = ("trajectory"
+                                        if self._waypoints and not self._pivot_is_terminal_orient
+                                        else "idle")
+                        if self._mode == "idle":
+                            await self._send(np.zeros(2))
+                            await self._pub_clear()
+                        return
 
             if err_deg < PIVOT_ALIGN_DEG:
                 if self._pivot_is_terminal_orient:
@@ -544,6 +777,7 @@ class MPC_loop:
                     self._pivot_is_terminal_orient = False
                     self._face_heading             = None
                     self._dist_history.clear()
+                    self._pivot_stall_attempts     = 0
                     await self._send(np.zeros(2))
                     await self._pub_clear()
                     if self._verbose:
@@ -553,6 +787,7 @@ class MPC_loop:
                     if self._verbose:
                         print("[MPC] Pre-move pivot complete — trajectory.")
                 self._pivot_err_history.clear()
+                self._pivot_stall_attempts = 0
                 self._u_prev = np.zeros(2)
                 self._guess  = None
 
@@ -565,9 +800,17 @@ class MPC_loop:
                         solve_time_ms=0.0, warm_start=False,
                         replan=False, n_waypoints=len(self._waypoints))
             else:
-                omega = PIVOT_KP * err
-                u = np.array([np.clip(-omega * L / 2, self._v_min, self._v_max),
-                               np.clip( omega * L / 2, self._v_min, self._v_max)])
+                # Closed-loop pure-P pivot.
+                # Re-reads live heading error from RobotPose every DT tick.
+                # Apply a minimum speed floor so stiction doesn't stall small errors.
+                omega    = PIVOT_KP * err
+                raw_spd  = abs(omega) * L / 2
+                spd      = max(raw_spd, PIVOT_MIN_SPEED)
+                sign     = 1.0 if omega >= 0 else -1.0
+                u = np.array([
+                    np.clip(-sign * spd, self._v_min, self._v_max),
+                    np.clip( sign * spd, self._v_min, self._v_max),
+                ])
                 await self._send(u)
                 if logger:
                     logger.log(state=state, mode="pivot",
@@ -577,6 +820,112 @@ class MPC_loop:
                         n_dynamic=self._parent._n_dynamic_obs,
                         solve_time_ms=0.0, warm_start=False,
                         replan=False, n_waypoints=len(self._waypoints))
+            return
+
+        # ── Direct-chase ───────────────────────────────────────────────────────
+        if self._mode == "chase":
+            state = get_state(self._parent)
+            rxy   = state[:2]
+
+            if self._target is None or self._chase_intercept is None:
+                self._mode = "idle"
+                await self._send(np.zeros(2))
+                return
+
+            turkey_xy = self._chase_intercept
+            dist_to_turkey = np.linalg.norm(rxy - turkey_xy)
+
+            # ── Arrival ───────────────────────────────────────────────────────
+            if dist_to_turkey < CHASE_ARRIVE_DIST:
+                if self._verbose:
+                    print(f"[MPC] Chase: arrived within {CHASE_ARRIVE_DIST}m — idle")
+                self._mode        = "idle"
+                self._chase_mode  = False
+                await self._send(np.zeros(2))
+                await self._pub_clear()
+                if logger:
+                    logger.log(state=state, mode="idle",
+                        waypoint=tuple(turkey_xy),
+                        edt_distance=self._parent.Map.grid_edt_at(*rxy),
+                        vl=0.0, vr=0.0,
+                        n_dynamic=self._parent._n_dynamic_obs,
+                        solve_time_ms=0.0, warm_start=False,
+                        replan=False, n_waypoints=0)
+                return
+
+            # ── Corridor re-check — fall back to A* if obstacle appears ───────
+            gz = self._parent.Map.Zone_Map
+            if not _corridor_clear(gz, rxy, turkey_xy):
+                if self._verbose:
+                    print("[MPC] Chase: obstacle detected in corridor — "
+                          "falling back to A*")
+                self._mode        = "trajectory"
+                self._chase_mode  = False
+                self._chase_guess = None
+                # Trigger an immediate replan via the parent.
+                if (self._target is not None
+                        and (self._stall_replan_task is None
+                             or self._stall_replan_task.done())):
+                    self._stall_replan_task = asyncio.create_task(
+                        self._parent.replan_to(self._target))
+                return
+
+            # ── Minimum distance guard ────────────────────────────────────────
+            # If the robot is within CHASE_MIN_DIST of the turkey, hold position.
+            # No solve, no wheel commands — just send zero velocity.
+            if dist_to_turkey < CHASE_MIN_DIST:
+                if self._verbose:
+                    print(f"[MPC] Chase: within min dist "
+                          f"({dist_to_turkey:.2f}m < {CHASE_MIN_DIST}m) — holding")
+                await self._send(np.zeros(2))
+                if logger:
+                    logger.log(state=state, mode="chase",
+                        waypoint=tuple(turkey_xy),
+                        edt_distance=self._parent.Map.grid_edt_at(*rxy),
+                        vl=0.0, vr=0.0,
+                        n_dynamic=self._parent._n_dynamic_obs,
+                        solve_time_ms=0.0, warm_start=False,
+                        replan=False, n_waypoints=0)
+                return
+
+            # ── Chase MPC solve ────────────────────────────────────────────────
+            warm = self._chase_guess is not None
+            if not warm:
+                self._chase_guess = _seed_guess(state, self._chase_mpc)
+
+            fov_angle = self._chase_fov_angle
+            pvec = np.concatenate([state, turkey_xy,
+                                   np.array([fov_angle]), self._u_prev])
+
+            t0  = time.perf_counter()
+            sol = self._chase_mpc['solver'](
+                x0=self._chase_guess,
+                lbx=self._chase_mpc['lbx'], ubx=self._chase_mpc['ubx'],
+                lbg=self._chase_mpc['lbg'], ubg=self._chase_mpc['ubg'],
+                p=pvec)
+            ms  = (time.perf_counter() - t0) * 1000
+
+            flat              = sol['x'].full().flatten()
+            u                 = flat[self._chase_mpc['ctrl_start']:
+                                     self._chase_mpc['ctrl_start'] + self._chase_mpc['nu']]
+            self._chase_guess = _shift_guess(flat, self._chase_mpc)
+            self._u_prev      = u.copy()
+
+            if self._verbose:
+                print(f"[MPC] Chase dist={dist_to_turkey:.2f}m "
+                      f"fov={np.degrees(fov_angle):.1f}deg "
+                      f"u=[{u[0]:.2f},{u[1]:.2f}] solve={ms:.1f}ms warm={warm}")
+
+            if logger:
+                logger.log(state=state, mode="chase",
+                    waypoint=tuple(turkey_xy),
+                    edt_distance=self._parent.Map.grid_edt_at(*rxy),
+                    vl=float(u[0]), vr=float(u[1]),
+                    n_dynamic=self._parent._n_dynamic_obs,
+                    solve_time_ms=ms, warm_start=warm,
+                    replan=False, n_waypoints=0)
+
+            await self._send(u)
             return
 
         if self._mode != "trajectory":
@@ -590,12 +939,6 @@ class MPC_loop:
             self._mode = "idle"; return
 
         # ── Obstacle escape (targeted cell + MPC) ────────────────────────────
-        # Triggered when EDT == 0 (robot is inside a hard wall cell).
-        # On first entry: BFS finds the nearest high-EDT cell biased behind the
-        # robot (opposite to current heading), locks it as the escape target.
-        # The robot then drives to that cell under normal MPC control — no
-        # open-loop wheel commands.  Escape ends when the robot's EDT clears
-        # ESCAPE_EDT_FLOOR, at which point a full A* replan fires.
         from . import PathGenerator as PG
 
         gz       = self._parent.Map.Zone_Map
@@ -604,13 +947,11 @@ class MPC_loop:
         grid_edt = float(PG._get_edt(gz)[giy, gix])
         in_obstacle = grid_edt == 0.0
 
-        # Enter escape if newly in obstacle, or continue if already escaping.
         if in_obstacle and self._escape_target_cell is None:
             target_cell = _find_escape_cell(
                 self._parent.Map, rxy, state[2], verbose=self._verbose)
 
             if target_cell is None:
-                # Fully boxed in — stop and wait for map to change.
                 await self._send(np.zeros(2))
                 if logger:
                     logger.log(state=state, mode="escape",
@@ -622,7 +963,7 @@ class MPC_loop:
                 return
 
             self._escape_target_cell    = target_cell
-            self._guess                 = None   # discard warm-start; it drove us here
+            self._guess                 = None
             self._u_prev                = np.zeros(2)
             self._stall_replan_cooldown = False
             if self._verbose:
@@ -633,7 +974,6 @@ class MPC_loop:
         if self._escape_target_cell is not None:
             escape_cell = self._escape_target_cell
 
-            # Check clearance at current position — exit escape when clear.
             if grid_edt >= ESCAPE_EDT_FLOOR and not in_obstacle:
                 if self._verbose:
                     print(f"[MPC] Escape cleared (EDT={grid_edt:.1f} >= {ESCAPE_EDT_FLOOR}) "
@@ -647,7 +987,6 @@ class MPC_loop:
                         self._parent.replan_to(self._target))
                 return
 
-            # Still escaping — drive to escape cell under MPC.
             escape_xy = np.array(escape_cell, dtype=float)
             warm = self._guess is not None
             if not warm:
@@ -709,6 +1048,8 @@ class MPC_loop:
                           f"{np.degrees(self._face_heading):.1f} deg")
                 self._pivot_target_hdg         = self._face_heading
                 self._pivot_is_terminal_orient = True
+                self._pivot_err_history.clear()
+                self._pivot_stall_attempts     = 0
                 self._waypoints                = []
                 self._mode                     = "pivot"
             else:
@@ -727,23 +1068,26 @@ class MPC_loop:
                     replan=False, n_waypoints=len(self._waypoints))
             return
 
-        # ── Stall detection ───────────────────────────────────────────────────
+        # ── Stall detection (disabled in chase mode) ───────────────────────────
         dist_to_end = np.linalg.norm(rxy - np.array(self._waypoints[-1], dtype=float))
         self._dist_history.append(dist_to_end)
-        stalled = (
-            not self._stall_replan_cooldown
-            and len(self._dist_history) == STALL_WINDOW
-            and (self._dist_history[0] - dist_to_end) < STALL_DELTA
-        )
+        stalled = False
 
-        if stalled:
-            if self._verbose:
-                print(f"[MPC] Stall detected (dist_to_end={dist_to_end:.2f}m) — replanning")
-            self._dist_history.clear()
-            self._guess                 = None
-            self._stall_replan_cooldown = True
-            self._stall_replan_task     = asyncio.create_task(
-                self._parent.replan_to(self._target))
+        if not self._chase_mode:
+            stalled = (
+                not self._stall_replan_cooldown
+                and len(self._dist_history) == STALL_WINDOW
+                and (self._dist_history[0] - dist_to_end) < STALL_DELTA
+            )
+
+            if stalled:
+                if self._verbose:
+                    print(f"[MPC] Stall detected (dist_to_end={dist_to_end:.2f}m) — replanning")
+                self._dist_history.clear()
+                self._guess                 = None
+                self._stall_replan_cooldown = True
+                self._stall_replan_task     = asyncio.create_task(
+                    self._parent.replan_to(self._target))
 
         # ── Solve ─────────────────────────────────────────────────────────────
         warm = self._guess is not None

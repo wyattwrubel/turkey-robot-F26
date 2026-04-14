@@ -10,26 +10,21 @@ from scipy.ndimage import distance_transform_edt
 EDT_WEIGHT      = 2.0   # how strongly A* favours corridor centres
 STRAIGHT_WEIGHT = 0.3   # bonus cost for direction changes (favours straight lines)
 
-# Hard clearance has been REMOVED.  A* will now plan through any cell that is
-# not an actual obstacle (1, -1, 2).  The soft penalty below is the only
-# mechanism that discourages wall-hugging; this lets the robot squeeze through
-# tight corridors that the old 1-cell hard buffer would have blocked entirely.
-
 # Soft penalty zone: cells within SOFT_CLEARANCE metres of a static obstacle
-# incur a small extra cost per step.  This nudges A* to prefer open corridors
-# without hard-blocking narrow passages.
+# incur a small extra cost per step.
 SOFT_CLEARANCE         = 3.0   # metres — zone within which penalty applies
 SOFT_CLEARANCE_PENALTY = 1.5   # additive cost per step
 
-# Exposed so MovementExecutor can import it for the escape-trigger check.
-# With no hard clearance this is now 0 — the robot is only "in obstacle" if
-# EDT == 0 (it is literally inside a wall cell).
 PLANNING_CLEARANCE = 0.0
 
-# Old-path bias on replan — fades linearly so small deviations are penalised
-# but large improvements that justify leaving the corridor are still taken.
+# Old-path bias on replan.
 PATH_BIAS_RADIUS  = 2.5   # metres
 PATH_BIAS_PENALTY = 1.5   # max extra cost per step at the corridor edge
+
+# Turkey proximity early-exit: A* terminates as soon as a node is within this
+# distance of the nearest turkey (closest to the robot), so the robot stops
+# in front of the turkey rather than on top of it.
+TURKEY_PROXIMITY_DIST = 4.0   # metres
 
 # =============================================================================
 # EDT cache — recomputed only when the static obstacle layer changes
@@ -63,14 +58,8 @@ def _get_edt(map_grid):
 
 def _is_blocked(map_grid, edt, x, y):
     """
-    True if cell (x, y) is:
-      - out of bounds
-      - a static obstacle (1 or -1)
-      - a dynamic obstacle (2)
-
-    Hard EDT clearance has been removed.  Cells adjacent to walls are now
-    permissible — the soft penalty in _soft_penalty() discourages wall-hugging
-    without completely forbidding tight corridors.
+    True if cell (x, y) is out of bounds, a static obstacle (1 or -1),
+    or a dynamic obstacle (2).
     """
     h, w = map_grid.shape
     if x < 0 or x >= w or y < 0 or y >= h:
@@ -87,7 +76,6 @@ def _soft_penalty(edt, x, y):
     d = float(edt[int(y), int(x)])
     if d >= SOFT_CLEARANCE:
         return 0.0
-    # Avoid division by zero (should not happen, but be safe)
     if SOFT_CLEARANCE <= 0:
         return 0.0
     t = (SOFT_CLEARANCE - d) / SOFT_CLEARANCE
@@ -105,7 +93,6 @@ def _diagonal_cuts_corner(map_grid, edt, cx, cy, dx, dy):
 def _nearest_free(map_grid, edt, cell):
     """
     BFS outward from cell until a non-obstacle cell is found.
-    Used for snapping the robot's start or goal if it lands on an obstacle.
     """
     h, w = map_grid.shape
     q    = deque([cell])
@@ -125,8 +112,6 @@ def _nearest_free(map_grid, edt, cell):
 def _snap_goal_to_closest_free(map_grid, edt, goal, verbose=False):
     """
     Find the free cell (non-obstacle) closest to `goal` by Euclidean distance.
-    BFS outward from goal, returns the nearest reachable free cell.
-    Falls back to goal itself if already free.
     """
     if not _is_blocked(map_grid, edt, *goal):
         return goal
@@ -174,8 +159,6 @@ def _snap_goal_to_closest_free(map_grid, edt, goal, verbose=False):
 def _build_bias_map(old_waypoints):
     """
     Return a dict (x, y) → penalty for cells near the previous A* path.
-    Penalty fades linearly from 0 at the centreline to PATH_BIAS_PENALTY at
-    PATH_BIAS_RADIUS, so large improvements still override the old route.
     """
     if not old_waypoints:
         return None
@@ -197,7 +180,7 @@ def _build_bias_map(old_waypoints):
 
 # =============================================================================
 # A* with EDT centering, soft clearance, straight-line preference,
-# and optional old-path bias for smooth replanning
+# optional old-path bias, and optional turkey proximity early-exit
 # =============================================================================
 
 NEIGHBORS = [
@@ -206,23 +189,36 @@ NEIGHBORS = [
 ]
 
 
-def _astar(map_grid, start, goal, bias_map=None, verbose=False):
+def _astar(map_grid, start, goal, bias_map=None,
+           turkey_target_xy=None, verbose=False):
     """
     A* on the Zone_Map grid.
 
     Edge cost = move_distance
-              + EDT_WEIGHT / (edt(neighbour) + 0.5)          ← corridor centering
-              + _soft_penalty(edt, x, y)                      ← soft wall margin
-              + STRAIGHT_WEIGHT * direction_changed            ← straight-line bias
-              + bias_map.get(neighbour, PATH_BIAS_PENALTY)    ← old-path continuity
+              + EDT_WEIGHT / (edt(neighbour) + 0.5)
+              + _soft_penalty(edt, x, y)
+              + STRAIGHT_WEIGHT * direction_changed
+              + bias_map.get(neighbour, PATH_BIAS_PENALTY)
 
-    No hard EDT clearance — only actual obstacle cells are blocked.
+    turkey_target_xy : array-like [x, y] or None
+        If provided, A* terminates early as soon as the current node is within
+        TURKEY_PROXIMITY_DIST metres of this position (Euclidean).  This stops
+        the robot in front of the turkey rather than planning all the way to
+        its exact grid cell.  The early-exit uses Euclidean distance only —
+        no line-of-sight check.
 
     If the goal is unreachable A* terminates at the closest reachable cell.
     """
     edt      = _get_edt(map_grid)
     h, w     = map_grid.shape
     use_bias = bias_map is not None
+
+    # Pre-compute turkey proximity check components.
+    use_turkey_exit = turkey_target_xy is not None
+    if use_turkey_exit:
+        tx = float(turkey_target_xy[0])
+        ty = float(turkey_target_xy[1])
+        turkey_dist_sq = TURKEY_PROXIMITY_DIST ** 2
 
     def edt_cost(x, y):
         col = int(np.clip(x, 0, w - 1))
@@ -242,9 +238,25 @@ def _astar(map_grid, start, goal, bias_map=None, verbose=False):
     while open_heap:
         _, current = heapq.heappop(open_heap)
 
+        # ── Standard goal check ───────────────────────────────────────────────
         if current == goal:
             best_node = goal
             break
+
+        # ── Turkey proximity early-exit ───────────────────────────────────────
+        # Terminate as soon as we pop a node within TURKEY_PROXIMITY_DIST of
+        # the turkey.  This is checked after popping (not on push) so the path
+        # to this node is guaranteed to be the lowest-cost path reaching it.
+        if use_turkey_exit:
+            dx_t = current[0] - tx
+            dy_t = current[1] - ty
+            if dx_t * dx_t + dy_t * dy_t <= turkey_dist_sq:
+                best_node = current
+                if verbose:
+                    dist_to_turkey = np.hypot(dx_t, dy_t)
+                    print(f"[PathGenerator] Turkey proximity exit at {current} "
+                          f"(dist={dist_to_turkey:.2f}m <= {TURKEY_PROXIMITY_DIST}m)")
+                break
 
         if current in closed:
             continue
@@ -287,7 +299,7 @@ def _astar(map_grid, start, goal, bias_map=None, verbose=False):
                 fscore              = tentative_g + np.hypot(nx-goal[0], ny-goal[1])
                 heapq.heappush(open_heap, (fscore, neighbor))
 
-    if verbose and best_node != goal:
+    if verbose and best_node != goal and not (use_turkey_exit and best_node != start):
         print(f"[PathGenerator] Goal {goal} unreachable — terminating at {best_node}")
 
     # Reconstruct path from best_node
@@ -313,22 +325,22 @@ def _astar(map_grid, start, goal, bias_map=None, verbose=False):
 # =============================================================================
 
 def GenerateTrajectory(map_obj, current_state, desired_state,
-                       old_waypoints=None, verbose=False):
+                       old_waypoints=None, turkey_target_xy=None,
+                       verbose=False):
     """
-    A* path planner.  Hard EDT clearance has been removed — the planner will
-    now route through narrow gaps that the old 1m buffer would have blocked.
-    Soft penalty (SOFT_CLEARANCE / SOFT_CLEARANCE_PENALTY) still nudges paths
-    toward corridor centres without hard-forbidding tight passages.
-
-    Goal snapping and old-path bias are unchanged.
+    A* path planner with optional turkey proximity early-exit.
 
     Parameters
     ----------
-    map_obj       : MapUpdater.Map instance  (.Zone_Map)
-    current_state : array-like [x, y, ...]
-    desired_state : array-like [x, y, ...]  (may be inside an obstacle)
-    old_waypoints : list of (int x, int y) or None
-    verbose       : bool
+    map_obj          : MapUpdater.Map instance  (.Zone_Map)
+    current_state    : array-like [x, y, ...]
+    desired_state    : array-like [x, y, ...]  (may be inside an obstacle)
+    old_waypoints    : list of (int x, int y) or None
+    turkey_target_xy : array-like [x, y] or None
+        When provided (i.e. the target is a turkey), A* exits as soon as it
+        reaches a node within TURKEY_PROXIMITY_DIST metres of this position.
+        Should be the turkey closest to the robot (in world coordinates).
+    verbose          : bool
 
     Returns
     -------
@@ -356,7 +368,8 @@ def GenerateTrajectory(map_obj, current_state, desired_state,
         goal = _snap_goal_to_closest_free(map_grid, edt, goal, verbose=verbose)
 
     bias_map = _build_bias_map(old_waypoints) if old_waypoints else None
-    path     = _astar(map_grid, start, goal, bias_map=bias_map, verbose=verbose)
+    path     = _astar(map_grid, start, goal, bias_map=bias_map,
+                      turkey_target_xy=turkey_target_xy, verbose=verbose)
 
     if verbose:
         print(f"[PathGenerator] Path: {len(path)} waypoints, "

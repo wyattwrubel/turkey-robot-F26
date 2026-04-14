@@ -113,10 +113,11 @@ function connect() {
   
   // CHANGE HERE
   // ws = new WebSocket('ws://100.67.22.116:8000/ws')
-  // ws = new WebSocket('ws://192.168.10.2:8000/ws')
   
-  ws = new WebSocket('ws://192.168.4.2:8000/ws')
+  // ws = new WebSocket('ws://192.168.4.3:8000/ws')
   // ws = new WebSocket('ws://35.3.137.208:8000/ws')
+  ws = new WebSocket('ws://192.168.10.2:8000/ws')
+  
   // ws = new WebSocket('ws://172.20.10.2:8000/ws')
 
   // ws = new WebSocket(`ws://${PI_HOST}:8000/ws`)
@@ -581,8 +582,9 @@ function _reloadCamImg(img) {
   // Host matches the WebSocket host defined in connect() above.
   
   // CHANGE HERE
-  // const base = `http://192.168.10.2:8000/camera`
-  const base = `http://100.67.22.116:8000/camera`
+  const base = `http://192.168.10.2:8000/camera`
+  // const base = `http://192.168.4.3:8000/camera`
+  // const base = `http://100.67.22.116:8000/camera`
   img.src = base + '?t=' + Date.now()
 }
 

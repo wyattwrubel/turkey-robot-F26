@@ -80,7 +80,7 @@ from websockets.server import WebSocketServerProtocol
 VIDEO_PORT   = 8765
 DETECT_PORT  = 8766
 CAMERA_FPS   = 10
-JPEG_QUALITY = 40
+JPEG_QUALITY = 80
 
 # Per-class colors in BGR
 CLASS_COLORS = {

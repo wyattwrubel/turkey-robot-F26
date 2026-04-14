@@ -15,22 +15,25 @@ State machine:
   IDLE  -> CHASE : on UnlockUI with turkey already in zone
   SCAN  -> CHASE : turkey detected inside zone (immediate preempt)
   SCAN  -> SCAN  : turkey detected outside zone (ignored)
-  CHASE -> ALERT : turkey lost visual  (end_of_chase=False, lose_visual path)
+  CHASE -> ALERT : turkey lost visual for > LOST_VISUAL_DEBOUNCE_S seconds
   CHASE -> ALERT : turkey exits zone   (end_of_chase=True,  boundary path)
   ALERT -> CHASE : turkey reappears inside zone (immediate interrupt)
   ALERT -> SCAN  : alert timer expires with no turkey reacquired
 
 Chase navigation:
   Chase_Routine runs two parallel tasks:
-    Nav task      — sends first Move immediately, then every 1 s toward
-                    nearest-to-robot turkey. On lost visual, navigates to last
-                    known pos and transitions to Alert when robot stops moving
-                    (< STOPPED_THRESHOLD_M displacement in STOPPED_WINDOW_S).
+    Nav task      — sends first Move immediately, then every 0.5 s toward
+                    nearest-to-robot turkey.  If turkey is absent from the
+                    vision frame for > LOST_VISUAL_DEBOUNCE_S continuously,
+                    nav immediately stops and transitions to Alert.
+                    Any reappearance within the debounce window resets the
+                    timer and resumes chasing — no path-following on lost visual.
     Behavior task — loops _aggressive_pursuit / _burst_attack based on
                     distance to nearest turkey; never blocks the nav task.
     _growl_and_chase fires as a background task so it does not delay Move.
+
   VisionObject_Receiver is memory-only: stores turkeys/ghosts, updates
-  last_known_turkey_pos, never publishes movement.
+  last_known_turkey_pos and last_known_fov_angle, never publishes movement.
 
 Alert paths:
   Path1  (end_of_chase=True  — turkey crossed boundary):
@@ -38,10 +41,11 @@ Alert paths:
     TerritorialWarning(30s) -> ShortWarningBurst(30s) ->
     TerritorialWarning(30s) -> ShortWarningBurst(30s)   [2 min total]
   Path2  (lose-visual, odd  attempt):
-    TerritorialWarning behavior + continuous 90 deg rotation until timer expires
+    Direction-biased 8-step rotation (2 full circles) toward the side the
+    turkey was last seen, then TerritorialWarning behavior.
   Path3  (lose-visual, even attempt):
-    ShortWarningBurst behavior  + continuous 90 deg rotation until timer expires
-
+    Direction-biased 8-step rotation (2 full circles) toward the side the
+    turkey was last seen, then ShortWarningBurst behavior.
   Path2/Path3 alternate from the very first lose-visual event.
   Turkey outside zone during Alert does NOT reset the timer.
   Turkey inside zone during Alert immediately cancels and enters Chase.
@@ -73,13 +77,39 @@ class Mode(Enum):
 class StatePlannerReceiver:
 
     ARRIVE_THRESHOLD_M       = 1.0    # metres — considered "arrived"
-    HEADING_THRESHOLD_RAD    = 0.10   # radians — considered "on heading" (~6°)
+    HEADING_THRESHOLD_RAD    = 0.035  # radians — exit threshold (~2°, matches PIVOT_ALIGN_DEG)
+    HEADING_REENGAGE_RAD     = 0.10   # radians — re-publish Orient only if error exceeds this (~6°)
     HEADING_TIMEOUT_S        = 10.0   # seconds — max wait per Orient step before giving up
     HEADING_POLL_S           = 0.05   # seconds — RobotPose poll interval inside heading waits
     GHOST_DEDUP_RADIUS_M     = 5.0    # metres — minimum separation between ghost points
     CHASE_NAV_RATE_S         = 0.5    # seconds — Move replan interval in chase
     STOPPED_WINDOW_S         = 1.0    # seconds — interval to measure robot displacement
     STOPPED_THRESHOLD_M      = 0.2    # metres — displacement below this = robot stopped
+
+    # ── Speed caps (m/s) — tune these at the top level ────────────────────────
+    SPEED_SCAN               = 3.0    # cruising speed during waypoint scan
+    SPEED_ALERT              = 3.0    # speed cap during alert routines
+    SPEED_CHASE_GROWL        = 1.0    # slow speed during initial growl sequence
+    SPEED_CHASE              = 2.0    # full chase pursuit speed
+
+    # Minimum approach distance during chase.
+    # When the robot is within this radius of the turkey, speed cap drops to 0
+    # (robot holds position).  Speed is restored as soon as the turkey moves
+    # back beyond this distance.
+    CHASE_STOP_DIST_M        = 4.0    # metres
+
+    # Lost-visual debounce: turkey must be absent for this long continuously
+    # before the chase nav loop treats it as lost and transitions to Alert.
+    # Any reappearance within this window resets the timer.
+    LOST_VISUAL_DEBOUNCE_S   = 1.5
+
+    # Direction-biased rotation in Alert Path2/Path3.
+    # Total steps = ALERT_ROTATION_STEPS (8 = two full 360° rotations).
+    # Direction is determined by last_known_fov_angle:
+    #   fov_angle > 0  → turkey was right of centre → turn right (negative steps)
+    #   fov_angle < 0  → turkey was left  of centre → turn left  (positive steps)
+    ALERT_ROTATION_STEPS     = 8
+    ALERT_ROTATION_STEP_DEG  = 90.0
 
     def __init__(self, MacroState_Publisher, Canine_Publisher, MotionCommand_Publisher, Verbose=False):
         self.MacroState_Publisher    = MacroState_Publisher
@@ -107,13 +137,18 @@ class StatePlannerReceiver:
         self._scan_target = None
 
         # Alert lose-visual alternation counter
-        # Odd  -> Path2 (TerritorialWarning -> WatchfulDog)
-        # Even -> Path3 (ShortWarningBurst  -> WatchfulDog)
         self._lose_visual_count = 0
 
         # Turkey tracking
         self.turkey_detected       = False
         self.last_known_turkey_pos = None
+
+        # Last known FOV angle of the nearest turkey (col 2 of Turkeys array).
+        # Positive = turkey was right of camera centre.
+        # Negative = turkey was left  of camera centre.
+        # Updated whenever a turkey is visible; preserved on loss so Alert
+        # rotation knows which direction to spin.
+        self.last_known_fov_angle: float = 0.0
 
         # Set when any turkey is confirmed inside the zone; cleared otherwise
         self._turkey_in_zone_event = asyncio.Event()
@@ -146,7 +181,6 @@ class StatePlannerReceiver:
     # ------------------------------------------------------------------
 
     def _cancel_current_task(self) -> None:
-        """Fire-and-forget cancel. Never await a task you just cancelled."""
         if self._current_task and not self._current_task.done():
             self._current_task.cancel()
         self._current_task = None
@@ -156,7 +190,7 @@ class StatePlannerReceiver:
         self._current_task = asyncio.get_event_loop().create_task(coro)
 
     # ------------------------------------------------------------------
-    # Mode entry helpers — always synchronous, always call _start_task
+    # Mode entry helpers
     # ------------------------------------------------------------------
 
     def _enter_scan(self) -> None:
@@ -180,7 +214,7 @@ class StatePlannerReceiver:
         self._start_task(self.Stop_Routine())
 
     # ------------------------------------------------------------------
-    # Heading helper — closed-loop wait for Orient to settle
+    # Heading helper
     # ------------------------------------------------------------------
 
     async def _wait_for_heading(self, target_rad: float) -> bool:
@@ -188,27 +222,47 @@ class StatePlannerReceiver:
         Poll RobotPose theta until within HEADING_THRESHOLD_RAD of target_rad,
         or until HEADING_TIMEOUT_S elapses.
 
-        Returns True  if heading was reached within the timeout.
-        Returns False if the timeout expired (robot stuck / MPC slow).
+        Re-publishes Orient only when the heading error exceeds
+        HEADING_REENGAGE_RAD — this keeps the MPC pivot alive if the robot
+        overshoots or drifts, without hammering Orient_CMD_Receiver every tick
+        (which resets u_prev and err_history and causes its own delays).
 
-        Always cancellable — CancelledError propagates normally so the
-        surrounding routine (Scan, Alert) can be preempted as usual.
-
-        target_rad should already be wrapped to (-π, π].
+        Returns True if heading reached, False on timeout.
         """
-        elapsed = 0.0
+        elapsed   = 0.0
+        robot_pos = np.array(self.Current_RobotPose[:3])
+        drive_heading = (target_rad + np.pi) % (2 * np.pi) - np.pi
+
+        # Publish once immediately to kick the pivot off.
+        await self.MotionCommand_Publisher.publish(
+            {"Id": "Orient",
+             "Cmd": [float(robot_pos[0]), float(robot_pos[1]), drive_heading]}
+        )
+
         while elapsed < self.HEADING_TIMEOUT_S:
-            current = float(self.Current_RobotPose[2])
-            # Shortest signed angular distance, wrapped to (-π, π]
-            err = (target_rad - current + np.pi) % (2 * np.pi) - np.pi
-            if abs(err) < self.HEADING_THRESHOLD_RAD:
-                self._dbg(
-                    f"[Heading] Reached {np.degrees(target_rad):.1f}° "
-                    f"(err={np.degrees(err):.1f}°) in {elapsed:.2f}s"
-                )
-                return True
             await asyncio.sleep(self.HEADING_POLL_S)
             elapsed += self.HEADING_POLL_S
+
+            current = float(self.Current_RobotPose[2])
+            err     = (target_rad - current + np.pi) % (2 * np.pi) - np.pi
+            err_abs = abs(err)
+
+            if err_abs < self.HEADING_THRESHOLD_RAD:
+                self._dbg(
+                    f"[Heading] Reached {np.degrees(target_rad):.1f}° "
+                    f"(err={np.degrees(err):.2f}°) in {elapsed:.2f}s"
+                )
+                return True
+
+            # Only re-publish if error has grown back above re-engage threshold.
+            # This lets the MPC pivot run to completion without being reset every
+            # 50ms, while still correcting overshoots or drift.
+            if err_abs > self.HEADING_REENGAGE_RAD:
+                robot_pos = np.array(self.Current_RobotPose[:3])
+                await self.MotionCommand_Publisher.publish(
+                    {"Id": "Orient",
+                     "Cmd": [float(robot_pos[0]), float(robot_pos[1]), drive_heading]}
+                )
 
         self._dbg(
             f"[Heading] Timeout ({self.HEADING_TIMEOUT_S}s) waiting for "
@@ -236,31 +290,33 @@ class StatePlannerReceiver:
         self.Turkeys         = turkeys.tolist() if turkeys.size > 0 else []
         self.turkey_detected = len(self.Turkeys) > 0
 
-        # Determine nearest turkey and update zone event / last known pos
+        # Determine nearest turkey, update zone event, last known pos and FOV angle.
         turkey_in_zone = False
         if self.turkey_detected:
             robot_pos = np.array(self.Current_RobotPose[:2])
-            nearest   = min(self.Turkeys, key=lambda t: np.linalg.norm(np.array(t[:2]) - robot_pos))
+            nearest   = min(self.Turkeys,
+                            key=lambda t: np.linalg.norm(np.array(t[:2]) - robot_pos))
             self.last_known_turkey_pos = np.array(nearest[:2])
+
+            # Col 2 is the relative angle from camera centre (radians).
+            # Positive = right of centre, negative = left of centre.
+            # Only update when turkey is visible so we preserve the last-seen
+            # direction for Alert rotation after the turkey disappears.
+            self.last_known_fov_angle = float(nearest[2])
+
             turkey_in_zone = self.ZoneChecker.is_inside(nearest[0], nearest[1])
 
-        # Maintain event flag for routines that poll it
         if turkey_in_zone:
             self._turkey_in_zone_event.set()
         else:
             self._turkey_in_zone_event.clear()
 
-        # Enqueue any ghost positions for scan routing
         for g in (ghosts.tolist() if ghosts.size > 0 else []):
             self._try_enqueue_ghost(g[0], g[1])
 
         await self._arbitrate(turkey_in_zone)
 
     async def MacroState_Receiver(self, data: dict) -> None:
-        """
-        Handles manual UI commands and the UnlockUI / re-lock flow.
-        Substates dispatched here are for manual testing only.
-        """
         state = data.get("Id", "")
 
         if state == "UnlockUI":
@@ -270,7 +326,6 @@ class StatePlannerReceiver:
             await self._arbitrate(turkey_in_zone=self._turkey_in_zone_event.is_set())
             return
 
-        # Any other command locks to manual mode
         self.IsManualMode = True
         self._cancel_current_task()
         self._mode = Mode.IDLE
@@ -296,7 +351,7 @@ class StatePlannerReceiver:
             print(f"[StatePlanner] MacroState_Receiver: unknown state '{state}'")
 
     # ------------------------------------------------------------------
-    # Arbitration — called every vision frame, must be instant
+    # Arbitration
     # ------------------------------------------------------------------
 
     async def _arbitrate(self, turkey_in_zone: bool) -> None:
@@ -307,7 +362,8 @@ class StatePlannerReceiver:
             self._dbg(
                 f"[Arbitrate] mode={self._mode.name} | in_zone={turkey_in_zone} | "
                 f"detected={self.turkey_detected} | "
-                f"last_pos={np.round(self.last_known_turkey_pos, 2) if self.last_known_turkey_pos is not None else None}"
+                f"last_pos={np.round(self.last_known_turkey_pos, 2) if self.last_known_turkey_pos is not None else None} | "
+                f"fov_angle={np.degrees(self.last_known_fov_angle):.1f}deg"
             )
 
         if turkey_in_zone:
@@ -337,7 +393,7 @@ class StatePlannerReceiver:
             await self.MotionCommand_Publisher.publish(
                 {"Id": "Move", "Cmd": self._scan_target[:2].tolist()}
             )
-            await self._SpeedCap_Publish(3.0)
+            await self._SpeedCap_Publish(self.SPEED_SCAN)
             await self._module_scan._travel_to_waypoint()
 
             while True:
@@ -359,16 +415,12 @@ class StatePlannerReceiver:
 
             for i in range(1, 5):
                 robot_pos    = np.array(self.Current_RobotPose[:3])
-                # Physical heading the robot will actually reach (what RobotPose reports)
                 wait_heading = (base_heading + i * np.pi / 2 + np.pi) % (2 * np.pi) - np.pi
-                # MPC Orient convention applies +pi flip to the commanded heading
                 drive_heading = (wait_heading + np.pi) % (2 * np.pi) - np.pi
                 await self.MotionCommand_Publisher.publish(
                     {"Id": "Orient", "Cmd": [robot_pos[0], robot_pos[1], drive_heading]}
                 )
-                # Closed-loop: wait for theta to settle, with timeout preemption guard
                 await self._wait_for_heading(wait_heading)
-                # Dwell at heading to allow vision scan before rotating to next step
                 await asyncio.sleep(1.0)
 
             self._scan_idx   += 1
@@ -389,59 +441,115 @@ class StatePlannerReceiver:
 
         self._dbg(f"[Chase] Starting — {len(self.Turkeys)} turkey(s) visible")
 
-        # Shared signal: nav loop sets this before returning
-        # False = lost visual, True = turkey exited zone
         end_of_chase_result: list = [None]
 
         def _nearest_turkey() -> np.ndarray | None:
             if not self.Turkeys:
                 return None
             robot_pos = np.array(self.Current_RobotPose[:2])
-            nearest   = min(self.Turkeys, key=lambda t: np.linalg.norm(np.array(t[:2]) - robot_pos))
+            nearest   = min(self.Turkeys,
+                            key=lambda t: np.linalg.norm(np.array(t[:2]) - robot_pos))
             return np.array(nearest[:2])
 
         async def _chase_nav_loop() -> None:
             """
-            Publishes Move toward nearest in-zone turkey every 0.5 s.
-            Detects zone-exit and lost-visual; sets end_of_chase_result and returns.
+            Publishes Move toward nearest in-zone turkey every CHASE_NAV_RATE_S.
+
+            Lost-visual handling:
+              A 0.5 s countdown timer is reset every time a turkey is visible.
+              If the timer expires without a visible turkey frame, the robot
+              stops (SpeedCap 0.0) and transitions to Alert immediately.
+              Business as usual while turkey is continuously in frame.
+
+            Zone-exit handling is unchanged: if the turkey is visible but has
+            crossed the zone boundary, end_of_chase_result[0] = True.
             """
+            # Deadline: asyncio time by which a turkey must appear or we stop.
+            # Initialised to now + debounce so the loop starts with a full window.
+            deadline:  float = (asyncio.get_event_loop().time()
+                               + self.LOST_VISUAL_DEBOUNCE_S)
+            stopped:   bool  = False   # True once SpeedCap 0 sent for lost-visual
+            too_close: bool  = False   # True once SpeedCap 0 sent for proximity
+
             while True:
-                # Lost visual — navigate to last known, wait until stopped
-                if not self.turkey_detected or not self.Turkeys:
-                    self._dbg("[Chase/Nav] Lost visual — navigating to last known pos")
-                    reacquired = await self._nav_to_last_known()
-                    if reacquired and self._turkey_in_zone_event.is_set():
-                        self._dbg("[Chase/Nav] Turkey reacquired — resuming")
+                now = asyncio.get_event_loop().time()
+
+                if self.turkey_detected and self.Turkeys:
+                    # Turkey visible — reset the deadline and restore speed if
+                    # we had previously lost visual.
+                    deadline = now + self.LOST_VISUAL_DEBOUNCE_S
+                    if stopped:
+                        self._dbg("[Chase/Nav] Turkey back in frame — resuming chase")
+                        await self._SpeedCap_Publish(self.SPEED_CHASE)
+                        stopped   = False
+                        too_close = False   # re-evaluate proximity from scratch
+
+                    turkey_pos = _nearest_turkey()
+                    if turkey_pos is None:
+                        await asyncio.sleep(self.CHASE_NAV_RATE_S)
                         continue
-                    self._dbg("[Chase/Nav] Turkey not reacquired — Alert")
-                    end_of_chase_result[0] = False
-                    return
 
-                turkey_pos = _nearest_turkey()
-                if turkey_pos is None:
+                    if self.ZoneChecker.is_outside(turkey_pos[0], turkey_pos[1]):
+                        self._dbg("[Chase/Nav] Turkey exited zone — Alert (end_of_chase)")
+                        end_of_chase_result[0] = True
+                        return
+
+                    # ── Proximity stop ────────────────────────────────────────
+                    # If the robot is within CHASE_STOP_DIST_M, cut speed to 0
+                    # and suppress the Move command.  Resume as soon as the
+                    # turkey moves back outside the radius.
+                    robot_pos   = np.array(self.Current_RobotPose[:2])
+                    dist_to_turkey = np.linalg.norm(turkey_pos - robot_pos)
+
+                    if dist_to_turkey < self.CHASE_STOP_DIST_M:
+                        if not too_close:
+                            self._dbg(
+                                f"[Chase/Nav] Turkey within {self.CHASE_STOP_DIST_M}m "
+                                f"(dist={dist_to_turkey:.2f}m) — holding position"
+                            )
+                            await self._SpeedCap_Publish(0.0)
+                            too_close = True
+                        await asyncio.sleep(self.CHASE_NAV_RATE_S)
+                        continue
+
+                    # Turkey is beyond the stop radius — resume if we were holding.
+                    if too_close:
+                        self._dbg(
+                            f"[Chase/Nav] Turkey moved beyond {self.CHASE_STOP_DIST_M}m "
+                            f"(dist={dist_to_turkey:.2f}m) — resuming"
+                        )
+                        await self._SpeedCap_Publish(self.SPEED_CHASE)
+                        too_close = False
+
+                    await self.MotionCommand_Publisher.publish(
+                        {"Id": "Move", "Mode": "Chase", "Cmd": turkey_pos.tolist()}
+                    )
+                    self._dbg(f"[Chase/Nav] Move -> {np.round(turkey_pos, 2)}")
                     await asyncio.sleep(self.CHASE_NAV_RATE_S)
-                    continue
 
-                if self.ZoneChecker.is_outside(turkey_pos[0], turkey_pos[1]):
-                    self._dbg("[Chase/Nav] Turkey exited zone — Alert (end_of_chase)")
-                    end_of_chase_result[0] = True
-                    return
-
-                await self.MotionCommand_Publisher.publish(
-                    {"Id": "Move", "Cmd": turkey_pos.tolist()}
-                )
-                self._dbg(f"[Chase/Nav] Move -> {np.round(turkey_pos, 2)}")
-                await asyncio.sleep(self.CHASE_NAV_RATE_S)
+                else:
+                    # Turkey not in frame this tick.
+                    if now >= deadline:
+                        # Timer expired — stop and transition to Alert.
+                        if not stopped:
+                            self._dbg(
+                                f"[Chase/Nav] Turkey absent for "
+                                f"{self.LOST_VISUAL_DEBOUNCE_S}s — "
+                                f"stopping, transitioning to Alert"
+                            )
+                            await self.MotionCommand_Publisher.publish(
+                                {"Id": "SpeedCap", "Cmd": 0.0}
+                            )
+                            stopped = True
+                        end_of_chase_result[0] = False
+                        return
+                    # Still within window — poll fast and wait for turkey to return.
+                    await asyncio.sleep(self.HEADING_POLL_S)
 
         async def _chase_canine_loop() -> None:
-            """
-            Plays growl sequence once, then loops pursuit/attack behavior
-            based on distance to nearest turkey. Fully independent of nav.
-            """
-            await self._SpeedCap_Publish(0.5)
+            await self._SpeedCap_Publish(self.SPEED_CHASE_GROWL)
             await self._module_chase._growl_and_chase()
-            # await self._SpeedCap_Publish(3.0)
-            await self._SpeedCap_Publish(2)
+            await self._SpeedCap_Publish(self.SPEED_CHASE)
 
             while True:
                 turkey_pos = _nearest_turkey()
@@ -459,7 +567,7 @@ class StatePlannerReceiver:
                     self._dbg(f"[Chase/Canine] dist={dist:.1f}m — BurstAttack")
                     await self._module_chase._burst_attack()
 
-        loop = asyncio.get_event_loop()
+        loop   = asyncio.get_event_loop()
         nav    = loop.create_task(_chase_nav_loop())
         canine = loop.create_task(_chase_canine_loop())
 
@@ -484,23 +592,20 @@ class StatePlannerReceiver:
 
     async def Alert_Routine(self, end_of_chase: bool = False) -> None:
         await self.MacroState_Publisher.publish({"Id": "Alert"})
-        await self._SpeedCap_Publish(3.0)
+        await self._SpeedCap_Publish(self.SPEED_ALERT)
         self._dbg(f"[Alert] Starting — end_of_chase={end_of_chase}")
 
         if end_of_chase:
+            # ── Path 1: turkey crossed zone boundary ──────────────────────────
             async def _orient_track_loop() -> None:
-                """Re-orient toward turkey every cycle while it remains visible.
-                Uses closed-loop heading wait so each Orient command actually
-                settles before the next one fires. Silently loops if turkey
-                leaves sight — warning substates continue unaffected."""
                 while True:
                     await asyncio.sleep(2.0)
                     if not self.turkey_detected or self.last_known_turkey_pos is None:
                         self._dbg("[Alert/Path1] Turkey out of sight — orient tracking paused")
                         await asyncio.sleep(2.0)
                         continue
-                    rx, ry       = float(self.Current_RobotPose[0]), float(self.Current_RobotPose[1])
-                    tx, ty       = float(self.last_known_turkey_pos[0]), float(self.last_known_turkey_pos[1])
+                    rx, ry        = float(self.Current_RobotPose[0]), float(self.Current_RobotPose[1])
+                    tx, ty        = float(self.last_known_turkey_pos[0]), float(self.last_known_turkey_pos[1])
                     wait_heading  = np.arctan2(-(ty - ry), tx - rx)
                     wait_heading  = ((wait_heading + np.pi) % (2 * np.pi)) - np.pi
                     drive_heading = (wait_heading + np.pi) % (2 * np.pi) - np.pi
@@ -508,17 +613,16 @@ class StatePlannerReceiver:
                     await self.MotionCommand_Publisher.publish(
                         {"Id": "Orient", "Cmd": [rx, ry, drive_heading]}
                     )
-                    # Closed-loop: wait for theta to settle before next re-orient
                     await self._wait_for_heading(wait_heading)
 
-            # Initial orient before substates begin
             if self.last_known_turkey_pos is not None:
                 rx, ry        = float(self.Current_RobotPose[0]), float(self.Current_RobotPose[1])
                 tx, ty        = float(self.last_known_turkey_pos[0]), float(self.last_known_turkey_pos[1])
                 wait_heading  = np.arctan2(-(ty - ry), tx - rx)
                 wait_heading  = ((wait_heading + np.pi) % (2 * np.pi)) - np.pi
                 drive_heading = (wait_heading + np.pi) % (2 * np.pi) - np.pi
-                self._dbg(f"[Alert] Path1 — initial orient toward ({tx:.2f},{ty:.2f}), heading={np.degrees(wait_heading):.1f}°")
+                self._dbg(f"[Alert] Path1 — initial orient toward ({tx:.2f},{ty:.2f}), "
+                           f"heading={np.degrees(wait_heading):.1f}°")
                 await self.MotionCommand_Publisher.publish(
                     {"Id": "Orient", "Cmd": [rx, ry, drive_heading]}
                 )
@@ -535,47 +639,61 @@ class StatePlannerReceiver:
                 orient_task.cancel()
 
         else:
+            # ── Path 2 / Path 3: lost visual ──────────────────────────────────
             self._lose_visual_count += 1
             use_path2 = (self._lose_visual_count % 2 == 1)
 
-            if self.last_known_turkey_pos is not None:
-                self._dbg(f"[Alert] Navigating to last known pos {np.round(self.last_known_turkey_pos, 2)}")
-                await self.MotionCommand_Publisher.publish(
-                    {"Id": "Move", "Cmd": self.last_known_turkey_pos[:2].tolist()}
-                )
+            # Determine rotation direction from the last known FOV angle.
+            # Coordinate system is inverted relative to camera convention, so:
+            # fov_angle > 0 → turkey was right of centre → turn left  (step = +90°)
+            # fov_angle < 0 → turkey was left  of centre → turn right (step = -90°)
+            # fov_angle == 0 is excluded by design (only lost when not in frame).
+            step_sign   = 1.0 if self.last_known_fov_angle > 0.0 else -1.0
+            step_rad    = step_sign * np.radians(self.ALERT_ROTATION_STEP_DEG)
+            direction   = "left" if step_sign > 0 else "right"
+            self._dbg(
+                f"[Alert] Path{'2' if use_path2 else '3'} "
+                f"(lose-visual #{self._lose_visual_count}) — "
+                f"{self.ALERT_ROTATION_STEPS} × {self.ALERT_ROTATION_STEP_DEG}° "
+                f"turning {direction} "
+                f"(last_fov={np.degrees(self.last_known_fov_angle):.1f}°)"
+            )
 
-            async def _rotation_loop() -> None:
-                """Continuous 90° rotation steps, closed-loop on RobotPose theta.
-                Each Orient command waits for heading to settle (or times out)
-                before issuing the next — no more open-loop sleeps."""
+            async def _directed_rotation() -> None:
+                """
+                Execute ALERT_ROTATION_STEPS × 90° turns in the direction the
+                turkey was last seen (2 full rotations).  Uses closed-loop
+                Orient + _wait_for_heading so each step actually settles before
+                the next fires.  The coroutine completes after all steps are
+                done — it does NOT loop indefinitely.
+                """
                 base_heading = float(self.Current_RobotPose[2])
-                step = 0
-                while True:
-                    step += 1
+                for step in range(1, self.ALERT_ROTATION_STEPS + 1):
                     robot_pos     = np.array(self.Current_RobotPose[:3])
-                    wait_heading  = (base_heading + step * np.pi / 2 + np.pi) % (2 * np.pi) - np.pi
+                    # Accumulate steps from the base heading in the chosen direction.
+                    wait_heading  = (base_heading + step * step_rad + np.pi) % (2 * np.pi) - np.pi
                     drive_heading = (wait_heading + np.pi) % (2 * np.pi) - np.pi
+                    self._dbg(
+                        f"[Alert/Rotate] step={step}/{self.ALERT_ROTATION_STEPS} "
+                        f"heading={np.degrees(wait_heading):.1f}° ({direction})"
+                    )
                     await self.MotionCommand_Publisher.publish(
                         {"Id": "Orient", "Cmd": [robot_pos[0], robot_pos[1], drive_heading]}
                     )
-                    self._dbg(f"[Alert/Rotate] step={step}, heading={np.degrees(wait_heading):.1f}°")
-                    # Closed-loop: block until theta settles or timeout fires
                     await self._wait_for_heading(wait_heading)
 
+            # Run the directed rotation, then the behavior substate.
+            # The rotation task is awaited (not fire-and-forget) so we know
+            # exactly when all 8 steps are done before the substate begins.
+            # Both are cancellable by the outer _arbitrate preempt.
+            await _directed_rotation()
+
             if use_path2:
-                self._dbg(f"[Alert] Path2 (lose-visual #{self._lose_visual_count}) — TerritorialWarning + rotation")
-                rot = asyncio.get_event_loop().create_task(_rotation_loop())
-                try:
-                    await self._module_alert._territorial_warning()
-                finally:
-                    rot.cancel()
+                self._dbg(f"[Alert] Path2 — TerritorialWarning")
+                await self._module_alert._territorial_warning()
             else:
-                self._dbg(f"[Alert] Path3 (lose-visual #{self._lose_visual_count}) — ShortWarningBurst + rotation")
-                rot = asyncio.get_event_loop().create_task(_rotation_loop())
-                try:
-                    await self._module_alert._short_warning_burst()
-                finally:
-                    rot.cancel()
+                self._dbg(f"[Alert] Path3 — ShortWarningBurst")
+                await self._module_alert._short_warning_burst()
 
         self._dbg("[Alert] Complete — resuming Scan")
         self._enter_scan()
@@ -585,11 +703,6 @@ class StatePlannerReceiver:
     # ------------------------------------------------------------------
 
     async def _manual_chase_cycle(self) -> None:
-        """
-        Manual Chase button — cycles through the three chase substates on a
-        5 s hard-cancel each, with a 1 s idle between.
-        Order: AggressivePursuit -> BurstAttack -> GrowlAndChase -> repeat.
-        """
         substates = [
             ("AggressivePursuit", self._module_chase._aggressive_pursuit),
             ("BurstAttack",       self._module_chase._burst_attack),
@@ -611,7 +724,6 @@ class StatePlannerReceiver:
             else:
                 self._dbg(f"[ManualChase] {name} completed early — idle 1 s")
 
-            # await asyncio.sleep(1.0)
             await asyncio.sleep(2.0)
             idx += 1
 
@@ -628,41 +740,6 @@ class StatePlannerReceiver:
     # Navigation helpers
     # ------------------------------------------------------------------
 
-    async def _nav_to_last_known(self) -> bool:
-        """
-        Navigate toward last known turkey position.
-        Returns True if turkey reacquired, False when robot stops moving
-        (displacement < STOPPED_THRESHOLD_M over STOPPED_WINDOW_S).
-        Waits one extra STOPPED_WINDOW_S grace period before the first
-        measurement to allow the MPC time to begin moving.
-        """
-        if self.last_known_turkey_pos is None:
-            return False
-
-        await self.MotionCommand_Publisher.publish(
-            {"Id": "Move", "Cmd": self.last_known_turkey_pos[:2].tolist()}
-        )
-
-        # Grace period — let MPC start moving before first displacement check
-        await asyncio.sleep(self.STOPPED_WINDOW_S)
-        if self.turkey_detected:
-            return True
-
-        while True:
-            pos_before = np.array(self.Current_RobotPose[:2])
-            await asyncio.sleep(self.STOPPED_WINDOW_S)
-
-            if self.turkey_detected:
-                return True
-
-            pos_after    = np.array(self.Current_RobotPose[:2])
-            displacement = np.linalg.norm(pos_after - pos_before)
-            self._dbg(f"[NavToLast] displacement={displacement:.3f}m over {self.STOPPED_WINDOW_S}s")
-
-            if displacement < self.STOPPED_THRESHOLD_M:
-                self._dbg("[NavToLast] Robot stopped — turkey not reacquired")
-                return False
-
     def _next_target(self) -> np.ndarray:
         if self.GhostQueue:
             ghost = self.GhostQueue.pop(0)
@@ -674,7 +751,8 @@ class StatePlannerReceiver:
 
     def _try_enqueue_ghost(self, x: float, y: float) -> None:
         candidate = np.array([x, y])
-        if any(np.linalg.norm(np.array(g) - candidate) < self.GHOST_DEDUP_RADIUS_M for g in self.GhostQueue):
+        if any(np.linalg.norm(np.array(g) - candidate) < self.GHOST_DEDUP_RADIUS_M
+               for g in self.GhostQueue):
             return
         self.GhostQueue.append([x, y])
         self._dbg(f"[Ghost] Enqueued ({x:.2f},{y:.2f}), queue={len(self.GhostQueue)}")

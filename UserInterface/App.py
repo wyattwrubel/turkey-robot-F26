@@ -28,10 +28,6 @@ STATIC_DIR    = Path(__file__).parent / "Website"
 MAP_CSV       = Path("/home/turkeysquad/ME450/MainDesign/Navigation/Zone.csv")
 WAYPOINTS_CSV = Path("/home/turkeysquad/ME450/MainDesign/Navigation/Waypoints.csv")
 
-# IP of the ESP32 AP — its router probes the WS port with plain HTTP,
-# which causes harmless but spammy handshake errors. We reject it silently.
-ESP32_ROUTER_IP = "192.168.10.1"
-
 
 # ------------------------------------------------------------------
 # JSON serializer — handles numpy types that slip through from CV
@@ -85,7 +81,6 @@ class CDSControlServer:
         )
 
     async def _safe_send(self, ws: WebSocket, text: str) -> None:
-        # Guard against sending to a connection that isn't fully open
         if ws.client_state != WebSocketState.CONNECTED:
             self.connections.discard(ws)
             return
@@ -116,7 +111,6 @@ class CDSControlServer:
         while True:
             await asyncio.sleep(0.1)
 
-            # ── Heartbeat watchdog ────────────────────────────────
             if not self.robot.check_heartbeat() and not self.robot._estop:
                 print("[UI WATCHDOG] Heartbeat timeout — engaging estop")
                 self.robot.estop_engage()
@@ -140,7 +134,7 @@ class CDSControlServer:
             )
 
     # ------------------------------------------------------------------
-    # Serve — catches Ctrl+C cleanly so the process exits gracefully
+    # Serve
     # ------------------------------------------------------------------
 
     async def serve(self) -> None:
@@ -150,10 +144,10 @@ class CDSControlServer:
             port=8000,
             log_level="warning",
             reload=False,
-            timeout_graceful_shutdown=0,  # don't wait for connections to drain
+            timeout_graceful_shutdown=0,
         )
         server = uvicorn.Server(config)
-        server.install_signal_handlers = lambda: None  # let asyncio.run() handle SIGINT
+        server.install_signal_handlers = lambda: None
         await server.serve()
 
     # ------------------------------------------------------------------
@@ -185,7 +179,6 @@ class CDSControlServer:
             f = STATIC_DIR / "script.js"
             return FileResponse(str(f), media_type="application/javascript") if f.exists() else HTMLResponse("", 404)
 
-        # ── MJPEG camera stream (separate HTTP connection from WebSocket) ──
         @app.get("/camera")
         async def camera_feed():
             return await self.camera.mjpeg_endpoint()
@@ -193,22 +186,20 @@ class CDSControlServer:
         @app.websocket("/ws")
         async def websocket_endpoint(ws: WebSocket):
 
-            # ESP32 router probes this port with plain HTTP — close silently
-            # before accepting so it never pollutes the connection pool or logs
-            if ws.client and ws.client.host == ESP32_ROUTER_IP:
+            # Drop plain HTTP probes (e.g. ESP32 router) that aren't
+            # actual WebSocket upgrade requests
+            if ws.headers.get("upgrade", "").lower() != "websocket":
                 await ws.close()
                 return
 
             await ws.accept()
             print(f"[WS] Connected    {ws.client.host}:{ws.client.port}")
 
-            # Sync before adding to connections — prevents _broadcast_state
-            # from hitting this client before it's ready
             try:
                 for coro in [
                     self.controls.sync_client(ws),
                     self.map.sync_client(ws),
-                    self.camera.sync_client(ws),   # no-op now, kept for symmetry
+                    self.camera.sync_client(ws),
                 ]:
                     await coro
 
@@ -219,9 +210,8 @@ class CDSControlServer:
 
             except Exception as e:
                 print(f"[WS] Sync failed, dropping client: {type(e).__name__}: {e}")
-                return  # don't add to connections if sync failed
+                return
 
-            # Only add to broadcast pool once fully ready
             self.connections.add(ws)
 
             try:

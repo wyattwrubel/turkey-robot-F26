@@ -32,6 +32,10 @@ class TrajectoryTracker:
         # Written by VisionObject_Receiver; read by MPC_loop.
         self._n_dynamic_obs = 0
 
+        # Latest raw turkey list from vision — list of [x, y, fov_angle].
+        # Used by _Move_CMD_Receiver when chase_mode is requested.
+        self._latest_turkeys: list = []
+
         asyncio.create_task(self.MPC.DriveTrain_Sender(logger=self.Logger))
 
     # ── Vision receiver ───────────────────────────────────────────────────────
@@ -61,6 +65,9 @@ class TrajectoryTracker:
         if (turkeydata.size > 0 and turkeydata.shape[1] != 3) or \
            (humandata.size  > 0 and humandata.shape[1]  != 3):
             print("[Nav] Invalid shape for Human or Turkey data"); return
+
+        # Store latest turkey list for chase-mode targeting.
+        self._latest_turkeys = turkeydata.tolist() if turkeydata.size > 0 else []
 
         self.Map.ClearDynamicObstacles()
         n = 0
@@ -113,7 +120,15 @@ class TrajectoryTracker:
         except KeyError:
             print(f"[Nav] Bad Move CMD: 'Cmd' missing in {data}"); return
 
-        target = np.array(input_cmd[:2], dtype=float)
+        target     = np.array(input_cmd[:2], dtype=float)
+        chase_mode = data.get("Mode", "") == "Chase"
+
+        # ── Direct-chase path ─────────────────────────────────────────────────
+        if chase_mode:
+            await self._handle_chase_move(target, data)
+            return
+
+        # ── Standard A* path ──────────────────────────────────────────────────
 
         # Suppress replan if the target hasn't moved much and MPC is active.
         if self._last_target is not None:
@@ -127,11 +142,17 @@ class TrajectoryTracker:
 
         self._last_target = target.copy()
 
+        # Identify if this target corresponds to a turkey (for A* early-exit).
+        # We use the turkey closest to the robot, since that is also what
+        # StatePlanner sends as the Move target during Chase_Routine.
+        turkey_target_xy = self._nearest_turkey_to_robot()
+
         wps = PathGenerator.GenerateTrajectory(
             self.Map,
             self.Current_State,
             target,
             old_waypoints=self._last_waypoints if self._last_waypoints else None,
+            turkey_target_xy=turkey_target_xy,
             verbose=self.Verbose,
         )
 
@@ -160,7 +181,84 @@ class TrajectoryTracker:
             print(f"[Nav] A* → {len(wps)} waypoints, "
                   f"face_heading={'%.1f deg' % np.degrees(face_heading) if face_heading is not None else 'none'}")
 
-        await self.MPC.Move_CMD_Receiver(wps, tuple(target), face_heading=face_heading)
+        await self.MPC.Move_CMD_Receiver(wps, tuple(target),
+                                         face_heading=face_heading,
+                                         chase_mode=False)
+
+    async def _handle_chase_move(self, target: np.ndarray, data: dict):
+        """
+        Evaluate whether direct-chase mode is viable for the given target.
+
+        Conditions for engaging direct-chase:
+          1. Robot is within CHASE_ENGAGE_DIST of the target (turkey position).
+          2. The corridor between robot and turkey is clear of static obstacles.
+
+        If both conditions are met, sends the chase command directly to MPC.
+        Otherwise falls back to a normal A* Move.
+
+        The nearest turkey's full [x, y, fov_angle] data is forwarded to MPC
+        so the chase solver can use the FOV angle for centering cost.
+        """
+        from . import MovementExecutor as ME
+
+        robot_xy = np.array(self.Current_State[:2], dtype=float)
+        dist     = np.linalg.norm(target - robot_xy)
+
+        # Find the turkey closest to the robot (same criterion as StatePlanner).
+        turkey_data = self._nearest_turkey_to_robot(return_full=True)
+
+        corridor_ok = False
+        if dist <= ME.CHASE_ENGAGE_DIST:
+            corridor_ok = ME._corridor_clear(
+                self.Map.Zone_Map, robot_xy, target)
+
+        if dist <= ME.CHASE_ENGAGE_DIST and corridor_ok:
+            if self.Verbose:
+                print(f"[Nav] Direct-chase engaged: dist={dist:.2f}m, "
+                      f"corridor clear, turkey_data={turkey_data}")
+
+            # Chase mode does not use an A* path — pass empty waypoints.
+            await self.MPC.Move_CMD_Receiver(
+                waypoints=[],
+                target_xy=tuple(target),
+                face_heading=None,
+                chase_mode=True,
+                turkey_data=turkey_data,
+            )
+        else:
+            # Conditions not met — fall back to standard A* trajectory.
+            reason = (f"dist={dist:.2f}m > {ME.CHASE_ENGAGE_DIST}m"
+                      if dist > ME.CHASE_ENGAGE_DIST
+                      else "corridor blocked")
+            if self.Verbose:
+                print(f"[Nav] Direct-chase not viable ({reason}) — "
+                      f"falling back to A*")
+
+            # Run A* toward the turkey target.
+            turkey_xy = np.array(turkey_data[:2]) if turkey_data is not None else None
+
+            wps = PathGenerator.GenerateTrajectory(
+                self.Map,
+                self.Current_State,
+                target,
+                old_waypoints=self._last_waypoints if self._last_waypoints else None,
+                turkey_target_xy=turkey_xy,
+                verbose=self.Verbose,
+            )
+
+            if not wps:
+                if self.Verbose:
+                    print("[Nav] A* (chase fallback) returned empty path — ignored")
+                return
+
+            self._last_waypoints = wps
+            self._last_target    = target.copy()
+
+            await self.MPC.Move_CMD_Receiver(
+                wps, tuple(target),
+                face_heading=None,
+                chase_mode=False,
+            )
 
     async def _Orient_CMD_Receiver(self, data):
         try:
@@ -180,6 +278,27 @@ class TrajectoryTracker:
         except ValueError:
             print(f"[Nav] Bad SpeedCap value: {input_cmd}")
 
+    # ── Turkey helpers ────────────────────────────────────────────────────────
+
+    def _nearest_turkey_to_robot(self, return_full: bool = False):
+        """
+        Return the turkey closest to the robot from the latest vision frame.
+
+        Parameters
+        ----------
+        return_full : bool
+            If True, returns the full [x, y, fov_angle] row.
+            If False, returns [x, y] only (for A* turkey_target_xy).
+
+        Returns None if no turkeys are currently visible.
+        """
+        if not self._latest_turkeys:
+            return None
+        robot_xy = np.array(self.Current_State[:2], dtype=float)
+        nearest  = min(self._latest_turkeys,
+                       key=lambda t: np.linalg.norm(np.array(t[:2]) - robot_xy))
+        return nearest if return_full else nearest[:2]
+
     # ── Stall recovery ────────────────────────────────────────────────────────
 
     async def replan_to(self, target):
@@ -190,11 +309,14 @@ class TrajectoryTracker:
         if target is None:
             return
 
+        turkey_target_xy = self._nearest_turkey_to_robot()
+
         wps = PathGenerator.GenerateTrajectory(
             self.Map,
             self.Current_State,
             target,
             old_waypoints=self._last_waypoints if self._last_waypoints else None,
+            turkey_target_xy=turkey_target_xy,
             verbose=self.Verbose,
         )
 
@@ -209,7 +331,8 @@ class TrajectoryTracker:
             print(f"[Nav] Stall replan → {len(wps)} waypoints")
 
         await self.MPC.Move_CMD_Receiver(
-            wps, target, face_heading=self._last_face_heading)
+            wps, target, face_heading=self._last_face_heading,
+            chase_mode=False)
 
         await self.MPC._pub_reference(wps)
 

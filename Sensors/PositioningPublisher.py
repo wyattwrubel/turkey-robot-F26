@@ -16,8 +16,10 @@ class PositioningDriver:
     # GPS Configuration
     # ------------------------------------------------------------------
 
-    GPS_REFERENCE_LAT = 42.29473333    # center of observed fix
-    GPS_REFERENCE_LON = -83.71482833   # center of observed fix
+    # Derived from observed fix (42.294042, -83.712617) = zone bottom-left ≈ (1, 79)
+    # ref = NW corner (0, 0) of the zone grid
+    GPS_REFERENCE_LAT = 42.29475348   # NW corner derived from bottom-left fix
+    GPS_REFERENCE_LON = -83.71263234
 
     GPS_PORT     = "/dev/ttyGPS"
     GPS_BAUDRATE = 4800
@@ -50,7 +52,7 @@ class PositioningDriver:
 
         print(f"[GPS] Port={self.GPS_PORT}  Baud={self.GPS_BAUDRATE}  "
               f"Simulation={Simulation}")
-        print(f"[GPS] Origin: lat={self._ref_lat:.6f}  lon={self._ref_lon:.6f}")
+        print(f"[GPS] Origin: lat={self._ref_lat:.8f}  lon={self._ref_lon:.8f}")
         print(f"[GPS] Zone: X=[{self.ZONE_X_MIN}, {self.ZONE_X_MAX}]m  "
               f"Y=[{self.ZONE_Y_MIN}, {self.ZONE_Y_MAX}]m  "
               f"(±{self.ZONE_SLACK_M}m slack)")
@@ -87,7 +89,7 @@ class PositioningDriver:
         return True
 
     # ------------------------------------------------------------------
-    # GPS
+    # GPS math
     # ------------------------------------------------------------------
 
     def _latlon_to_xy(self, lat, lon):
@@ -111,7 +113,7 @@ class PositioningDriver:
         try:
             msg = pynmea2.parse(line.strip())
 
-            # --- disabled for indoor testing, re-enable for outdoor use ---
+            # --- re-enable for outdoor deployment ---
             # if hasattr(msg, 'gps_qual'):
             #     if msg.gps_qual == 0:
             #         return None
