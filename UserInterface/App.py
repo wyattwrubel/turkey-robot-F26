@@ -28,6 +28,10 @@ STATIC_DIR    = Path(__file__).parent / "Website"
 MAP_CSV       = Path("/home/turkeysquad/ME450/MainDesign/Navigation/Zone.csv")
 WAYPOINTS_CSV = Path("/home/turkeysquad/ME450/MainDesign/Navigation/Waypoints.csv")
 
+# IP of the ESP32 AP — its router probes the WS port with plain HTTP,
+# which causes harmless but spammy handshake errors. We reject it silently.
+ESP32_ROUTER_IP = "192.168.10.1"
+
 
 # ------------------------------------------------------------------
 # JSON serializer — handles numpy types that slip through from CV
@@ -136,13 +140,21 @@ class CDSControlServer:
             )
 
     # ------------------------------------------------------------------
-    # Serve
+    # Serve — catches Ctrl+C cleanly so the process exits gracefully
     # ------------------------------------------------------------------
 
     async def serve(self) -> None:
-        config = uvicorn.Config(self.app, host="0.0.0.0", port=8000,
-                                log_level="warning", reload=False)
-        await uvicorn.Server(config).serve()
+        config = uvicorn.Config(
+            self.app,
+            host="0.0.0.0",
+            port=8000,
+            log_level="warning",
+            reload=False,
+            timeout_graceful_shutdown=0,  # don't wait for connections to drain
+        )
+        server = uvicorn.Server(config)
+        server.install_signal_handlers = lambda: None  # let asyncio.run() handle SIGINT
+        await server.serve()
 
     # ------------------------------------------------------------------
     # App builder
@@ -173,8 +185,20 @@ class CDSControlServer:
             f = STATIC_DIR / "script.js"
             return FileResponse(str(f), media_type="application/javascript") if f.exists() else HTMLResponse("", 404)
 
+        # ── MJPEG camera stream (separate HTTP connection from WebSocket) ──
+        @app.get("/camera")
+        async def camera_feed():
+            return await self.camera.mjpeg_endpoint()
+
         @app.websocket("/ws")
         async def websocket_endpoint(ws: WebSocket):
+
+            # ESP32 router probes this port with plain HTTP — close silently
+            # before accepting so it never pollutes the connection pool or logs
+            if ws.client and ws.client.host == ESP32_ROUTER_IP:
+                await ws.close()
+                return
+
             await ws.accept()
             print(f"[WS] Connected    {ws.client.host}:{ws.client.port}")
 
@@ -184,7 +208,7 @@ class CDSControlServer:
                 for coro in [
                     self.controls.sync_client(ws),
                     self.map.sync_client(ws),
-                    self.camera.sync_client(ws),
+                    self.camera.sync_client(ws),   # no-op now, kept for symmetry
                 ]:
                     await coro
 

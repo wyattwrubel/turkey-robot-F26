@@ -83,6 +83,8 @@ class FakeVision:
         return frame
 
     async def run(self):
+        return
+
         if not self._load_images():
             print("[VISION] Failed to load images — stopping")
             return

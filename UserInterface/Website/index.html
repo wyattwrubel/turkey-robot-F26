@@ -17,7 +17,13 @@
   <div class="hdr-r">
     <div class="spill"><div class="dot"></div>UWB</div>
     <div class="spill"><div class="dot"></div>IMU</div>
-    <div class="spill"><div class="dot warn"></div>CAM</div>
+    <!--
+      CAM STATUS DOT
+      id="cam-dot" is updated by _initCamera() in script.js:
+        (no class)      → green blinking  (stream live)
+        class="warn"    → amber blinking  (stalled / error)
+    -->
+    <div class="spill"><div class="dot" id="cam-dot"></div>CAM</div>
     <!--
       DRIVETRAIN STATUS DOT
       id="dt-dot" is updated by applyDrivetrainStatus() in script.js.

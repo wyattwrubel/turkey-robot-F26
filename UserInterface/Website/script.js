@@ -62,8 +62,8 @@ let _dragActive = false
 let _dragLast   = { x: 0, y: 0 }
 let _lastS      = 1
 
-// Camera
-let camImg = null
+// Camera — base64/WebSocket fields removed; MJPEG uses an <img> element
+const CAM_TIMEOUT_MS = 3000
 
 // Pose / macrostate
 let _activePose       = null
@@ -72,11 +72,6 @@ let _activeSubCmd     = null
 
 // Heartbeat
 let _heartbeatTimer = null
-
-// Camera watchdog
-let _lastFrameTime  = 0
-let _camOverlay     = null
-const CAM_TIMEOUT_MS = 3000
 
 // ═══════════════════════════════════════════════
 // BUILD DYNAMIC UI
@@ -115,14 +110,17 @@ function buildAudio() {
 // WEBSOCKET
 // ═══════════════════════════════════════════════
 function connect() {
-  // ws = new WebSocket('ws://100.67.22.116:8000/ws')
-  ws = new WebSocket('ws://192.168.10.2:8000/ws')
+  
+  // CHANGE HERE
+  ws = new WebSocket('ws://100.67.22.116:8000/ws')
+  // ws = new WebSocket('ws://192.168.10.2:8000/ws')
+  
   // ws = new WebSocket('ws://192.168.4.2:8000/ws')
-    // ws = new WebSocket('ws://35.3.137.208:8000/ws')
+  // ws = new WebSocket('ws://35.3.137.208:8000/ws')
   // ws = new WebSocket('ws://172.20.10.2:8000/ws')
-    
-    
 
+  // ws = new WebSocket(`ws://${PI_HOST}:8000/ws`)
+  
   ws.onopen    = ()  => { wsReady = true;  _startHeartbeat() }
   ws.onclose   = ()  => { wsReady = false; _stopHeartbeat(); setTimeout(connect, 1000) }
   ws.onmessage = (e) => {
@@ -243,18 +241,8 @@ function handle(m) {
     }
   }
 
-  // ── Camera frame ───────────────────────────────────────────
-  if (m.type === 'frame') {
-    _onFrameReceived()
-    const ph = document.getElementById('cam-ph')
-    if (!camImg) {
-      camImg = document.createElement('img')
-      camImg.style.cssText = 'width:100%;height:100%;object-fit:contain;display:block;'
-      ph.parentElement.appendChild(camImg)
-      ph.style.display = 'none'
-    }
-    camImg.src = 'data:image/jpeg;base64,' + m.image
-  }
+  // NOTE: 'frame' message type is intentionally removed.
+  // Camera is now served via MJPEG on GET /camera (see _initCamera below).
 
   // ── Servo state ─────────────────────────────────────────────
   if (m.type === 'servo_state') syncServos(m.servos)
@@ -510,50 +498,92 @@ function _applyEstopUI(estopped) {
 }
 
 // ═══════════════════════════════════════════════
-// CAMERA WATCHDOG
+// CAMERA — MJPEG via <img> (dedicated HTTP connection,
+// completely separate from the WebSocket)
 // ═══════════════════════════════════════════════
-function _initCamWatchdog() {
+function _initCamera() {
   const container = document.getElementById('cam-ph')?.parentElement
   if (!container) return
 
-  _camOverlay = document.createElement('div')
-  _camOverlay.style.cssText = `
-    position: absolute;
-    inset: 0;
-    display: none;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    background: rgba(5, 8, 12, 0.82);
-    color: #00d4ff;
-    font-family: 'Courier New', monospace;
-    font-size: 12px;
-    letter-spacing: 0.08em;
-    gap: 8px;
-    z-index: 10;
+  // ── <img> element ──────────────────────────────────────────
+  const img = document.createElement('img')
+  img.style.cssText = 'width:100%;height:100%;object-fit:contain;display:block;'
+  img.alt = ''
+  container.appendChild(img)
+  document.getElementById('cam-ph').style.display = 'none'
+
+  // ── SIGNAL LOST overlay ────────────────────────────────────
+  const overlay = document.createElement('div')
+  overlay.style.cssText = `
+    position:absolute;inset:0;display:none;flex-direction:column;
+    align-items:center;justify-content:center;
+    background:rgba(5,8,12,0.82);color:#00d4ff;
+    font-family:'Courier New',monospace;font-size:12px;
+    letter-spacing:0.08em;gap:8px;z-index:10;
   `
-  _camOverlay.innerHTML = `
+  overlay.innerHTML = `
     <div style="font-size:22px;opacity:0.6">⬡</div>
     <div>SIGNAL LOST</div>
     <div id="cam-stale-timer" style="opacity:0.5;font-size:10px">— s</div>
   `
-  container.appendChild(_camOverlay)
+  // container.appendChild(overlay)
 
+  // ── Header status dot ──────────────────────────────────────
+  const camDot = document.getElementById('cam-dot')
+
+  // ── Watchdog state ─────────────────────────────────────────
+  let lastLoad = Date.now()
+  let stalled  = false
+  let reloading = false   // prevent overlapping reload attempts
+
+  // ── Callbacks ──────────────────────────────────────────────
+  img.onload = () => {
+    lastLoad  = Date.now()
+    stalled   = false
+    reloading = false
+    overlay.style.display = 'none'
+    if (camDot) camDot.className = 'dot'        // green — live
+  }
+
+  img.onerror = () => {
+    if (camDot) camDot.className = 'dot warn'   // amber — connection error
+    reloading = false
+    _reloadCamImg(img)
+  }
+
+  // ── Stall watchdog — checks every second ───────────────────
+  // If no onload has fired in CAM_TIMEOUT_MS, show overlay and
+  // force a fresh HTTP request by replacing the src with a cache-buster.
   setInterval(() => {
-    const elapsed = Date.now() - _lastFrameTime
-    if (_lastFrameTime === 0 || elapsed > CAM_TIMEOUT_MS) {
-      _camOverlay.style.display = 'flex'
-      const secs = _lastFrameTime === 0 ? '—' : Math.floor(elapsed / 1000)
+    const elapsed = Date.now() - lastLoad
+    if (elapsed > CAM_TIMEOUT_MS) {
+      if (!stalled) {
+        stalled = true
+        overlay.style.display = 'flex'
+        if (camDot) camDot.className = 'dot warn'
+      }
       const el = document.getElementById('cam-stale-timer')
-      if (el) el.textContent = `${secs}s ago`
+      if (el) el.textContent = `${Math.floor(elapsed / 1000)}s ago`
+
+      // Prod the src — opens a brand-new TCP connection to /camera
+      if (!reloading) _reloadCamImg(img)
     } else {
-      _camOverlay.style.display = 'none'
+      if (camDot) camDot.className = 'dot'      // green — frames flowing
     }
-  }, 500)
+  }, 1000)
+
+  // ── Initial load ───────────────────────────────────────────
+  _reloadCamImg(img)
 }
 
-function _onFrameReceived() {
-  _lastFrameTime = Date.now()
+function _reloadCamImg(img) {
+  // Cache-buster prevents the browser reusing a cached error response.
+  // Host matches the WebSocket host defined in connect() above.
+  
+  // CHANGE HERE
+  // const base = `http://192.168.10.2:8000/camera`
+  const base = `http://100.67.22.116:8000/camera`
+  img.src = base + '?t=' + Date.now()
 }
 
 // ═══════════════════════════════════════════════
@@ -563,7 +593,7 @@ buildServos()
 buildAudio()
 updateSliderBg(document.getElementById('spd-range'))
 _applyModeUI()
-_initCamWatchdog()
+_initCamera()    // replaces the old _initCamWatchdog()
 connect()
 requestAnimationFrame(initMap)
 

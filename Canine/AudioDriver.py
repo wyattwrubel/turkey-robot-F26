@@ -1,5 +1,11 @@
 import os
+import warnings
+
 os.environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "1"
+
+# Suppress pygame 2.6.1 pkg_resources deprecation warning
+warnings.filterwarnings("ignore", category=UserWarning, module="pygame.pkgdata")
+
 import pygame
 import asyncio
 
