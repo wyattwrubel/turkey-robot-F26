@@ -112,7 +112,7 @@ class MotorDriver:
         self.EncoderLogging = EncoderLogging
 
         # -- Dead-reckoning state -------------------------------------
-        self._dr_state    = np.array([15.0, 74.0, 0], dtype=np.float64)
+        self._dr_state    = np.array([50.0, 50.0, 0], dtype=np.float64)
         self._gps_initialised = False
 
         # -- Runtime state --------------------------------------------
