@@ -1,0 +1,1 @@
+SUBSYSTEM=="video4linux", ATTRS{idVendor}=="0c45", ATTRS{idProduct}=="6366", KERNELS=="3-2", ATTR{index}=="0", SYMLINK+="video_camera"

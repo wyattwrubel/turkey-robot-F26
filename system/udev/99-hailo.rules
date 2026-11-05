@@ -1,0 +1,1 @@
+ACTION=="add", SUBSYSTEM=="pci", ATTR{vendor}=="0x1e60", ATTR{device}=="0x2864", ATTR{power/control}="on"
