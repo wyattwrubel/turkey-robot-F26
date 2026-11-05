@@ -1,0 +1,19 @@
+# Python build and environment files (rebuilt automatically; see system/pip-freeze-pi.txt)
+__pycache__/
+*.pyc
+.venv/
+
+# Run logs. W26 committed their April logs; new ones stay on the robot and go to Drive.
+DriveTrain/Encoder/*.csv
+Sensors/AccelReadings/*.csv
+hailort.log
+
+# CasADi's compiled build (the MPC dependency); rebuilt from casadi/ on the Pi
+casadi/build/
+
+# Model weights and exports live on Google Drive, recorded by SHA-256 in the docs
+*.pt
+*.onnx
+*.hef
+*_openvino_model/
+*_ncnn_model/
