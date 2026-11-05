@@ -89,7 +89,7 @@ async def main():
 
     Canine = CanineDriver(ServoFeedback_Canine_pub, Canine_Canine_pub, Simulated=False, Verbose=False)
 
-    Drivetrain = MotorDriver(RobotPose_Drivetrain_pub, SlipFeedback_Drivetrain_pub, Simulated=True, EncoderLogging=True)
+    Drivetrain = MotorDriver(RobotPose_Drivetrain_pub, SlipFeedback_Drivetrain_pub, Simulated=False, EncoderLogging=True)
 
     Navigation = TrajectoryTracker(DriveCommand_Navigation_pub, MotionCommand_Navigation_pub, MPCFeedback_Navigation_pub, Verbose=False)
 
@@ -97,7 +97,7 @@ async def main():
 
     PositionDriver = PositioningDriver(GPS_GPSPublisher_pub, Simulation=True, Verbose=True)
 
-    Accelerometer = IMUDriver(Accelerometer_AccelPublisher_pub, Simulation=False, Log=True)
+    Accelerometer = IMUDriver(Accelerometer_AccelPublisher_pub, Simulation=True, Log=True)
 
     UserInterface = CDSControlServer(DriveCommand_UI_pub, Canine_UI_pub, MacroState_UI_pub, MotionCommand_UI_pub)
 
@@ -168,7 +168,7 @@ async def main():
         Drivetrain.DriveTrainDriver_Runner(),
         Canine.PoseDriver.MotorPositions_Runner(),
         Canine.Audio._monitor(),
-        TestVision.VisionRunner(),
+        # TestVision.VisionRunner(),
         Navigation.MPC.DriveTrain_Sender(),
         Accelerometer.Runner(),
         PositionDriver.Runner(),
