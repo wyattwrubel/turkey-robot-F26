@@ -17,3 +17,7 @@ casadi/build/
 *.hef
 *_openvino_model/
 *_ncnn_model/
+
+# camera_char.py images (snaps, checkerboards) stay off git; its CSV and JSON results are kept
+bench/camera_char/snaps/
+bench/camera_char/calib_*/
