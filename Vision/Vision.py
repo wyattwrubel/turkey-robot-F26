@@ -76,17 +76,21 @@ import numpy as np
 import websockets
 from websockets.server import WebSocketServerProtocol
 
-# ── Settings — edit these ─────────────────────────────────────────────────────
+# ── Settings ─────────────────────────────────────────────────────────────────
+# Camera, model and confirmation settings live in Vision/config.py (contract C9).
+from Vision import config as vcfg
+
 VIDEO_PORT   = 8765
 DETECT_PORT  = 8766
-CAMERA_FPS   = 10
-JPEG_QUALITY = 80
+CAMERA_FPS   = vcfg.CAMERA_FPS
+JPEG_QUALITY = vcfg.JPEG_QUALITY
 
 # Per-class colors in BGR
 CLASS_COLORS = {
     "turkey":  (0,   165, 255),   # amber/orange
     "person":  (255, 100,   0),   # blue
     "vehicle": (0,     0, 220),   # red
+    "candidate": (160, 160, 160), # grey: seen, not yet confirmed
 }
 DEFAULT_COLOR = (0, 255, 0)       # green fallback for unknown classes
 
@@ -115,6 +119,7 @@ class VisionObject:
         Verbose:   bool = False,
         debug_draw:  bool = False,
         debug_print: bool = False,
+        Backend:     str | None = None,
     ):
         self._video_pub   = VideoFeed_Vision_pub
         self._detect_pub  = VisionObject_Vision_pub
@@ -122,6 +127,16 @@ class VisionObject:
         self.debug_draw   = debug_draw
         self.debug_print  = debug_print
         self.Simulated    = Simulated
+
+        # In-process detection (no laptop): "hailo" on the robot, "pt" for laptop dev.
+        # "laptop" keeps W26's path (boxes arrive on ports 8765/8766).
+        self.Backend      = Backend or vcfg.BACKEND
+        self.InProcess    = self.Backend in ("hailo", "pt")
+        self._detector    = None
+        self._confirmer   = None
+        self._camera_model = None
+        self._det_executor = None
+        self.stats        = {"fps": 0.0, "infer_ms": 0.0, "frames": 0, "confirmed": 0}
 
         self._robot_pose      = np.array([0.0, 0.0, 0.0])
         self._robot_pose_lock = threading.Lock()
@@ -286,6 +301,16 @@ class VisionObject:
         cam.open()
         cam.print_actual_settings()
 
+        if self.InProcess:
+            try:
+                self._start_detector()
+            except Exception as e:
+                # e.g. hailo_platform missing in this Python (the UI venv on the Pi lacks it),
+                # no HEF file, or the Hailo busy. Fall back to the laptop path, loudly.
+                print(f"[Vision] !!! In-process detector failed ({type(e).__name__}: {e}). "
+                      f"Falling back to laptop detections on port {DETECT_PORT}.")
+                self.InProcess = False
+
         period = 1.0 / CAMERA_FPS
         loop   = asyncio.get_event_loop()
         print(f"[Vision] Camera loop running at {CAMERA_FPS} FPS")
@@ -298,6 +323,9 @@ class VisionObject:
                 if not ret or frame is None:
                     await asyncio.sleep(0.1)
                     continue
+
+                if self.InProcess:
+                    await self._detect_and_publish(frame, loop)
 
                 with self._detections_lock:
                     detections = list(self._latest_detections)
@@ -330,6 +358,77 @@ class VisionObject:
                 await asyncio.sleep(max(0.0, period - elapsed))
         finally:
             cam.release()
+
+    # ------------------------------------------------------------------
+    # In-process detection (replaces the laptop round trip)
+    # ------------------------------------------------------------------
+
+    def _start_detector(self):
+        """Create the detector inside its own single worker thread. The Hailo pipeline
+        must be created and used from the same thread, so every call goes through it."""
+        from concurrent.futures import ThreadPoolExecutor
+        from Vision.Confirm import Confirmer
+        from Vision.Geometry import CameraModel
+        from Vision.Detector import Detector
+
+        self._det_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="Detector")
+        self._detector = self._det_executor.submit(Detector, self.Backend).result()
+        self._confirmer = Confirmer()
+        self._camera_model = CameraModel()
+        print(f"[Vision] In-process detector: backend={self.Backend}, "
+              f"bearing from {self._camera_model.source}, "
+              f"confirm {self._confirmer.k}-of-{self._confirmer.n}")
+
+    async def _detect_and_publish(self, frame, loop):
+        """Run the model on one frame, confirm, and publish DynamicObjects (contract C2).
+        Publishes every frame, empty lists included, so the planner's lost-visual timer works.
+        The frame never leaves memory (S4)."""
+        t_capture = loop.time()
+        dets, info = await loop.run_in_executor(self._det_executor, self._detector, frame)
+        h, w = frame.shape[:2]
+
+        turkeys = [d for d in dets if d.name == "turkey"]
+        humans  = [d for d in dets if d.name == "person"]
+        self._confirmer.update(turkeys, w)
+        confirmed = self._confirmer.confirmed_tracks()
+
+        cam = self._camera_model
+        turkey_local, confidence, overlay = [], [], []
+        for tr in confirmed:
+            x_cam, y_cam, bearing, _ = cam.locate(tr.box)
+            turkey_local.append([x_cam, y_cam, bearing])
+            confidence.append(round(tr.conf, 3))
+            overlay.append({"class_name": "turkey", "confidence": tr.conf, "bbox": list(tr.box)})
+        human_local = []
+        for d in humans:
+            x_cam, y_cam, bearing, _ = cam.locate(d.box)
+            human_local.append([x_cam, y_cam, bearing])
+            overlay.append({"class_name": "person", "confidence": d.conf, "bbox": list(d.box)})
+        # unconfirmed turkey candidates are drawn too, so the demo shows what the model sees
+        confirmed_ids = {id(t) for t in confirmed}
+        for tr in self._confirmer.tracks:
+            if id(tr) not in confirmed_ids and tr.hits and tr.hits[-1] == 1:
+                overlay.append({"class_name": "candidate", "confidence": tr.conf, "bbox": list(tr.box)})
+
+        with self._detections_lock:
+            self._latest_detections = overlay
+
+        self.stats.update(fps=round(info["fps"], 1), infer_ms=round(info["infer_ms"], 1),
+                          frames=self.stats["frames"] + 1,
+                          confirmed=self.stats["confirmed"] + len(confirmed))
+
+        await self._handle_detection_payload({
+            "Turkeys": turkey_local,
+            "Humans": human_local,
+            "Ghosts": [],
+            "Meta": {
+                "t_capture": t_capture,
+                "fps": self.stats["fps"],
+                "confidence": confidence,
+                "range_source": ["camera"] * len(turkey_local),
+                "backend": self.Backend,
+            },
+        })
 
     # ------------------------------------------------------------------
     # Video WebSocket server  (port 8765)
@@ -444,6 +543,8 @@ class VisionObject:
             "Humans":  _transform(humans_local),
             "Ghosts":  _transform(ghosts_local),
         }
+        if "Meta" in payload:
+            world_payload["Meta"] = payload["Meta"]
 
         if self.Verbose:
             print(
