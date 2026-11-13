@@ -42,10 +42,11 @@ CALIB_PATH = CALIB_DIR / f"camera_{CAMERA_WIDTH}x{CAMERA_HEIGHT}.json"
 BACKEND = _env("BACKEND", "hailo")
 
 MODEL_DIR = Path(_env("MODEL_DIR", str(Path.home() / "ME450" / "Sandbox" / "hef")))
-# W26's turkey_640.hef: 3 classes (output 1x7x8400 raw), 43 fps Hailo-only on the robot (11-13).
-# best640_hailo8l.hef has only 2 classes (1x6x8400, mapping unknown); turkey_640_v4.hef has 6 split
-# outputs and can't be decoded here.
-HEF_PATH  = Path(_env("HEF_PATH", str(MODEL_DIR / "turkey_640.hef")))
+# W26's turkey_640_v4.hef = turkey_640.pt compiled with split heads (box + class per stride).
+# Checked on the robot 11-13 against turkey_640.pt: 100% of boxes matched, IoU 0.956, conf +0.003
+# (3 images). The single-output HEFs (turkey_640.hef, best640_hailo8l.hef) lose every class score
+# to uint8 quantization and detect nothing; don't use them.
+HEF_PATH  = Path(_env("HEF_PATH", str(MODEL_DIR / "turkey_640_v4.hef")))
 PT_PATH   = Path(_env("PT_PATH", str(MODEL_DIR / "turkey_1280.pt")))          # W26 baseline weights
 PT_IMGSZ  = _env("PT_IMGSZ", 640, int)                                         # baseline runs 1280 weights at 640
 
