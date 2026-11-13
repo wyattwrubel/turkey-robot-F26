@@ -1,0 +1,13 @@
+# Test log
+
+One row per test run (DR2 plan section 8.4): date, test, commit, setup, result, where the data is.
+Newest first.
+
+| Date | Test | Commit | Setup | Result | Data |
+|---|---|---|---|---|---|
+| 2026-11-13 | Detector model, before (held-out test, turkey class) | cv/onboard-detector | W26 `turkey_1280.pt` @640 and `turkey_640.pt` on 187 held-out images (154 turkeys, 63 background): Open Images val+test turkeys + ENA24 test blocks. Mac, Ultralytics val, conf 0.001 | turkey_1280 @640 (agreed baseline): P 0.733, **R 0.428**, mAP50 0.549. turkey_640 (on the Hailo): P 0.721, **R 0.655**, mAP50 0.663 | Karthik's Mac, `CV/runs/test_*` (dataset and weights outside git) |
+| 2026-11-13 | Live onboard pipeline (P4), lab scene, no turkey | 795a9b1 | Robot Pi on the power bank (1.5 A limit, EXT5V 4.86 to 4.92 V, under-voltage flag sticky from boot), `bench/vision_live.py`, 640x480, `turkey_640_v4.hef`, 20 s | **29.0 fps end to end** (camera-limited), 28.5 ms per frame on the Hailo, 0 turkey candidates in 584 frames | console output only (no frames saved, S4) |
+| 2026-11-13 | Hailo vs. original model agreement | 31ea9c5 | `bench/detect_check.py` hailo (`turkey_640_v4.hef`) vs. pt (`640best.pt` = `turkey_640.pt`) on `Vision/turkey1-3.jpg`, conf 0.25 | 2 of 2 boxes matched, mean IoU 0.956, conf diff +0.003; turkey3 missed by both models. Only 3 images | /tmp on the Pi (not kept) |
+| 2026-11-13 | W26 HEFs: why they detected nothing | 31ea9c5 | Raw output of `turkey_640.hef` and `best640_hailo8l.hef` on turkey1.jpg | Single-output HEFs: all class scores exactly 0 (boxes 0 to ~770 and scores 0 to 1 share one uint8 scale). `turkey_640_v4.hef` (split heads): turkey logits 1.7 / 2.3 = 0.85 / 0.91 | console |
+| 2026-11-13 | Hailo-only throughput | 58525a8 | `hailortcli run -t 8`, same power state | turkey_640.hef 43.0 fps, best640_hailo8l.hef 43.0 fps (6 contexts each) | console |
+| 2026-11-13 | Mac checks for the in-process detector | b1eef85 | `Vision/tests/check_vision.py`, COCO yolov8n (bird mapped to turkey), coco128 | 18 of 18 pass: bearing sign and pinhole math, 3-of-5 confirm, detector, DynamicObjects publish (confirms on frame 3, empty on blank frames) | console |
