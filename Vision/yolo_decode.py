@@ -10,6 +10,14 @@ Layouts (picked from the output shape):
         objectness (W26's bug was decoding this as YOLOv5). Needs NMS.
   e2e : (K, 6): x1, y1, x2, y2, conf, class (YOLO26 end-to-end head).
   nms : Hailo on-chip NMS, per class rows of ymin, xmin, ymax, xmax, score (0..1).
+  split: one box output (H, W, 4) and one class output (H, W, nc) per stride, as in
+        W26's turkey_640_v4.hef. Boxes are left/top/right/bottom distances from the
+        cell center in cells (YOLO26, no DFL); class values are logits (sigmoid here).
+
+Why split matters (found on the robot 11-13): W26's single-output HEFs pack boxes
+(0 to ~770 px) and class scores (0 to 1) into ONE uint8 tensor with one scale, so
+every class score quantizes to exactly 0 and nothing is ever detected. The split
+HEF keeps a separate scale per output, so the scores survive.
 """
 
 import cv2
@@ -115,4 +123,36 @@ def decode(out, layout, net_wh, conf):
         xywh = xywh * np.array([nw, nh, nw, nh], np.float32)
     boxes = np.concatenate([xywh[:, :2] - xywh[:, 2:] / 2, xywh[:, :2] + xywh[:, 2:] / 2], 1)
     k = nms(boxes, scores, classes)
+    return boxes[k], scores[k], classes[k]
+
+
+def decode_split(outputs, net_wh, conf, iou=0.45):
+    """outputs: iterable of arrays shaped (H, W, 4) for boxes and (H, W, nc) for class
+    logits, one pair per stride. Returns boxes (k,4) x1y1x2y2 in network pixels,
+    scores (k,), classes (k,)."""
+    groups = {}
+    for v in outputs:
+        a = np.squeeze(np.asarray(v, dtype=np.float32))
+        if a.ndim != 3:
+            raise ValueError(f"split output must be (H, W, C), got {a.shape}")
+        h, w, c = a.shape
+        groups.setdefault((h, w), {})["box" if c == 4 else "cls"] = a
+    B, S, C = [], [], []
+    for (h, w), g in groups.items():
+        if "box" not in g or "cls" not in g:
+            raise ValueError(f"stride {h}x{w} is missing its box or class output")
+        stride = net_wh[0] / w
+        prob = 1.0 / (1.0 + np.exp(-g["cls"]))
+        sc, cl = prob.max(-1), prob.argmax(-1)
+        ys, xs = np.nonzero(sc >= conf)
+        if len(ys) == 0:
+            continue
+        ltrb = g["box"][ys, xs]
+        cx, cy = xs + 0.5, ys + 0.5
+        boxes = np.stack([cx - ltrb[:, 0], cy - ltrb[:, 1], cx + ltrb[:, 2], cy + ltrb[:, 3]], 1) * stride
+        B.append(boxes); S.append(sc[ys, xs]); C.append(cl[ys, xs])
+    if not B:
+        return np.zeros((0, 4), np.float32), np.zeros(0, np.float32), np.zeros(0, int)
+    boxes, scores, classes = np.concatenate(B), np.concatenate(S), np.concatenate(C).astype(int)
+    k = nms(boxes, scores, classes, iou)
     return boxes[k], scores[k], classes[k]

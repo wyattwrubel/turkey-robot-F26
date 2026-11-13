@@ -24,7 +24,7 @@ import cv2
 import numpy as np
 
 from Vision import config
-from Vision.yolo_decode import decode, guess_layout, letterbox, unletterbox
+from Vision.yolo_decode import decode, decode_split, guess_layout, letterbox, unletterbox
 
 
 @dataclass
@@ -50,10 +50,9 @@ class _HailoBackend:
         self.input_name = inp.name
         self.in_h, self.in_w = inp.shape[0], inp.shape[1]
         outs = self.hef.get_output_vstream_infos()
-        if len(outs) != 1:
-            raise RuntimeError(f"{hef_path}: {len(outs)} outputs; only single-output HEFs are "
-                               "decoded. Recompile with one output or Hailo NMS.")
-        self.output_name = outs[0].name
+        self.output_names = [o.name for o in outs]
+        # several outputs = split heads (box + class per stride); one output = raw/e2e/nms
+        self.split = len(outs) > 1
         ip = InputVStreamParams.make(self.ng, format_type=FormatType.UINT8)
         op = OutputVStreamParams.make(self.ng, format_type=FormatType.FLOAT32)
         self._stack.enter_context(self.ng.activate(self.ng.create_params()))
@@ -63,10 +62,15 @@ class _HailoBackend:
     def __call__(self, bgr):
         lb, r, pad = letterbox(bgr, (self.in_h, self.in_w))
         rgb = cv2.cvtColor(lb, cv2.COLOR_BGR2RGB)
-        out = self.pipe.infer({self.input_name: rgb[np.newaxis]})[self.output_name]
-        if self.layout is None:
-            self.layout = guess_layout(out)
-        boxes, scores, classes = decode(out, self.layout, (self.in_w, self.in_h), self.conf)
+        res = self.pipe.infer({self.input_name: rgb[np.newaxis]})
+        if self.split:
+            self.layout = "split"
+            boxes, scores, classes = decode_split(res.values(), (self.in_w, self.in_h), self.conf)
+        else:
+            out = res[self.output_names[0]]
+            if self.layout is None:
+                self.layout = guess_layout(out)
+            boxes, scores, classes = decode(out, self.layout, (self.in_w, self.in_h), self.conf)
         boxes = unletterbox(boxes, r, pad, (bgr.shape[1], bgr.shape[0]))
         return boxes, scores, classes
 
