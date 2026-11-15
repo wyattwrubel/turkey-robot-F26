@@ -65,6 +65,13 @@ Deter mode (deter_mode=True, DR2 plan X5 / C8):
   disarms it. Vision goes only to ModuleDeter; the SCAN/CHASE/ALERT machine
   never runs, Scan and Alert requests are ignored, and the MotionCommand
   publisher is replaced by a no-op, so nothing here can move the wheels.
+
+Geofence (Geofence_Receiver, DR2 plan X6 / C4):
+  Every MotionCommand passes through GeofenceGate. near_edge caps speed at
+  0.5 m/s and clips Move targets into the polygon; outside / unknown / a stale
+  feed (and a bad fix with gps_real) latch STOP: SpeedCap 0 and no motion until
+  AUTO is pressed with the geofence OK again. No Geofence messages at all =
+  nothing enforced, so profiles without a geofence run unchanged.
 """
 
 from __future__ import annotations   # lets "X | None" hints run on a laptop's Python 3.9
@@ -75,6 +82,7 @@ import numpy as np
 from enum import Enum, auto
 
 from StatePlanner.ZigZag      import ZigZag
+from StatePlanner.GeofenceGate import GeofenceGate, evaluate as evaluate_geofence
 from StatePlanner.ModuleScan  import ModuleScan
 from StatePlanner.ModuleChase import ModuleChase
 from StatePlanner.ModuleAlert import ModuleAlert
@@ -99,6 +107,17 @@ class _NoMotionPublisher:
 
     async def publish(self, data) -> None:
         print(f"[StatePlanner] deter mode: MotionCommand dropped {data}")
+
+
+def _resolve_clip_target(geofence):
+    """clip_target(x, y) from the object Main.py passes, else Navigation/Geofence.py (C4), else None."""
+    if geofence is not None:
+        return getattr(geofence, "clip_target", None)
+    try:
+        from Navigation import Geofence as _geofence_module
+    except ImportError:
+        return None
+    return getattr(_geofence_module, "clip_target", None)
 
 
 class StatePlannerReceiver:
@@ -152,13 +171,28 @@ class StatePlannerReceiver:
     DETER_BLOCKED_STATES     = ("Scan", "Alert")
 
     def __init__(self, MacroState_Publisher, Canine_Publisher, MotionCommand_Publisher,
-                 Verbose=False, deter_mode=False):
+                 Verbose=False, deter_mode=False, geofence=None, gps_real=False):
+        """
+        geofence: optional object with clip_target(x, y) (Navigation/Geofence.py, C4);
+                  if None, Navigation/Geofence.py's module-level clip_target is used if present.
+        gps_real: True with --gps real; then a Fix worse than rtk_float means STOP (C4).
+        """
         self.MacroState_Publisher    = MacroState_Publisher
         self.Canine_Publisher        = Canine_Publisher
         self.deter_mode              = deter_mode
+        self.gps_real                = gps_real
+        self._geofence_gate          = (None if deter_mode else
+                                        GeofenceGate(MotionCommand_Publisher,
+                                                     clip_target=_resolve_clip_target(geofence)))
         self.MotionCommand_Publisher = (_NoMotionPublisher() if deter_mode
-                                        else MotionCommand_Publisher)
+                                        else self._geofence_gate)
         self.Verbose                 = Verbose
+
+        # Geofence bookkeeping (Geofence_Receiver)
+        self._geofence_decision: str | None = None   # "inside" | "near_edge" | "stop"
+        self._geofence_reason:   str        = ""
+        self._geofence_last_rx:  float      = 0.0
+        self._geofence_watchdog: asyncio.Task | None = None
 
         self.Current_RobotPose = np.array([0.0, 0.0, 0.0])
         self.IsManualMode      = True
@@ -369,6 +403,14 @@ class StatePlannerReceiver:
         state = data.get("Id", "")
 
         if state == "UnlockUI":
+            gate = self._geofence_gate
+            if gate is not None and gate.latched:
+                if self._geofence_decision == "stop":
+                    print(f"[Geofence] AUTO refused — geofence says {self._geofence_reason}; "
+                          f"drive back inside in manual first")
+                    return
+                gate.release()
+                print("[Geofence] STOP released by AUTO")
             self.IsManualMode = False
             if self.deter_mode:
                 self._dbg("[StatePlanner] UnlockUI — deter mode armed")
@@ -407,6 +449,54 @@ class StatePlannerReceiver:
             dispatch[state]()
         else:
             print(f"[StatePlanner] MacroState_Receiver: unknown state '{state}'")
+
+    async def Geofence_Receiver(self, data: dict) -> None:
+        """Contract C4: Geofence at 10 Hz from Navigation/Geofence.py (wired in Main.py)."""
+        gate = self._geofence_gate
+        if gate is None:                 # deter mode: the wheels never move anyway
+            return
+        if not isinstance(data, dict) or data.get("Id") != "Geofence":
+            print(f"[Geofence] ignored malformed message {data}")
+            return
+
+        self._geofence_last_rx = asyncio.get_event_loop().time()
+        if not gate.active:
+            gate.active = True
+            print("[Geofence] first message — geofence enforced from now on")
+            self._geofence_watchdog = asyncio.get_event_loop().create_task(
+                self._geofence_watchdog_loop())
+
+        decision, reason = evaluate_geofence(data, self.gps_real)
+        await self._apply_geofence(decision, reason, data)
+
+    async def _apply_geofence(self, decision: str, reason: str, data: dict | None = None) -> None:
+        gate = self._geofence_gate
+        if (decision, reason) != (self._geofence_decision, self._geofence_reason):
+            extra = ""
+            if data is not None:
+                dist = data.get("DistToEdge_m")
+                if isinstance(dist, (int, float)):
+                    extra += f", {dist:+.2f} m to edge"
+                extra += f", fix {data.get('Fix')}"
+            print(f"[Geofence] {self._geofence_decision or 'start'} -> {decision} "
+                  f"({reason}{extra}) | mode {self._mode.name}")
+            self._geofence_decision, self._geofence_reason = decision, reason
+
+        if decision == "stop":
+            if not gate.latched:
+                await gate.latch(reason)
+                self._enter_stop()
+            return
+        await gate.set_near_edge(decision == "near_edge")
+
+    async def _geofence_watchdog_loop(self) -> None:
+        """After the first Geofence message, silence for GeofenceGate.STALE_S counts as unknown."""
+        loop = asyncio.get_event_loop()
+        while True:
+            await asyncio.sleep(0.2)
+            if loop.time() - self._geofence_last_rx > GeofenceGate.STALE_S:
+                await self._apply_geofence(
+                    "stop", f"no Geofence message for > {GeofenceGate.STALE_S:.0f} s")
 
     # ------------------------------------------------------------------
     # Arbitration
@@ -808,6 +898,10 @@ class StatePlannerReceiver:
     # ------------------------------------------------------------------
 
     async def Stop_Routine(self) -> None:
+        # Hold the wheels. Without this the MPC keeps driving the last path after
+        # MANUAL / Stop (W26 only stopped the dog).
+        if not self.deter_mode:
+            await self._SpeedCap_Publish(0.0)
         await self.MacroState_Publisher.publish({"Id": "Stop"})
         await self._Pose_Publish("IdlePose")
         await self._Audio_Publish("Stop")
