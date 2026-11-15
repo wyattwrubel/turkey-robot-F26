@@ -31,6 +31,10 @@ Chase navigation:
     Behavior task — loops _aggressive_pursuit / _burst_attack based on
                     distance to nearest turkey; never blocks the nav task.
     _growl_and_chase fires as a background task so it does not delay Move.
+  Approach shape (CHASE_APPROACH, X2): "zigzag" sends one Move per leg from
+  ZigZag.py, alternating left/right of the line of sight within the camera's
+  FOV, then the straight chase for the last few metres; "straight" is W26's
+  Move-toward-the-bird every 0.5 s.
 
   VisionObject_Receiver is memory-only: stores turkeys/ghosts, updates
   last_known_turkey_pos and last_known_fov_angle, never publishes movement.
@@ -63,10 +67,14 @@ Deter mode (deter_mode=True, DR2 plan X5 / C8):
   publisher is replaced by a no-op, so nothing here can move the wheels.
 """
 
+from __future__ import annotations   # lets "X | None" hints run on a laptop's Python 3.9
+
 import asyncio
+import math
 import numpy as np
 from enum import Enum, auto
 
+from StatePlanner.ZigZag      import ZigZag
 from StatePlanner.ModuleScan  import ModuleScan
 from StatePlanner.ModuleChase import ModuleChase
 from StatePlanner.ModuleAlert import ModuleAlert
@@ -118,6 +126,15 @@ class StatePlannerReceiver:
     # Keep equal to MovementExecutor.CHASE_MIN_DIST (one hold distance, C7).
     CHASE_STOP_DIST_M        = 4.0    # metres
 
+    # Chase approach shape (X2): "zigzag" (ZigZag.py) or "straight" (W26's chase).
+    CHASE_APPROACH           = "zigzag"
+    ZIGZAG_TICK_S            = 0.1    # seconds — leg-switch check interval
+    ZIGZAG_SWITCH_EARLY_M    = 0.3    # metres — start the next leg this far before the vertex
+    ZIGZAG_BEARING_GUARD_DEG = 4.0    # end a leg early if the bird gets this close to the FOV edge
+    ZIGZAG_TURKEY_MOVED_M    = 2.0    # metres — replan the leg if the bird moved this far
+    ZIGZAG_LEG_TIMEOUT_S     = 12.0   # seconds — replan if a leg takes longer than this
+    ZIGZAG_RESTART_M         = 10.0   # metres — bird this far during the final approach → zig again
+
     # Lost-visual debounce: turkey must be absent for this long continuously
     # before the chase nav loop treats it as lost and transitions to Alert.
     # Any reappearance within this window resets the timer.
@@ -154,6 +171,7 @@ class StatePlannerReceiver:
         self._module_chase = ModuleChase(self)
         self._module_alert = ModuleAlert(self)
         self._module_deter = ModuleDeter(self)
+        self._zigzag       = ZigZag(hold_m=self.CHASE_STOP_DIST_M)
 
         # Single source of truth for mode
         self._mode         : Mode             = Mode.IDLE
@@ -483,6 +501,11 @@ class StatePlannerReceiver:
 
         end_of_chase_result: list = [None]
 
+        # Zig-zag approach state for this chase (used when CHASE_APPROACH == "zigzag").
+        self._zigzag.reset()
+        zz = {"leg": None, "target": None, "turkey_ref": None, "t_leg": 0.0,
+              "final": False, "t_final": 0.0}
+
         def _nearest_turkey() -> np.ndarray | None:
             if not self.Turkeys:
                 return None
@@ -493,7 +516,10 @@ class StatePlannerReceiver:
 
         async def _chase_nav_loop() -> None:
             """
-            Publishes Move toward nearest in-zone turkey every CHASE_NAV_RATE_S.
+            Approaches the nearest in-zone turkey. CHASE_APPROACH "straight"
+            publishes Move toward it every CHASE_NAV_RATE_S (W26). "zigzag"
+            publishes one Move per zig-zag leg, then the same straight chase
+            for the last few metres (see _zigzag_step).
 
             Lost-visual handling:
               A 0.5 s countdown timer is reset every time a turkey is visible.
@@ -561,14 +587,23 @@ class StatePlannerReceiver:
                         await self._SpeedCap_Publish(self.SPEED_CHASE)
                         too_close = False
 
-                    await self.MotionCommand_Publisher.publish(
-                        {"Id": "Move", "Mode": "Chase", "Cmd": turkey_pos.tolist()}
-                    )
-                    self._dbg(f"[Chase/Nav] Move -> {np.round(turkey_pos, 2)}")
-                    await asyncio.sleep(self.CHASE_NAV_RATE_S)
+                    if self.CHASE_APPROACH == "zigzag":
+                        await self._zigzag_step(zz, turkey_pos, now)
+                        await asyncio.sleep(self.ZIGZAG_TICK_S)
+                    else:
+                        await self._publish_chase_move(turkey_pos)
+                        await asyncio.sleep(self.CHASE_NAV_RATE_S)
 
                 else:
                     # Turkey not in frame this tick.
+                    if (self.CHASE_APPROACH == "zigzag" and zz["leg"] is not None
+                            and self.last_known_turkey_pos is not None):
+                        # A zig took the bird out of frame: stop zigging and head
+                        # straight back toward where it was last seen. Zig-zag
+                        # replans from wherever the robot is once it's back.
+                        self._dbg("[ZigZag] Bird left the frame mid-leg — turning back toward it")
+                        zz.update(leg=None, turkey_ref=None)
+                        await self._publish_chase_move(self.last_known_turkey_pos)
                     if now >= deadline:
                         # Timer expired — stop and transition to Alert.
                         if not stopped:
@@ -780,6 +815,74 @@ class StatePlannerReceiver:
     # ------------------------------------------------------------------
     # Navigation helpers
     # ------------------------------------------------------------------
+
+    async def _publish_chase_move(self, turkey_pos) -> None:
+        """W26's straight chase: Move toward the bird; Navigation goes direct inside 5 m."""
+        await self.MotionCommand_Publisher.publish(
+            {"Id": "Move", "Mode": "Chase", "Cmd": np.asarray(turkey_pos, dtype=float).tolist()}
+        )
+        self._dbg(f"[Chase/Nav] Move -> {np.round(turkey_pos, 2)}")
+
+    async def _zigzag_step(self, zz: dict, turkey_pos: np.ndarray, now: float) -> None:
+        """
+        One tick of the zig-zag approach (X2). Publishes a plain Move only when
+        a new leg starts: when the robot passes the current vertex, when the
+        bird nears the edge of the image on the side this leg pushes it, when
+        the bird has moved, or when a leg times out. When ZigZag has no leg
+        left (a few metres out), finishes with the straight chase, which holds
+        at CHASE_STOP_DIST_M.
+        """
+        robot = np.array(self.Current_RobotPose[:2], dtype=float)
+
+        if zz["final"]:
+            if np.linalg.norm(turkey_pos - robot) > self.ZIGZAG_RESTART_M:
+                self._dbg("[ZigZag] Bird pulled away — zig-zag again")
+                self._zigzag.reset()
+                zz.update(final=False, leg=None, target=None, turkey_ref=None)
+            else:
+                if now - zz["t_final"] >= self.CHASE_NAV_RATE_S:
+                    await self._publish_chase_move(turkey_pos)
+                    zz["t_final"] = now
+                return
+
+        leg, reason = zz["leg"], "start"
+        if leg is not None:
+            bearing = self._bearing_of_turkey_at(turkey_pos)
+            edge    = math.radians(self._zigzag.hfov_deg / 2.0 - self.ZIGZAG_BEARING_GUARD_DEG)
+            along   = float(np.dot(robot - leg["start"], leg["dir"]))
+            if along >= leg["length"] - self.ZIGZAG_SWITCH_EARLY_M:
+                reason = "vertex"
+            elif bearing is not None and -leg["side"] * bearing > edge:
+                # On a leg to side s the bird sits at bearing ~ -s * offset.
+                reason = "near FOV edge"
+            elif np.linalg.norm(turkey_pos - zz["turkey_ref"]) > self.ZIGZAG_TURKEY_MOVED_M:
+                reason = "bird moved"
+            elif now - zz["t_leg"] > self.ZIGZAG_LEG_TIMEOUT_S:
+                reason = "timeout"
+            else:
+                return
+
+        nxt = self._zigzag.next_leg(robot, turkey_pos, last_target=zz["target"])
+        if nxt is None:
+            self._dbg(f"[ZigZag] {np.linalg.norm(turkey_pos - robot):.1f} m out — "
+                      f"final straight approach")
+            zz.update(final=True, leg=None, t_final=now)
+            await self._publish_chase_move(turkey_pos)
+            return
+
+        info = self._zigzag.legs[-1]
+        self._dbg(f"[ZigZag] leg {len(self._zigzag.legs)} ({reason}): {info['side']} "
+                  f"{info['offset_deg']} deg x {info['length_m']} m -> {info['end']}")
+        zz.update(leg=nxt, target=nxt["target"],
+                  turkey_ref=np.array(turkey_pos, dtype=float), t_leg=now)
+        await self.MotionCommand_Publisher.publish({"Id": "Move", "Cmd": nxt["target"].tolist()})
+
+    def _bearing_of_turkey_at(self, turkey_pos) -> float | None:
+        """Camera bearing (col 2, + = left) of the visible turkey at turkey_pos, if any."""
+        if not self.Turkeys:
+            return None
+        t = min(self.Turkeys, key=lambda e: np.linalg.norm(np.array(e[:2]) - turkey_pos))
+        return float(t[2]) if len(t) >= 3 else None
 
     def _next_target(self) -> np.ndarray:
         if self.GhostQueue:
