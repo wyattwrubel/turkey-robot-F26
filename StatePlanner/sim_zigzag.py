@@ -119,6 +119,7 @@ async def run_one(pose0, approach, seed, verbose=False):
     nav = TrajectoryTracker(pubs["drive"], pubs["nav_motion"], pubs["mpc"], Verbose=False)
     planner = spr.StatePlannerReceiver(pubs["macro"], pubs["canine"], pubs["sp_motion"],
                                        Verbose=verbose)
+    planner.CHASE_RANDOM_COMBOS = False      # this sim compares fixed approach shapes
     planner.CHASE_APPROACH = approach
     planner._zigzag.rng = random.Random(seed)
     cam = FakeCamera(pubs["vision"], TURKEY, HFOV_DEG)

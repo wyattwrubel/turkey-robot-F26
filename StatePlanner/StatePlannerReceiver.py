@@ -35,6 +35,9 @@ Chase navigation:
   ZigZag.py, alternating left/right of the line of sight within the camera's
   FOV, then the straight chase for the last few metres; "straight" is W26's
   Move-toward-the-bird every 0.5 s.
+  F8 combos (CHASE_RANDOM_COMBOS, X3): each chase picks one row of
+  Combos.COMBOS (approach x speed profile x opening pose x sound) from a
+  shuffle bag, so no two chases in a row look the same; each pick is logged.
 
   VisionObject_Receiver is memory-only: stores turkeys/ghosts, updates
   last_known_turkey_pos and last_known_fov_angle, never publishes movement.
@@ -82,6 +85,7 @@ import numpy as np
 from enum import Enum, auto
 
 from StatePlanner.ZigZag      import ZigZag
+from StatePlanner.Combos      import Combo, ComboPicker, SPEED_PROFILES, fixed_combo
 from StatePlanner.GeofenceGate import GeofenceGate, evaluate as evaluate_geofence
 from StatePlanner.ModuleScan  import ModuleScan
 from StatePlanner.ModuleChase import ModuleChase
@@ -145,7 +149,10 @@ class StatePlannerReceiver:
     # Keep equal to MovementExecutor.CHASE_MIN_DIST (one hold distance, C7).
     CHASE_STOP_DIST_M        = 4.0    # metres
 
-    # Chase approach shape (X2): "zigzag" (ZigZag.py) or "straight" (W26's chase).
+    # F8 combos (X3): each chase picks approach x speed profile x opening pose x
+    # sound from Combos.COMBOS. False = W26's chase with CHASE_APPROACH below.
+    CHASE_RANDOM_COMBOS      = True
+    # Chase approach shape (X2) when combos are off: "zigzag" (ZigZag.py) or "straight" (W26).
     CHASE_APPROACH           = "zigzag"
     ZIGZAG_TICK_S            = 0.1    # seconds — leg-switch check interval
     ZIGZAG_SWITCH_EARLY_M    = 0.3    # metres — start the next leg this far before the vertex
@@ -206,6 +213,9 @@ class StatePlannerReceiver:
         self._module_alert = ModuleAlert(self)
         self._module_deter = ModuleDeter(self)
         self._zigzag       = ZigZag(hold_m=self.CHASE_STOP_DIST_M)
+        self._combo_picker = ComboPicker()
+        self._combo: Combo | None = None
+        self._chase_count  = 0
 
         # Single source of truth for mode
         self._mode         : Mode             = Mode.IDLE
@@ -591,7 +601,15 @@ class StatePlannerReceiver:
 
         end_of_chase_result: list = [None]
 
-        # Zig-zag approach state for this chase (used when CHASE_APPROACH == "zigzag").
+        # F8 combo for this chase (X3): approach shape, speed profile, opening pose + sound.
+        combo    = self._pick_combo()
+        approach = combo.approach
+        # The profile sets "target"; the nav loop holds at 0 near the bird
+        # ("holding") and the profile never raises speed while it does.
+        chase_speed = {"target": self._speed_level(SPEED_PROFILES[combo.speed][0][1]),
+                       "holding": False}
+
+        # Zig-zag approach state for this chase (used when approach == "zigzag").
         self._zigzag.reset()
         zz = {"leg": None, "target": None, "turkey_ref": None, "t_leg": 0.0,
               "final": False, "t_final": 0.0}
@@ -606,7 +624,7 @@ class StatePlannerReceiver:
 
         async def _chase_nav_loop() -> None:
             """
-            Approaches the nearest in-zone turkey. CHASE_APPROACH "straight"
+            Approaches the nearest in-zone turkey. The combo's approach "straight"
             publishes Move toward it every CHASE_NAV_RATE_S (W26). "zigzag"
             publishes one Move per zig-zag leg, then the same straight chase
             for the last few metres (see _zigzag_step).
@@ -636,7 +654,8 @@ class StatePlannerReceiver:
                     deadline = now + self.LOST_VISUAL_DEBOUNCE_S
                     if stopped:
                         self._dbg("[Chase/Nav] Turkey back in frame — resuming chase")
-                        await self._SpeedCap_Publish(self.SPEED_CHASE)
+                        chase_speed["holding"] = False
+                        await self._SpeedCap_Publish(chase_speed["target"])
                         stopped   = False
                         too_close = False   # re-evaluate proximity from scratch
 
@@ -663,6 +682,7 @@ class StatePlannerReceiver:
                                 f"[Chase/Nav] Turkey within {self.CHASE_STOP_DIST_M}m "
                                 f"(dist={dist_to_turkey:.2f}m) — holding position"
                             )
+                            chase_speed["holding"] = True
                             await self._SpeedCap_Publish(0.0)
                             too_close = True
                         await asyncio.sleep(self.CHASE_NAV_RATE_S)
@@ -674,10 +694,11 @@ class StatePlannerReceiver:
                             f"[Chase/Nav] Turkey moved beyond {self.CHASE_STOP_DIST_M}m "
                             f"(dist={dist_to_turkey:.2f}m) — resuming"
                         )
-                        await self._SpeedCap_Publish(self.SPEED_CHASE)
+                        chase_speed["holding"] = False
+                        await self._SpeedCap_Publish(chase_speed["target"])
                         too_close = False
 
-                    if self.CHASE_APPROACH == "zigzag":
+                    if approach == "zigzag":
                         await self._zigzag_step(zz, turkey_pos, now)
                         await asyncio.sleep(self.ZIGZAG_TICK_S)
                     else:
@@ -686,7 +707,7 @@ class StatePlannerReceiver:
 
                 else:
                     # Turkey not in frame this tick.
-                    if (self.CHASE_APPROACH == "zigzag" and zz["leg"] is not None
+                    if (approach == "zigzag" and zz["leg"] is not None
                             and self.last_known_turkey_pos is not None):
                         # A zig took the bird out of frame: stop zigging and head
                         # straight back toward where it was last seen. Zig-zag
@@ -702,6 +723,7 @@ class StatePlannerReceiver:
                                 f"{self.LOST_VISUAL_DEBOUNCE_S}s — "
                                 f"stopping, transitioning to Alert"
                             )
+                            chase_speed["holding"] = True
                             await self.MotionCommand_Publisher.publish(
                                 {"Id": "SpeedCap", "Cmd": 0.0}
                             )
@@ -711,10 +733,19 @@ class StatePlannerReceiver:
                     # Still within window — poll fast and wait for turkey to return.
                     await asyncio.sleep(self.HEADING_POLL_S)
 
+        async def _chase_speed_loop() -> None:
+            """Walks the combo's speed profile; never raises speed while holding."""
+            t0 = asyncio.get_event_loop().time()
+            for t_step, level in SPEED_PROFILES[combo.speed]:
+                delay = t0 + t_step - asyncio.get_event_loop().time()
+                if delay > 0:
+                    await asyncio.sleep(delay)
+                chase_speed["target"] = self._speed_level(level)
+                if not chase_speed["holding"]:
+                    await self._SpeedCap_Publish(chase_speed["target"])
+
         async def _chase_canine_loop() -> None:
-            await self._SpeedCap_Publish(self.SPEED_CHASE_GROWL)
-            await self._module_chase._growl_and_chase()
-            await self._SpeedCap_Publish(self.SPEED_CHASE)
+            await self._module_chase._opening(combo.pose, combo.sound)
 
             while True:
                 turkey_pos = _nearest_turkey()
@@ -734,6 +765,7 @@ class StatePlannerReceiver:
 
         loop   = asyncio.get_event_loop()
         nav    = loop.create_task(_chase_nav_loop())
+        speed  = loop.create_task(_chase_speed_loop())
         canine = loop.create_task(_chase_canine_loop())
 
         try:
@@ -742,6 +774,7 @@ class StatePlannerReceiver:
             pass
         finally:
             nav.cancel()
+            speed.cancel()
             canine.cancel()
 
         if end_of_chase_result[0] is not None:
@@ -909,6 +942,19 @@ class StatePlannerReceiver:
     # ------------------------------------------------------------------
     # Navigation helpers
     # ------------------------------------------------------------------
+
+    def _pick_combo(self) -> Combo:
+        """Next F8 combo (X3); every pick is logged."""
+        combo = (self._combo_picker.pick() if self.CHASE_RANDOM_COMBOS
+                 else fixed_combo(self.CHASE_APPROACH))
+        self._chase_count += 1
+        self._combo = combo
+        print(f"[F8] chase #{self._chase_count}: combo {combo.describe()}")
+        return combo
+
+    def _speed_level(self, level: str) -> float:
+        """Speed-profile level -> m/s, using only the existing chase limits (C7)."""
+        return self.SPEED_CHASE if level == "full" else self.SPEED_CHASE_GROWL
 
     async def _publish_chase_move(self, turkey_pos) -> None:
         """W26's straight chase: Move toward the bird; Navigation goes direct inside 5 m."""
