@@ -110,16 +110,11 @@ function buildAudio() {
 // WEBSOCKET
 // ═══════════════════════════════════════════════
 function connect() {
-  
-  // CHANGE HERE
-  // ws = new WebSocket('ws://100.67.22.116:8000/ws')
-  
-  ws = new WebSocket('ws://192.168.4.4:8000/ws')
-  // ws = new WebSocket('ws://35.3.137.208:8000/ws')
-  
+  // Same host that served this page: the Pi over Ethernet (192.168.10.2), over the phone
+  // hotspot, or localhost on a laptop running --profile sim. No address to edit per network.
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws'
+  ws = new WebSocket(`${proto}://${location.host}/ws`)
 
-  // ws = new WebSocket(`ws://${PI_HOST}:8000/ws`)
-  
   ws.onopen    = ()  => { wsReady = true;  _startHeartbeat() }
   ws.onclose   = ()  => { wsReady = false; _stopHeartbeat(); setTimeout(connect, 1000) }
   ws.onmessage = (e) => {
@@ -260,7 +255,35 @@ function handle(m) {
   if (m.type === 'vision') {
     mapTurkeys = (m.turkeys ?? []).map(t => [t[0], t[1]])
     mapHumans  = (m.humans  ?? []).map(h => [h[0], h[1]])
+    applyDetectorMeta(m.meta)
   }
+
+  // ── Geofence (contract C4) ───────────────────────────────────
+  if (m.type === 'geofence') applyGeofence(m)
+}
+
+// ── Detector readout on the camera panel ──────────────────────
+// Meta comes with the onboard detector (contract C2): backend, fps, one confidence per turkey.
+function applyDetectorMeta(meta) {
+  const el = document.getElementById('cam-sub')
+  if (!el || !meta) return
+  const parts = [`DETECTOR ${String(meta.backend ?? '?').toUpperCase()}`]
+  if (meta.fps != null) parts.push(`${Math.round(meta.fps)} FPS`)
+  const conf = meta.confidence ?? []
+  parts.push(conf.length ? `TURKEY ${Math.max(...conf).toFixed(2)}` : 'NO TURKEY')
+  el.textContent = parts.join(' · ')
+}
+
+// ── Geofence status dot ───────────────────────────────────────
+//   inside → green · near_edge → amber · outside / unknown → red
+function applyGeofence(m) {
+  const dot = document.getElementById('gf-dot')
+  if (!dot) return
+  dot.className = 'dot'
+  if      (m.state === 'near_edge') dot.classList.add('warn')
+  else if (m.state !== 'inside')    dot.classList.add('err')
+  const d = m.dist == null ? '' : ` · ${m.dist.toFixed(1)} m to edge`
+  dot.parentElement.title = `Geofence ${m.state}${d} · fix ${m.fix ?? '?'}`
 }
 
 // ── Drivetrain status dot ─────────────────────────────────────
@@ -577,12 +600,8 @@ function _initCamera() {
 
 function _reloadCamImg(img) {
   // Cache-buster prevents the browser reusing a cached error response.
-  // Host matches the WebSocket host defined in connect() above.
-  
-  // CHANGE HERE
-  // const base = `http://192.168.10.2:8000/camera`
-  const base = `http://192.168.4.4:8000/camera`
-  // const base = `http://35.3.137.208:8000/camera`
+  // Same host as the page and the WebSocket in connect() above.
+  const base = `${location.origin}/camera`
   img.src = base + '?t=' + Date.now()
 }
 

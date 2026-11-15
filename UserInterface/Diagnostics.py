@@ -12,9 +12,12 @@ Inbound receivers (subscribe in main.py):
     imu_pub.subscribe(ui.diagnostics.Accelerometer_Receiver)
     macrostate_pub.subscribe(ui.diagnostics.MacroState_Receiver)
     vision_pub.subscribe(ui.diagnostics.VisionObject_Receiver)
+    geofence_pub.subscribe(ui.Geofence_Receiver)       (contract C4)
 
 No outbound publishing — diagnostics is display only.
 """
+
+import math
 
 import numpy as np
 
@@ -134,10 +137,33 @@ class PanelDiagnostics:
         """
         turkeys = np.asarray(data.get("Turkeys", []), dtype=float)
         humans  = np.asarray(data.get("Humans",  []), dtype=float)
-        await broadcast_fn({
+        msg = {
             "type":    "vision",
             "turkeys": turkeys.tolist() if turkeys.size > 0 else [],
             "humans":  humans.tolist()  if humans.size  > 0 else [],
+        }
+        meta = data.get("Meta")   # onboard detector only (contract C2); the page shows it
+        if meta:
+            msg["meta"] = {
+                "backend":    meta.get("backend"),
+                "fps":        meta.get("fps"),
+                "confidence": [float(c) for c in meta.get("confidence", [])],
+            }
+        await broadcast_fn(msg)
+
+    async def Geofence_Receiver(self, data: dict, broadcast_fn) -> None:
+        """
+        Robot geofence state (contract C4), forwarded to the page's GEOFENCE dot:
+          {"Id": "Geofence", "State": ..., "DistToEdge_m": ..., "Fix": ..., ...}
+        """
+        dist = data.get("DistToEdge_m")
+        if not isinstance(dist, (int, float)) or not math.isfinite(dist):
+            dist = None          # "unknown" carries NaN, which the page's JSON.parse rejects
+        await broadcast_fn({
+            "type":  "geofence",
+            "state": data.get("State"),
+            "dist":  dist,
+            "fix":   data.get("Fix"),
         })
 
     async def Slip_Receiver(self, data: dict) -> None: 

@@ -33,6 +33,13 @@
         2  → class="dot err"   → red solid       (error)
     -->
     <div class="spill"><div class="dot off" id="dt-dot"></div>DRIVETRAIN</div>
+    <!--
+      GEOFENCE STATUS DOT
+      id="gf-dot" is updated by applyGeofence() in script.js (contract C4):
+        inside → green · near_edge → amber · outside / unknown → red · off until a fence publishes
+      Hover for the distance to the edge and the GPS fix type.
+    -->
+    <div class="spill" title="No geofence running"><div class="dot off" id="gf-dot"></div>GEOFENCE</div>
     <div class="mode-badge" id="mode-badge">AUTO</div>
   </div>
 </header>
@@ -44,7 +51,7 @@
   <div class="panel">
     <div class="ph">
       <div class="ph-title">Live Camera Feed</div>
-      <div class="ph-sub">LIVE STREAM</div>
+      <div class="ph-sub" id="cam-sub">LIVE STREAM</div>
     </div>
     <div class="pbody" style="padding:0; position:relative; overflow:hidden;">
       <div class="feed-ph" id="cam-ph">
