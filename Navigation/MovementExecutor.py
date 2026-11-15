@@ -74,7 +74,7 @@ CHASE_CORRIDOR_WIDTH   = 1.0   # metres — half-width of obstacle corridor chec
 CHASE_CORRIDOR_STEP    = 1.0   # metres — sample interval along corridor
 CHASE_TARGET_MOVE_DIST = 1.0   # metres — recompute intercept if turkey moves this far
 CHASE_ARRIVE_DIST      = 1.5   # metres — stop chasing when this close
-CHASE_MIN_DIST         = 2.0   # metres — hold position when closer than this
+CHASE_MIN_DIST         = 4.0   # metres — hold position when closer than this (= StatePlannerReceiver.CHASE_STOP_DIST_M, C7)
 
 # Direct-chase MPC cost weights (override run weights for close-range pursuit).
 W_CHASE_XY       =  5.0   # position tracking toward turkey

@@ -87,8 +87,8 @@ class StatePlannerReceiver:
     STOPPED_THRESHOLD_M      = 0.2    # metres — displacement below this = robot stopped
 
     # ── Speed caps (m/s) — tune these at the top level ────────────────────────
-    SPEED_SCAN               = 3.0    # cruising speed during waypoint scan
-    SPEED_ALERT              = 3.0    # speed cap during alert routines
+    SPEED_SCAN               = 1.0    # cruising speed during waypoint scan
+    SPEED_ALERT              = 1.0    # speed cap during alert routines
     SPEED_CHASE_GROWL        = 1.0    # slow speed during initial growl sequence
     SPEED_CHASE              = 2.0    # full chase pursuit speed
 
@@ -96,6 +96,7 @@ class StatePlannerReceiver:
     # When the robot is within this radius of the turkey, speed cap drops to 0
     # (robot holds position).  Speed is restored as soon as the turkey moves
     # back beyond this distance.
+    # Keep equal to MovementExecutor.CHASE_MIN_DIST (one hold distance, C7).
     CHASE_STOP_DIST_M        = 4.0    # metres
 
     # Lost-visual debounce: turkey must be absent for this long continuously
@@ -105,9 +106,9 @@ class StatePlannerReceiver:
 
     # Direction-biased rotation in Alert Path2/Path3.
     # Total steps = ALERT_ROTATION_STEPS (8 = two full 360° rotations).
-    # Direction is determined by last_known_fov_angle:
-    #   fov_angle > 0  → turkey was right of centre → turn right (negative steps)
-    #   fov_angle < 0  → turkey was left  of centre → turn left  (positive steps)
+    # Direction is determined by last_known_fov_angle (+ = left, as in C2):
+    #   fov_angle > 0  → turkey was left  of centre → turn left  (positive steps, CCW)
+    #   fov_angle < 0  → turkey was right of centre → turn right (negative steps, CW)
     ALERT_ROTATION_STEPS     = 8
     ALERT_ROTATION_STEP_DEG  = 90.0
 
@@ -144,8 +145,8 @@ class StatePlannerReceiver:
         self.last_known_turkey_pos = None
 
         # Last known FOV angle of the nearest turkey (col 2 of Turkeys array).
-        # Positive = turkey was right of camera centre.
-        # Negative = turkey was left  of camera centre.
+        # Positive = turkey was left  of camera centre.
+        # Negative = turkey was right of camera centre.
         # Updated whenever a turkey is visible; preserved on loss so Alert
         # rotation knows which direction to spin.
         self.last_known_fov_angle: float = 0.0
@@ -299,7 +300,7 @@ class StatePlannerReceiver:
             self.last_known_turkey_pos = np.array(nearest[:2])
 
             # Col 2 is the relative angle from camera centre (radians).
-            # Positive = right of centre, negative = left of centre.
+            # Positive = left of centre, negative = right of centre.
             # Only update when turkey is visible so we preserve the last-seen
             # direction for Alert rotation after the turkey disappears.
             self.last_known_fov_angle = float(nearest[2])
@@ -644,9 +645,10 @@ class StatePlannerReceiver:
             use_path2 = (self._lose_visual_count % 2 == 1)
 
             # Determine rotation direction from the last known FOV angle.
-            # Coordinate system is inverted relative to camera convention, so:
-            # fov_angle > 0 → turkey was right of centre → turn left  (step = +90°)
-            # fov_angle < 0 → turkey was left  of centre → turn right (step = -90°)
+            # fov_angle is + = left (C2) and +theta is CCW, so we turn toward
+            # the side the turkey was last seen:
+            # fov_angle > 0 → turkey was left  of centre → turn left  (step = +90°)
+            # fov_angle < 0 → turkey was right of centre → turn right (step = -90°)
             # fov_angle == 0 is excluded by design (only lost when not in frame).
             step_sign   = 1.0 if self.last_known_fov_angle > 0.0 else -1.0
             step_rad    = step_sign * np.radians(self.ALERT_ROTATION_STEP_DEG)
