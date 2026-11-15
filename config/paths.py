@@ -13,6 +13,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 # Maps and routes
 ZONE_CSV      = REPO_ROOT / "Navigation" / "Zone.csv"
 WAYPOINTS_CSV = REPO_ROOT / "Navigation" / "Waypoints.csv"
+GEOFENCE_JSON = REPO_ROOT / "Navigation" / "geofence.json"
 
 # Run logs (git ignores new ones; see .gitignore)
 NAV_LOG_DIR     = REPO_ROOT / "Navigation" / "logs"
