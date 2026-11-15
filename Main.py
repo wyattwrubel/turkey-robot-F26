@@ -157,12 +157,20 @@ async def main(args):
         Navigation = TrajectoryTracker(DriveCommand_Navigation_pub, MotionCommand_Navigation_pub,
                                        MPCFeedback_Navigation_pub, Verbose=False)
 
+    # Fix type until the F9P reports its own (fix / carrSoln): "sim" or the old puck's "gps".
+    Fence = None
+    if Drivetrain:
+        Fence = Geofence(Geofence_pub, fix="gps" if p["sensors"] and args.gps == "real" else "sim")
+
+    # The planner gates every motion command on the fence (C4): near_edge caps speed,
+    # outside / unknown latch STOP, and with --gps real a fix worse than rtk_float stops too.
     StatePlanner = None
     if p["planner"] == "normal":
         StatePlanner = StatePlannerReceiver(MacroState_StatePlanner, Canine_StatePlanner_pub,
-                                            MotionCommand_StatePlanner_pub, Verbose=False)
+                                            MotionCommand_StatePlanner_pub, Verbose=False,
+                                            geofence=Fence, gps_real=(p["sensors"] and args.gps == "real"))
     elif p["planner"] == "deter":
-        # deter_mode arrives with Xinyuan's behavior/deter-mode branch (C8).
+        # No fence in deter: the wheels are never built (C8).
         StatePlanner = StatePlannerReceiver(MacroState_StatePlanner, Canine_StatePlanner_pub,
                                             MotionCommand_StatePlanner_pub, Verbose=False,
                                             deter_mode=True)
@@ -172,11 +180,6 @@ async def main(args):
         PositionDriver = PositioningDriver(GPS_GPSPublisher_pub, Simulation=(args.gps == "sim"), Verbose=True)
         Accelerometer = IMUDriver(Accelerometer_AccelPublisher_pub, Simulation=(args.imu == "sim"),
                                   Log=(args.imu == "real"))
-
-    # Fix type until the F9P reports its own (fix / carrSoln): "sim" or the old puck's "gps".
-    Fence = None
-    if Drivetrain:
-        Fence = Geofence(Geofence_pub, fix="gps" if p["sensors"] and args.gps == "real" else "sim")
 
     UI = CDSControlServer(DriveCommand_UI_pub, Canine_UI_pub, MacroState_UI_pub, MotionCommand_UI_pub)
 
@@ -234,7 +237,8 @@ async def main(args):
     link(GPS_GPSPublisher_pub, rx(Drivetrain, "Drivetrain_UWBReceiver"),
          rx(UI, "diagnostics.UWB_Sensors_Receiver"))
 
-    """Geofence (C4): the planner and the UI subscribe once their sides are merged"""
+    """Geofence (C4)"""
+    link(Geofence_pub, rx(StatePlanner, "Geofence_Receiver"), rx(UI, "Geofence_Receiver"))
 
     """Accelerometer Theta Values"""
     link(Accelerometer_AccelPublisher_pub, rx(Drivetrain, "Drivetrain_AccelReceiver"),

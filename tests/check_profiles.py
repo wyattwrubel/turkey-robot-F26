@@ -72,14 +72,14 @@ def recorder(label, built):
 EXPECTED = {   # module -> flags it must be built with; absent = must not be built
     "full":   {"VisionObject": {"Simulated": False}, "CanineDriver": {"Simulated": False},
                "MotorDriver": {"Simulated": False}, "TrajectoryTracker": {},
-               "StatePlannerReceiver": {}, "PositioningDriver": {"Simulation": True},
+               "StatePlannerReceiver": {"gps_real": False}, "PositioningDriver": {"Simulation": True},
                "IMUDriver": {"Simulation": True}, "Geofence": {"fix": "sim"}, "CDSControlServer": {}},
     "vision": {"VisionObject": {"Simulated": False}, "CDSControlServer": {}},
     "deter":  {"VisionObject": {"Simulated": False}, "CanineDriver": {"Simulated": False},
                "StatePlannerReceiver": {"deter_mode": True}, "CDSControlServer": {}},
     "sim":    {"FakeVision": {}, "CanineDriver": {"Simulated": True},
                "MotorDriver": {"Simulated": True}, "TrajectoryTracker": {},
-               "StatePlannerReceiver": {}, "PositioningDriver": {"Simulation": True},
+               "StatePlannerReceiver": {"gps_real": False}, "PositioningDriver": {"Simulation": True},
                "IMUDriver": {"Simulation": True}, "Geofence": {"fix": "sim"}, "CDSControlServer": {}},
 }
 CLASSES = ["VisionObject", "FakeVision", "CanineDriver", "MotorDriver", "TrajectoryTracker",
@@ -97,6 +97,9 @@ def check_profiles():
             asyncio.run(Main.main(Main.parse_args(["--profile", profile, "--run-for", "0.05"])))
             check(f"{profile}: builds only {sorted(want)}", set(built) == set(want),
                   f"built {sorted(built)}")
+            if "Geofence" in want:
+                check(f"{profile}: planner gets the geofence (C4)",
+                      built.get("StatePlannerReceiver", {}).get("geofence") is not None)
             for c, flags in want.items():
                 got = {k: built.get(c, {}).get(k) for k in flags}
                 check(f"{profile}: {c} flags {flags}", got == flags, f"got {got}")
