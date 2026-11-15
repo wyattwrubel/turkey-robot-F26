@@ -54,6 +54,13 @@ Waypoint resumption:
   _scan_idx and _scan_target are preserved across interruptions.
   The robot always resumes toward the waypoint it was heading to;
   waypoints are never skipped.
+
+Deter mode (deter_mode=True, DR2 plan X5 / C8):
+  Stationary detect-and-deter with the drivetrain off. UnlockUI arms
+  ModuleDeter.run() (head toward the turkey and bark); any other MacroState
+  disarms it. Vision goes only to ModuleDeter; the SCAN/CHASE/ALERT machine
+  never runs, Scan and Alert requests are ignored, and the MotionCommand
+  publisher is replaced by a no-op, so nothing here can move the wheels.
 """
 
 import asyncio
@@ -63,6 +70,7 @@ from enum import Enum, auto
 from StatePlanner.ModuleScan  import ModuleScan
 from StatePlanner.ModuleChase import ModuleChase
 from StatePlanner.ModuleAlert import ModuleAlert
+from StatePlanner.ModuleDeter import ModuleDeter
 from StatePlanner.ZoneChecker import ZoneChecker
 
 
@@ -72,6 +80,17 @@ class Mode(Enum):
     CHASE = auto()
     ALERT = auto()
     STOP  = auto()
+    DETER = auto()
+
+
+class _NoMotionPublisher:
+    """Stands in for the MotionCommand publisher in deter mode (C8): drops every message."""
+
+    def subscribe(self, callback) -> None:
+        pass
+
+    async def publish(self, data) -> None:
+        print(f"[StatePlanner] deter mode: MotionCommand dropped {data}")
 
 
 class StatePlannerReceiver:
@@ -112,10 +131,16 @@ class StatePlannerReceiver:
     ALERT_ROTATION_STEPS     = 8
     ALERT_ROTATION_STEP_DEG  = 90.0
 
-    def __init__(self, MacroState_Publisher, Canine_Publisher, MotionCommand_Publisher, Verbose=False):
+    # MacroStates that start routines which drive the wheels; ignored in deter mode.
+    DETER_BLOCKED_STATES     = ("Scan", "Alert")
+
+    def __init__(self, MacroState_Publisher, Canine_Publisher, MotionCommand_Publisher,
+                 Verbose=False, deter_mode=False):
         self.MacroState_Publisher    = MacroState_Publisher
         self.Canine_Publisher        = Canine_Publisher
-        self.MotionCommand_Publisher = MotionCommand_Publisher
+        self.deter_mode              = deter_mode
+        self.MotionCommand_Publisher = (_NoMotionPublisher() if deter_mode
+                                        else MotionCommand_Publisher)
         self.Verbose                 = Verbose
 
         self.Current_RobotPose = np.array([0.0, 0.0, 0.0])
@@ -128,6 +153,7 @@ class StatePlannerReceiver:
         self._module_scan  = ModuleScan(self)
         self._module_chase = ModuleChase(self)
         self._module_alert = ModuleAlert(self)
+        self._module_deter = ModuleDeter(self)
 
         # Single source of truth for mode
         self._mode         : Mode             = Mode.IDLE
@@ -283,6 +309,10 @@ class StatePlannerReceiver:
             print(f"[StatePlanner] RobotPose_Receiver: invalid data '{data}'")
 
     async def VisionObject_Receiver(self, data: dict) -> None:
+        if self.deter_mode:
+            self._module_deter.on_vision(data)   # stores only; never awaits
+            return
+
         if self.IsManualMode:
             return
 
@@ -322,6 +352,11 @@ class StatePlannerReceiver:
 
         if state == "UnlockUI":
             self.IsManualMode = False
+            if self.deter_mode:
+                self._dbg("[StatePlanner] UnlockUI — deter mode armed")
+                self._mode = Mode.DETER
+                self._start_task(self._module_deter.run())
+                return
             self._mode        = Mode.IDLE
             self._dbg("[StatePlanner] UnlockUI — starting auto")
             await self._arbitrate(turkey_in_zone=self._turkey_in_zone_event.is_set())
@@ -330,6 +365,10 @@ class StatePlannerReceiver:
         self.IsManualMode = True
         self._cancel_current_task()
         self._mode = Mode.IDLE
+
+        if self.deter_mode and state in self.DETER_BLOCKED_STATES:
+            print(f"[StatePlanner] deter mode: '{state}' ignored (it drives the wheels)")
+            return
 
         dispatch = {
             "Scan":               lambda: self._start_task(self.Scan_Routine()),
@@ -356,7 +395,7 @@ class StatePlannerReceiver:
     # ------------------------------------------------------------------
 
     async def _arbitrate(self, turkey_in_zone: bool) -> None:
-        if self.IsManualMode:
+        if self.IsManualMode or self.deter_mode:
             return
 
         if self.Verbose:
