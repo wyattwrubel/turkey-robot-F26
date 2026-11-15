@@ -9,6 +9,8 @@ import numpy as np
 from dataclasses import dataclass, fields, astuple
 from datetime import datetime
 
+from config.paths import IMU_LOG_DIR
+
 
 # ---------------------------------------------------------------------------
 # Data container
@@ -87,7 +89,7 @@ class DataLogger:
     ):
         if path is None:
             date_str = datetime.utcnow().strftime("%Y%m%dT%H%M%S")
-            path = f"/home/turkeysquad/ME450/MainDesign/Sensors/AccelReadings/imu_log_{date_str}.csv"
+            path = str(IMU_LOG_DIR / f"imu_log_{date_str}.csv")
 
         self.path        = path
         self.flush_every = flush_every

@@ -1,6 +1,29 @@
+"""
+Main.py: starts the robot software in one of four run profiles (DR2 plan, contract C1).
+
+    python Main.py --profile full     everything (W26's setup); needs the drivetrain battery
+    python Main.py --profile vision   camera + detector + UI; drivetrain may be unpowered
+    python Main.py --profile deter    vision + the dog (head + bark); wheels never commanded
+    python Main.py --profile sim      laptop, no hardware: fake turkey, simulated drive and dog
+
+Options:
+    --gps sim|real   real GPS receiver (full only; default sim)
+    --imu sim|real   real IMU (full only; default sim until the gyro-heading work, W1, lands:
+                     today's IMU mode is the magnetometer heading the robot's motors corrupt)
+    --run-for N      stop after N seconds (used by tests/check_profiles.py)
+
+A profile builds only the modules it lists, and every subscription below skips a module the
+profile left out, so nothing assumes another module exists.
+"""
+
+import argparse
 import asyncio
-import sys
+import contextlib
+import logging
+import operator
 import os
+import sys
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from UserInterface.App import CDSControlServer
@@ -13,6 +36,18 @@ from StatePlanner.StatePlannerReceiver import StatePlannerReceiver
 
 from Vision.Vision import VisionObject
 from Vision.SimpleVision import FakeVision
+
+# What each profile builds (contract C1). None = module left out.
+#   vision: "camera" = the robot's camera (VisionObject), "fake" = FakeVision's fixed turkey
+#   canine / drivetrain: "real" hardware or "sim"
+#   sensors: GPS + IMU drivers (real or simulated per --gps / --imu)
+PROFILES = {
+    "full":   dict(vision="camera", canine="real", drivetrain="real", navigation=True,  planner="normal", sensors=True),
+    "vision": dict(vision="camera", canine=None,   drivetrain=None,   navigation=False, planner=None,     sensors=False),
+    "deter":  dict(vision="camera", canine="real", drivetrain=None,   navigation=False, planner="deter",  sensors=False),
+    "sim":    dict(vision="fake",   canine="sim",  drivetrain="sim",  navigation=True,  planner="normal", sensors=True),
+}
+
 
 class AsyncPublisher:
     def __init__(self, name: str = ""):
@@ -29,153 +64,202 @@ class AsyncPublisher:
             except Exception as e:
                 print(f"[{self._name}] Subscriber error: {e}")
 
-async def main():
+
+def rx(module, name):
+    """A module's receiver method, or None when the profile left the module out."""
+    return None if module is None else operator.attrgetter(name)(module)
+
+
+def link(publisher, *receivers):
+    for receiver in receivers:
+        if receiver is not None:
+            publisher.subscribe(receiver)
+
+
+def parse_args(argv=None):
+    ap = argparse.ArgumentParser(description="Start the turkey robot software.")
+    ap.add_argument("--profile", choices=PROFILES, default="full")
+    ap.add_argument("--gps", choices=("sim", "real"), default="sim")
+    ap.add_argument("--imu", choices=("sim", "real"), default="sim")
+    ap.add_argument("--run-for", type=float, default=None, metavar="SECONDS")
+    args = ap.parse_args(argv)
+    if args.profile != "full" and "real" in (args.gps, args.imu):
+        ap.error("--gps real and --imu real only apply to --profile full")
+    return args
+
+
+async def main(args):
+    p = PROFILES[args.profile]
+    print(f"[MAIN] Profile '{args.profile}': " + ", ".join(f"{k}={v}" for k, v in p.items())
+          + f", gps={args.gps if p['sensors'] else None}, imu={args.imu if p['sensors'] else None}")
 
     # ─────────────────────────────────────────────────────────────────────────
     # ASYNC PUBLISHERS
     # ─────────────────────────────────────────────────────────────────────────
 
-    # VisionObject Protocol
     VisionObject_Vision_pub = AsyncPublisher("VideoObject")
-    TESTING_VisionObject_Vision_pub = AsyncPublisher("TestVideoObject")
-
-    # VideoFeed Protocol
     VideoFeed_Vision_pub = AsyncPublisher("VideoFeed")
-    TESTING_VideoFeed_Vision_pub = AsyncPublisher("TestVideoFeed")
 
-    # Canine Protocol
     Canine_UI_pub = AsyncPublisher("UI_Canine")
     Canine_StatePlanner_pub = AsyncPublisher("StatePlanner_Canine")
     Canine_Canine_pub = AsyncPublisher("Canine_Canine")
 
-    # ServoFeedback Protocol
     ServoFeedback_Canine_pub = AsyncPublisher("CanineServoAngles")
 
-    # DriveCommand Protocol
     DriveCommand_Navigation_pub = AsyncPublisher("Nav_DriveCommand")
     DriveCommand_UI_pub  = AsyncPublisher("UI_DriveCommand")
 
-    # SlipFeedback Protocol
     SlipFeedback_Drivetrain_pub = AsyncPublisher("DrivetrainSlip")
 
-    # RobotPose Protocol
     RobotPose_Drivetrain_pub = AsyncPublisher("RobotPose")
 
-    # MacroState
     MacroState_StatePlanner = AsyncPublisher("StatePlanner_MacroState")
     MacroState_UI_pub = AsyncPublisher("UI_MacroState")
 
-    # MotionCommand
     MotionCommand_Navigation_pub = AsyncPublisher("Nav_MotionCommand")
     MotionCommand_StatePlanner_pub = AsyncPublisher("StatePlanner_MotionCommand")
     MotionCommand_UI_pub = AsyncPublisher("UI_MotionCommand")
 
-    # MPCFeedback
     MPCFeedback_Navigation_pub = AsyncPublisher("Nav_MPC")
 
-    # UWB
     GPS_GPSPublisher_pub = AsyncPublisher("GPS")
 
-    # Accelerometer
     Accelerometer_AccelPublisher_pub = AsyncPublisher("IMU")
 
     # ─────────────────────────────────────────────────────────────────────────
-    # SOFTWARE MODULES
+    # SOFTWARE MODULES (only the ones this profile lists)
     # ─────────────────────────────────────────────────────────────────────────
 
-    Vision = VisionObject(VideoFeed_Vision_pub, VisionObject_Vision_pub, Simulated=False)
+    if p["vision"] == "camera":
+        Vision = VisionObject(VideoFeed_Vision_pub, VisionObject_Vision_pub, Simulated=False)
+    else:
+        Vision = FakeVision(VideoFeed_Vision_pub, VisionObject_Vision_pub)
 
-    TestVision = FakeVision(TESTING_VideoFeed_Vision_pub, TESTING_VisionObject_Vision_pub)
+    Canine = None
+    if p["canine"]:
+        Canine = CanineDriver(ServoFeedback_Canine_pub, Canine_Canine_pub,
+                              Simulated=(p["canine"] == "sim"), Verbose=False)
 
-    Canine = CanineDriver(ServoFeedback_Canine_pub, Canine_Canine_pub, Simulated=False, Verbose=False)
+    Drivetrain = None
+    if p["drivetrain"]:
+        simulated = p["drivetrain"] == "sim"
+        Drivetrain = MotorDriver(RobotPose_Drivetrain_pub, SlipFeedback_Drivetrain_pub,
+                                 Simulated=simulated, EncoderLogging=not simulated)
 
-    Drivetrain = MotorDriver(RobotPose_Drivetrain_pub, SlipFeedback_Drivetrain_pub, Simulated=False, EncoderLogging=True)
+    # TrajectoryTracker starts the MPC drive loop itself (NavigationDriver.py). W26 also
+    # started it from the gather below, so the loop ran twice (found by Xinyuan).
+    Navigation = None
+    if p["navigation"]:
+        Navigation = TrajectoryTracker(DriveCommand_Navigation_pub, MotionCommand_Navigation_pub,
+                                       MPCFeedback_Navigation_pub, Verbose=False)
 
-    Navigation = TrajectoryTracker(DriveCommand_Navigation_pub, MotionCommand_Navigation_pub, MPCFeedback_Navigation_pub, Verbose=False)
+    StatePlanner = None
+    if p["planner"] == "normal":
+        StatePlanner = StatePlannerReceiver(MacroState_StatePlanner, Canine_StatePlanner_pub,
+                                            MotionCommand_StatePlanner_pub, Verbose=False)
+    elif p["planner"] == "deter":
+        # deter_mode arrives with Xinyuan's behavior/deter-mode branch (C8).
+        StatePlanner = StatePlannerReceiver(MacroState_StatePlanner, Canine_StatePlanner_pub,
+                                            MotionCommand_StatePlanner_pub, Verbose=False,
+                                            deter_mode=True)
 
-    StatePlanner = StatePlannerReceiver(MacroState_StatePlanner, Canine_StatePlanner_pub, MotionCommand_StatePlanner_pub, Verbose=False)
+    PositionDriver = Accelerometer = None
+    if p["sensors"]:
+        PositionDriver = PositioningDriver(GPS_GPSPublisher_pub, Simulation=(args.gps == "sim"), Verbose=True)
+        Accelerometer = IMUDriver(Accelerometer_AccelPublisher_pub, Simulation=(args.imu == "sim"),
+                                  Log=(args.imu == "real"))
 
-    PositionDriver = PositioningDriver(GPS_GPSPublisher_pub, Simulation=True, Verbose=True)
-
-    Accelerometer = IMUDriver(Accelerometer_AccelPublisher_pub, Simulation=True, Log=True)
-
-    UserInterface = CDSControlServer(DriveCommand_UI_pub, Canine_UI_pub, MacroState_UI_pub, MotionCommand_UI_pub)
+    UI = CDSControlServer(DriveCommand_UI_pub, Canine_UI_pub, MacroState_UI_pub, MotionCommand_UI_pub)
 
     # ─────────────────────────────────────────────────────────────────────────
-    # SUBSCRIPTION PATHS
+    # SUBSCRIPTION PATHS (a receiver on a missing module is skipped)
     # ─────────────────────────────────────────────────────────────────────────
 
     """VisionObject"""
-    VisionObject_Vision_pub.subscribe(UserInterface.VisionObject_Receiver)
-    VisionObject_Vision_pub.subscribe(Navigation.VisionObject_Receiver)
-    VisionObject_Vision_pub.subscribe(StatePlanner.VisionObject_Receiver)
-
-    TESTING_VisionObject_Vision_pub.subscribe(UserInterface.VisionObject_Receiver)
-    TESTING_VisionObject_Vision_pub.subscribe(Navigation.VisionObject_Receiver)
-    TESTING_VisionObject_Vision_pub.subscribe(StatePlanner.VisionObject_Receiver)
+    link(VisionObject_Vision_pub,
+         rx(UI, "VisionObject_Receiver"),
+         rx(Navigation, "VisionObject_Receiver"),
+         rx(StatePlanner, "VisionObject_Receiver"))
 
     """VideoFeed"""
-    VideoFeed_Vision_pub.subscribe(UserInterface.VideoFeed_Receiver)
-    TESTING_VideoFeed_Vision_pub.subscribe(UserInterface.VideoFeed_Receiver)
+    link(VideoFeed_Vision_pub, rx(UI, "VideoFeed_Receiver"))
 
     """Canine"""
-    Canine_UI_pub.subscribe(Canine.CanineDriver_Receiver)
-    Canine_StatePlanner_pub.subscribe(Canine.CanineDriver_Receiver)
-    Canine_StatePlanner_pub.subscribe(UserInterface.diagnostics.CaninePose_Receiver)
-    Canine_Canine_pub.subscribe(UserInterface.diagnostics.CaninePose_Receiver)
+    link(Canine_UI_pub, rx(Canine, "CanineDriver_Receiver"))
+    link(Canine_StatePlanner_pub, rx(Canine, "CanineDriver_Receiver"),
+         rx(UI, "diagnostics.CaninePose_Receiver"))
+    link(Canine_Canine_pub, rx(UI, "diagnostics.CaninePose_Receiver"))
 
     """ServoFeedback"""
-    ServoFeedback_Canine_pub.subscribe(UserInterface.diagnostics.CanineAngle_Receiver)
+    link(ServoFeedback_Canine_pub, rx(UI, "diagnostics.CanineAngle_Receiver"))
 
     """DriveCommand"""
-    DriveCommand_Navigation_pub.subscribe(Drivetrain.MotorCommandReceiver)
-    DriveCommand_Navigation_pub.subscribe(UserInterface.diagnostics.DriveCommand_Receiver)
-    DriveCommand_UI_pub.subscribe(Drivetrain.MotorCommandReceiver)
+    link(DriveCommand_Navigation_pub, rx(Drivetrain, "MotorCommandReceiver"),
+         rx(UI, "diagnostics.DriveCommand_Receiver"))
+    link(DriveCommand_UI_pub, rx(Drivetrain, "MotorCommandReceiver"))
 
     """SlipFeedback"""
-    SlipFeedback_Drivetrain_pub.subscribe(UserInterface.diagnostics.Slip_Receiver)
+    link(SlipFeedback_Drivetrain_pub, rx(UI, "diagnostics.Slip_Receiver"))
 
     """RobotPose"""
-    RobotPose_Drivetrain_pub.subscribe(Navigation.RobotPose_Receiver)
-    RobotPose_Drivetrain_pub.subscribe(UserInterface.diagnostics.RobotPose_Receiver)
-    RobotPose_Drivetrain_pub.subscribe(Vision.RobotPose_Receiver)
-    RobotPose_Drivetrain_pub.subscribe(StatePlanner.RobotPose_Receiver)
+    link(RobotPose_Drivetrain_pub,
+         rx(Navigation, "RobotPose_Receiver"),
+         rx(UI, "diagnostics.RobotPose_Receiver"),
+         rx(Vision, "RobotPose_Receiver") if p["vision"] == "camera" else None,
+         rx(StatePlanner, "RobotPose_Receiver"))
 
     """MacroState"""
-    MacroState_StatePlanner.subscribe(UserInterface.diagnostics.MacroState_Receiver)
-    MacroState_UI_pub.subscribe(StatePlanner.MacroState_Receiver)
+    link(MacroState_StatePlanner, rx(UI, "diagnostics.MacroState_Receiver"))
+    link(MacroState_UI_pub, rx(StatePlanner, "MacroState_Receiver"))
 
     """MotionCommand"""
-    MotionCommand_UI_pub.subscribe(Navigation.TrajectoryCMD_Receiver)
-    MotionCommand_Navigation_pub.subscribe(UserInterface.diagnostics.MotionCommand_Receiver)
-    MotionCommand_StatePlanner_pub.subscribe(Navigation.TrajectoryCMD_Receiver)
+    link(MotionCommand_UI_pub, rx(Navigation, "TrajectoryCMD_Receiver"))
+    link(MotionCommand_Navigation_pub, rx(UI, "diagnostics.MotionCommand_Receiver"))
+    link(MotionCommand_StatePlanner_pub, rx(Navigation, "TrajectoryCMD_Receiver"))
 
     """MPCFeedback"""
-    MPCFeedback_Navigation_pub.subscribe(UserInterface.diagnostics.TrajectoryTracker_Receiver)
+    link(MPCFeedback_Navigation_pub, rx(UI, "diagnostics.TrajectoryTracker_Receiver"))
 
     """GPS X,Y Values"""
-    GPS_GPSPublisher_pub.subscribe(Drivetrain.Drivetrain_UWBReceiver)
-    GPS_GPSPublisher_pub.subscribe(UserInterface.diagnostics.UWB_Sensors_Receiver)
+    link(GPS_GPSPublisher_pub, rx(Drivetrain, "Drivetrain_UWBReceiver"),
+         rx(UI, "diagnostics.UWB_Sensors_Receiver"))
 
     """Accelerometer Theta Values"""
-    Accelerometer_AccelPublisher_pub.subscribe(Drivetrain.Drivetrain_AccelReceiver)
-    Accelerometer_AccelPublisher_pub.subscribe(UserInterface.diagnostics.Accelerometer_Receiver)
+    link(Accelerometer_AccelPublisher_pub, rx(Drivetrain, "Drivetrain_AccelReceiver"),
+         rx(UI, "diagnostics.Accelerometer_Receiver"))
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # RUN
+    # ─────────────────────────────────────────────────────────────────────────
+
+    tasks = [UI.serve()]
+    if Drivetrain:
+        tasks.append(Drivetrain.DriveTrainDriver_Runner())
+    if Canine:
+        tasks += [Canine.PoseDriver.MotorPositions_Runner(), Canine.Audio._monitor()]
+    if p["vision"] == "fake":
+        tasks.append(Vision.VisionRunner())
+    if p["sensors"]:
+        tasks += [Accelerometer.Runner(), PositionDriver.Runner()]
 
     print("[MAIN] CDS Control Server Starting")
+    running = asyncio.gather(*tasks)
+    if args.run_for is None:
+        await running
+        return
+    await asyncio.wait({running}, timeout=args.run_for)
+    if running.done():
+        running.result()                      # a module crashed early: raise it
+    # Timed stop. Cancelling uvicorn logs a CancelledError traceback that isn't a failure.
+    logging.getLogger("uvicorn.error").setLevel(logging.CRITICAL)
+    running.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await running
+    print(f"[MAIN] --run-for {args.run_for:g} s reached, stopped.")
 
-    await asyncio.gather(
-        UserInterface.serve(),
-        Drivetrain.DriveTrainDriver_Runner(),
-        Canine.PoseDriver.MotorPositions_Runner(),
-        Canine.Audio._monitor(),
-        # TestVision.VisionRunner(),
-        Navigation.MPC.DriveTrain_Sender(),
-        Accelerometer.Runner(),
-        PositionDriver.Runner(),
-    )
 
 if __name__ == "__main__":
     try:
-        asyncio.run(main())
+        asyncio.run(main(parse_args()))
     except KeyboardInterrupt:
         print("\n[MAIN] Shutting down.")

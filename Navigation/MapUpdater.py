@@ -1,6 +1,8 @@
 import numpy as np
 import csv
 
+from config.paths import ZONE_CSV
+
 
 class Map:
     # DEFINITIONS
@@ -9,7 +11,7 @@ class Map:
     # 2   Dynamic obstacles (humans, turkeys — written by vision system)
     # >2  Penalised free space (near humans)
 
-    _Map_File = "/home/turkeysquad/ME450/MainDesign/Navigation/Zone.csv"
+    _Map_File = str(ZONE_CSV)
 
     _Human_Obstacle_Width  = 1
     _Human_Penalty_Width   = 2

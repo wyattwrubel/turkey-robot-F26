@@ -8,6 +8,8 @@ import time
 import csv
 from datetime import datetime
 
+from config.paths import ENCODER_LOG_DIR
+
 
 class MotorDriver:
     """
@@ -127,7 +129,7 @@ class MotorDriver:
         self._log_writer = None
         if self.EncoderLogging and not self.SimulatedData:
             log_filename = datetime.now().strftime(
-                "/home/turkeysquad/ME450/MainDesign/DriveTrain/Encoder/encoder_log_%Y%m%d_%H%M%S.csv"
+                str(ENCODER_LOG_DIR / "encoder_log_%Y%m%d_%H%M%S.csv")
             )
             self._log_file   = open(log_filename, "w", newline="")
             self._log_writer = csv.writer(self._log_file)

@@ -3,12 +3,14 @@ import os
 import time
 from datetime import datetime
 
+from config.paths import NAV_LOG_DIR
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Config
 # ─────────────────────────────────────────────────────────────────────────────
 
-LOG_DIR = "/home/turkeysquad/ME450/MainDesign/Navigation/logs"
+LOG_DIR = str(NAV_LOG_DIR)
 
 COLUMNS = [
     "timestamp_s",          # monotonic time since logger init (seconds)

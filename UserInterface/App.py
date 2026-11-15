@@ -24,9 +24,10 @@ from Zonemap     import PanelMap
 from Diagnostics import PanelDiagnostics
 from Controls    import PanelControls
 
+from config.paths import ZONE_CSV, WAYPOINTS_CSV
+
 STATIC_DIR    = Path(__file__).parent / "Website"
-MAP_CSV       = Path("/home/turkeysquad/ME450/MainDesign/Navigation/Zone.csv")
-WAYPOINTS_CSV = Path("/home/turkeysquad/ME450/MainDesign/Navigation/Waypoints.csv")
+MAP_CSV       = ZONE_CSV
 
 
 # ------------------------------------------------------------------
