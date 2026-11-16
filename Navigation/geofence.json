@@ -1,0 +1,6 @@
+{
+  "_comment": "Robot geofence (DR2 plan W2, contract C4). Convex polygon in zone metres: x right, y down the grid, same frame as RobotPose and Zone.csv. PLACEHOLDER in W26's North Campus zone for --profile sim: it holds the sim start pose (15, 75) and waypoints WP0-WP2, and keeps the robot out of the north half (WP3-WP5). The west edge runs a few metres inside the zone wall, because A* plans on Zone.csv and doesn't know the fence: an edge that cuts across its routes stops the robot there (STOP backstop). Replace with the RTK-surveyed test lot.",
+  "frame": "zone",
+  "polygon": [[3.0, 79.0], [47.0, 79.0], [47.0, 45.0], [19.0, 45.0]],
+  "buffer_m": 1.4
+}

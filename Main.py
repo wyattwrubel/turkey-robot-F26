@@ -28,6 +28,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from UserInterface.App import CDSControlServer
 from Navigation.NavigationDriver  import TrajectoryTracker
+from Navigation.Geofence import Geofence
 from Canine.CanineDriver import CanineDriver
 from DriveTrain.DriveTrainDriver import MotorDriver
 from Sensors.AccelPublisher import IMUDriver
@@ -41,6 +42,7 @@ from Vision.SimpleVision import FakeVision
 #   vision: "camera" = the robot's camera (VisionObject), "fake" = FakeVision's fixed turkey
 #   canine / drivetrain: "real" hardware or "sim"
 #   sensors: GPS + IMU drivers (real or simulated per --gps / --imu)
+#   The robot geofence (Navigation/Geofence.py, C4) runs whenever a drivetrain gives a pose.
 PROFILES = {
     "full":   dict(vision="camera", canine="real", drivetrain="real", navigation=True,  planner="normal", sensors=True),
     "vision": dict(vision="camera", canine=None,   drivetrain=None,   navigation=False, planner=None,     sensors=False),
@@ -126,6 +128,8 @@ async def main(args):
 
     Accelerometer_AccelPublisher_pub = AsyncPublisher("IMU")
 
+    Geofence_pub = AsyncPublisher("Geofence")
+
     # ─────────────────────────────────────────────────────────────────────────
     # SOFTWARE MODULES (only the ones this profile lists)
     # ─────────────────────────────────────────────────────────────────────────
@@ -169,6 +173,11 @@ async def main(args):
         Accelerometer = IMUDriver(Accelerometer_AccelPublisher_pub, Simulation=(args.imu == "sim"),
                                   Log=(args.imu == "real"))
 
+    # Fix type until the F9P reports its own (fix / carrSoln): "sim" or the old puck's "gps".
+    Fence = None
+    if Drivetrain:
+        Fence = Geofence(Geofence_pub, fix="gps" if p["sensors"] and args.gps == "real" else "sim")
+
     UI = CDSControlServer(DriveCommand_UI_pub, Canine_UI_pub, MacroState_UI_pub, MotionCommand_UI_pub)
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -206,7 +215,8 @@ async def main(args):
          rx(Navigation, "RobotPose_Receiver"),
          rx(UI, "diagnostics.RobotPose_Receiver"),
          rx(Vision, "RobotPose_Receiver") if p["vision"] == "camera" else None,
-         rx(StatePlanner, "RobotPose_Receiver"))
+         rx(StatePlanner, "RobotPose_Receiver"),
+         rx(Fence, "RobotPose_Receiver"))
 
     """MacroState"""
     link(MacroState_StatePlanner, rx(UI, "diagnostics.MacroState_Receiver"))
@@ -223,6 +233,8 @@ async def main(args):
     """GPS X,Y Values"""
     link(GPS_GPSPublisher_pub, rx(Drivetrain, "Drivetrain_UWBReceiver"),
          rx(UI, "diagnostics.UWB_Sensors_Receiver"))
+
+    """Geofence (C4): the planner and the UI subscribe once their sides are merged"""
 
     """Accelerometer Theta Values"""
     link(Accelerometer_AccelPublisher_pub, rx(Drivetrain, "Drivetrain_AccelReceiver"),
@@ -241,6 +253,8 @@ async def main(args):
         tasks.append(Vision.VisionRunner())
     if p["sensors"]:
         tasks += [Accelerometer.Runner(), PositionDriver.Runner()]
+    if Fence:
+        tasks.append(Fence.Runner())
 
     print("[MAIN] CDS Control Server Starting")
     running = asyncio.gather(*tasks)

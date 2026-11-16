@@ -73,17 +73,17 @@ EXPECTED = {   # module -> flags it must be built with; absent = must not be bui
     "full":   {"VisionObject": {"Simulated": False}, "CanineDriver": {"Simulated": False},
                "MotorDriver": {"Simulated": False}, "TrajectoryTracker": {},
                "StatePlannerReceiver": {}, "PositioningDriver": {"Simulation": True},
-               "IMUDriver": {"Simulation": True}, "CDSControlServer": {}},
+               "IMUDriver": {"Simulation": True}, "Geofence": {"fix": "sim"}, "CDSControlServer": {}},
     "vision": {"VisionObject": {"Simulated": False}, "CDSControlServer": {}},
     "deter":  {"VisionObject": {"Simulated": False}, "CanineDriver": {"Simulated": False},
                "StatePlannerReceiver": {"deter_mode": True}, "CDSControlServer": {}},
     "sim":    {"FakeVision": {}, "CanineDriver": {"Simulated": True},
                "MotorDriver": {"Simulated": True}, "TrajectoryTracker": {},
                "StatePlannerReceiver": {}, "PositioningDriver": {"Simulation": True},
-               "IMUDriver": {"Simulation": True}, "CDSControlServer": {}},
+               "IMUDriver": {"Simulation": True}, "Geofence": {"fix": "sim"}, "CDSControlServer": {}},
 }
 CLASSES = ["VisionObject", "FakeVision", "CanineDriver", "MotorDriver", "TrajectoryTracker",
-           "StatePlannerReceiver", "PositioningDriver", "IMUDriver", "CDSControlServer"]
+           "StatePlannerReceiver", "PositioningDriver", "IMUDriver", "Geofence", "CDSControlServer"]
 
 
 def check_profiles():
