@@ -425,7 +425,10 @@ class VisionObject:
         self._detector = self._det_executor.submit(Detector, self.Backend).result()
         self._confirmer = Confirmer()
         self._camera_model = CameraModel()
-        print(f"[Vision] In-process detector: backend={self.Backend}, "
+        model = vcfg.HEF_PATH.name if self.Backend == "hailo" else vcfg.PT_PATH.name
+        if self.Backend == "hailo" and vcfg.HEF_PATH == vcfg.HEF_V4 and not vcfg.HEF_V1.exists():
+            print(f"[Vision] !!! {vcfg.HEF_V1.name} not in {vcfg.MODEL_DIR}; using W26's v4")
+        print(f"[Vision] In-process detector: backend={self.Backend}, model={model}, "
               f"bearing from {self._camera_model.source}, "
               f"confirm {self._confirmer.k}-of-{self._confirmer.n}")
 
