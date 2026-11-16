@@ -46,14 +46,17 @@ MODEL_DIR = Path(_env("MODEL_DIR", str(Path.home() / "ME450" / "Sandbox" / "hef"
 # Checked on the robot 11-13 against turkey_640.pt: 100% of boxes matched, IoU 0.956, conf +0.003
 # (3 images). The single-output HEFs (turkey_640.hef, best640_hailo8l.hef) lose every class score
 # to uint8 quantization and detect nothing; don't use them.
-# turkey_v1_split.hef = our fine-tune (ENA24 + Open Images) of turkey_640.pt, compiled 11-16 with
+# Two models, named by team and semester (F26 = us, W26 = last spring's ME 450 teams):
+# f26_turkey_v1.hef = OUR fine-tune (ENA24 + Open Images) of W26's turkey_640.pt, compiled 11-16 with
 # Vision/training/hailo_kit.py + hailo_compile_split.ipynb (Colab CPU, DFC 3.34; loads on HailoRT 4.23).
-# On the robot's Hailo, 67 held-out Open Images photos (94 turkeys): AP50 0.893 vs v4 0.562,
+# On the robot's Hailo, 67 held-out Open Images photos (94 turkeys): AP50 0.893 vs W26's 0.562,
 # recall@0.25 0.830 vs 0.436, precision 0.876 vs 0.932; live on the camera both ~28 fps, 0 false
-# turkeys in 1,277 lab frames. Model files aren't in git: if v1 isn't on this machine, use v4.
-HEF_V1 = MODEL_DIR / "turkey_v1_split.hef"
-HEF_V4 = MODEL_DIR / "turkey_640_v4.hef"
-HEF_PATH  = Path(_env("HEF_PATH", str(HEF_V1 if HEF_V1.exists() else HEF_V4)))
+# turkeys in 1,277 lab frames. Its lower precision is mostly real turkeys Open Images didn't label
+# (8 of its 11 'false' boxes; 3 real mistakes: a pebble, a hen, a fence object). Model files aren't
+# in git: if ours isn't on this machine, use W26's turkey_640_v4.hef.
+HEF_OURS = MODEL_DIR / "f26_turkey_v1.hef"
+HEF_W26  = MODEL_DIR / "turkey_640_v4.hef"
+HEF_PATH  = Path(_env("HEF_PATH", str(HEF_OURS if HEF_OURS.exists() else HEF_W26)))
 PT_PATH   = Path(_env("PT_PATH", str(MODEL_DIR / "turkey_1280.pt")))          # W26 baseline weights
 PT_IMGSZ  = _env("PT_IMGSZ", 640, int)                                         # baseline runs 1280 weights at 640
 

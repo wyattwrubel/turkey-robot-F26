@@ -426,8 +426,9 @@ class VisionObject:
         self._confirmer = Confirmer()
         self._camera_model = CameraModel()
         model = vcfg.HEF_PATH.name if self.Backend == "hailo" else vcfg.PT_PATH.name
-        if self.Backend == "hailo" and vcfg.HEF_PATH == vcfg.HEF_V4 and not vcfg.HEF_V1.exists():
-            print(f"[Vision] !!! {vcfg.HEF_V1.name} not in {vcfg.MODEL_DIR}; using W26's v4")
+        if self.Backend == "hailo" and vcfg.HEF_PATH == vcfg.HEF_W26 and not vcfg.HEF_OURS.exists():
+            print(f"[Vision] !!! our model {vcfg.HEF_OURS.name} isn't in {vcfg.MODEL_DIR}; "
+                  f"running W26's {vcfg.HEF_W26.name} instead")
         print(f"[Vision] In-process detector: backend={self.Backend}, model={model}, "
               f"bearing from {self._camera_model.source}, "
               f"confirm {self._confirmer.k}-of-{self._confirmer.n}")

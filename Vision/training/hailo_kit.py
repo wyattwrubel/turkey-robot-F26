@@ -2,7 +2,7 @@
 hailo_kit.py: build everything the Colab notebook (hailo_compile_split.ipynb) needs to
 compile a fine-tuned YOLO26n for the robot's Hailo-8L, and check the split before Colab.
 
-  python -I hailo_kit.py CV_DIR WEIGHTS.pt OUT_DIR [--name turkey_v1] [--calib 300] [--eval 24]
+  python -I hailo_kit.py CV_DIR WEIGHTS.pt OUT_DIR [--name f26_turkey_v1] [--calib 300] [--eval 24]
 
 Writes to OUT_DIR:
   NAME.onnx                 opset 11, 640, end2end off (the robot decodes the raw heads)
@@ -16,7 +16,7 @@ Writes to OUT_DIR:
 Before writing the zips it cuts the ONNX at the six head convs the HEF will end at
 (box + class per stride, W26's working turkey_640_v4 layout), decodes them with the
 robot's decode_split, and compares to the .pt on held-out images. It stops if they
-disagree, so a wrong cut never reaches Colab. (11-16: turkey_v1, same counts, IoU 0.979.)
+disagree, so a wrong cut never reaches Colab. (11-16: f26_turkey_v1, same counts, IoU 0.979.)
 
 The notebook's step 5 needs the ONNX node names ENDS below; keep the two in sync.
 """
@@ -36,7 +36,7 @@ def iou(a, b):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("cv"); ap.add_argument("weights"); ap.add_argument("out")
-    ap.add_argument("--name", default="turkey_v1")
+    ap.add_argument("--name", default="f26_turkey_v1")  # F26 = our team; bump v1 -> v2 per retrain
     ap.add_argument("--calib", type=int, default=300)
     ap.add_argument("--eval", type=int, default=24)
     a = ap.parse_args()
