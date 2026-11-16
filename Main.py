@@ -262,18 +262,25 @@ async def main(args):
 
     print("[MAIN] CDS Control Server Starting")
     running = asyncio.gather(*tasks)
-    if args.run_for is None:
-        await running
-        return
-    await asyncio.wait({running}, timeout=args.run_for)
-    if running.done():
-        running.result()                      # a module crashed early: raise it
-    # Timed stop. Cancelling uvicorn logs a CancelledError traceback that isn't a failure.
-    logging.getLogger("uvicorn.error").setLevel(logging.CRITICAL)
-    running.cancel()
-    with contextlib.suppress(asyncio.CancelledError):
-        await running
-    print(f"[MAIN] --run-for {args.run_for:g} s reached, stopped.")
+    try:
+        if args.run_for is None:
+            await running
+            return
+        await asyncio.wait({running}, timeout=args.run_for)
+        if running.done():
+            running.result()                      # a module crashed early: raise it
+        # Timed stop. Cancelling uvicorn logs a CancelledError traceback that isn't a failure.
+        logging.getLogger("uvicorn.error").setLevel(logging.CRITICAL)
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+        print(f"[MAIN] --run-for {args.run_for:g} s reached, stopped.")
+    finally:
+        # Every exit (timed stop, Ctrl-C, a crash): release the camera and the Hailo
+        # before Python exits, or HailoRT aborts the process (exit 134).
+        stop = getattr(Vision, "stop", None)
+        if stop is not None:
+            stop()
 
 
 if __name__ == "__main__":

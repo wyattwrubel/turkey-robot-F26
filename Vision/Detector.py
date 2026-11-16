@@ -106,6 +106,13 @@ class Detector:
         self._t_last = None
         self.fps = 0.0
 
+    def close(self):
+        """Release the backend (on the Hailo: deactivate the network and free the device).
+        Call it from the thread that created the detector."""
+        b, self._b = getattr(self, "_b", None), None
+        if b is not None:
+            b.close()
+
     def __call__(self, bgr):
         """Returns (list[Detection], {"infer_ms", "fps", "backend"}). Keeps only turkey and
         person classes that pass their per-class threshold."""
