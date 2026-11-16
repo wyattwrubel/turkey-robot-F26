@@ -101,6 +101,9 @@ class CDSControlServer:
     async def VisionObject_Receiver(self, data: dict) -> None:
         await self.diagnostics.VisionObject_Receiver(data, self._broadcast)
 
+    async def Geofence_Receiver(self, data: dict) -> None:
+        await self.diagnostics.Geofence_Receiver(data, self._broadcast)
+
     async def VideoFeed_Receiver(self, data) -> None:
         await self.camera.VideoFeed_Receiver(data, self._broadcast)
 
