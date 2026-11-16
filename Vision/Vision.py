@@ -67,6 +67,8 @@ to hand publish calls from loop B across to loop A.
 """
 
 import asyncio
+import atexit
+import contextlib
 import json
 import math
 import threading
@@ -157,6 +159,49 @@ class VisionObject:
             target=self._run_loop, daemon=True, name="VisionLoop"
         )
         self._loop_thread.start()
+        self._stopped = False
+        # Safety net for scripts that never call stop(): Python runs atexit handlers
+        # before it tears down threads, so the Hailo is released cleanly either way.
+        atexit.register(self.stop)
+
+    # ------------------------------------------------------------------
+    # Shutdown
+    # ------------------------------------------------------------------
+
+    def stop(self, timeout: float = 5.0) -> None:
+        """Stop the camera loop and both WebSocket servers, close the detector on its own
+        thread, release the camera, and join the vision thread. Safe to call twice.
+
+        Without this, the vision thread was still holding the Hailo streams when Python
+        exited, and HailoRT's C++ threads aborted the process ("terminate called without
+        an active exception", exit 134) on every --run-for stop and Ctrl-C."""
+        if self._stopped:
+            return
+        self._stopped = True
+        if self._loop_thread.is_alive() and not self._loop.is_closed():
+            def _cancel_all():
+                for t in asyncio.all_tasks(self._loop):
+                    t.cancel()
+            self._loop.call_soon_threadsafe(_cancel_all)
+            self._loop_thread.join(timeout)
+            if self._loop_thread.is_alive():
+                print(f"[Vision] !!! vision thread still running after {timeout:g} s")
+        self._close_detector()
+        print("[Vision] Stopped.")
+
+    def _close_detector(self) -> None:
+        det, self._detector = self._detector, None
+        ex = getattr(self, "_det_executor", None)
+        self._det_executor = None
+        if ex is None:
+            return
+        if det is not None:
+            try:
+                # the Hailo pipeline must be closed on the thread that created it
+                ex.submit(det.close).result(timeout=5)
+            except Exception as e:
+                print(f"[Vision] detector close failed: {type(e).__name__}: {e}")
+        ex.shutdown(wait=True)
 
     # ------------------------------------------------------------------
     # Cross-loop publish helper
@@ -277,7 +322,11 @@ class VisionObject:
 
     def _run_loop(self):
         asyncio.set_event_loop(self._loop)
-        self._loop.run_until_complete(self._async_main())
+        try:
+            with contextlib.suppress(asyncio.CancelledError):
+                self._loop.run_until_complete(self._async_main())
+        finally:
+            self._loop.close()
 
     async def _async_main(self):
         self._video_lock = asyncio.Lock()
@@ -358,6 +407,7 @@ class VisionObject:
                 await asyncio.sleep(max(0.0, period - elapsed))
         finally:
             cam.release()
+            self._close_detector()
 
     # ------------------------------------------------------------------
     # In-process detection (replaces the laptop round trip)
