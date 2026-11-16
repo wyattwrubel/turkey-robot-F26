@@ -64,6 +64,7 @@ from StatePlanner.ModuleScan  import ModuleScan
 from StatePlanner.ModuleChase import ModuleChase
 from StatePlanner.ModuleAlert import ModuleAlert
 from StatePlanner.ZoneChecker import ZoneChecker
+from config.paths import WAYPOINTS_CSV
 
 
 class Mode(Enum):
@@ -119,7 +120,7 @@ class StatePlannerReceiver:
 
         self.Current_RobotPose = np.array([0.0, 0.0, 0.0])
         self.IsManualMode      = True
-        self.WaypointQueue     = self._load_waypoints('/home/turkeysquad/ME450/MainDesign/Navigation/Waypoints.csv')
+        self.WaypointQueue     = self._load_waypoints(str(WAYPOINTS_CSV))
         self.Turkeys           = []
         self.GhostQueue        = []
 

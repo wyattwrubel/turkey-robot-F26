@@ -3,7 +3,8 @@ import time
 import numpy as np
 from collections import deque
 import sys
-sys.path.insert(0, '/home/turkeysquad/ME450/MainDesign/casadi')
+from config.paths import CASADI_DIR
+sys.path.insert(0, str(CASADI_DIR))   # robot: W26's compiled build; laptop: falls through to pip casadi
 if 'casadi' in sys.modules:
     del sys.modules['casadi']
 import casadi as ca

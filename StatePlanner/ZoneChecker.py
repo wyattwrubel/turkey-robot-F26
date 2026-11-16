@@ -1,9 +1,11 @@
 import csv
 import numpy as np
 
+from config.paths import ZONE_CSV
+
 class ZoneChecker:
 
-    CSV_PATH = "/home/turkeysquad/ME450/MainDesign/Navigation/Zone.csv"
+    CSV_PATH = str(ZONE_CSV)
 
     def __init__(self):
         with open(self.CSV_PATH, newline='') as f:

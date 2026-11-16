@@ -9,6 +9,8 @@ warnings.filterwarnings("ignore", category=UserWarning, module="pygame.pkgdata")
 import pygame
 import asyncio
 
+from config.paths import AUDIO_DIR
+
 class AsyncAudioDriver:
     def __init__(self, AudioFeedbackPublisher, Verbose=False, sample_rate=44100, buffer=1024, max_channels=16):
         pygame.mixer.pre_init(sample_rate, -16, 2, buffer)
@@ -16,7 +18,7 @@ class AsyncAudioDriver:
         pygame.mixer.set_num_channels(max_channels)
         self.AudioFeedbackPublisher = AudioFeedbackPublisher
 
-        base = "/home/turkeysquad/ME450/MainDesign/Canine/AudioFiles"
+        base = str(AUDIO_DIR)
 
         self.Verbose = Verbose
         self._current = None
