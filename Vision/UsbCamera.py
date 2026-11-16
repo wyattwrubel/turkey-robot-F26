@@ -2,12 +2,13 @@ import time
 import cv2
 
 
-# ── Camera settings — edit these ─────────────────────────────────────────────
-DEVICE_PATH  = "/dev/video_camera"
-WIDTH        = 640
-HEIGHT       = 480
-FPS          = 10       # keep in sync with CAMERA_FPS in Vision.py
-FOURCC       = "MJPG"   # MJPG recommended for USB2.0
+# ── Camera settings: from Vision/config.py (one place, contract C9) ───────────
+from Vision import config as _vcfg
+DEVICE_PATH  = _vcfg.CAMERA_DEVICE
+WIDTH        = _vcfg.CAMERA_WIDTH
+HEIGHT       = _vcfg.CAMERA_HEIGHT
+FPS          = _vcfg.CAMERA_FPS
+FOURCC       = _vcfg.CAMERA_FOURCC   # MJPG recommended for USB2.0
 BACKEND      = "v4l2"   # "v4l2" on Pi, "dshow" on Windows, "auto" for either
 # ─────────────────────────────────────────────────────────────────────────────
 
