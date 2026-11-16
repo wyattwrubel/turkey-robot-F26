@@ -32,12 +32,19 @@ class ModuleChase:
         """
         GrowlAndChase — single one-shot trigger on first sight of turkey.
         AggressivePose + Growl audio. Runs once for 3 seconds.
-        Always called before entering the pursuit/burst loop.
+        W26's chase opening; the UI's GrowlAndChase button still runs it.
+        """
+        await self._opening("AggressivePose", "Growl")
+
+    async def _opening(self, pose: str, sound: str) -> None:
+        """
+        Chase opening (X3): the combo's pose + sound, head centred, 3 seconds.
+        Reported to the UI as the GrowlAndChase substate.
         """
         await self.parent.MacroState_Publisher.publish({"Id": "GrowlAndChase"})
-        await self.parent._Pose_Publish("AggressivePose")
+        await self.parent._Pose_Publish(pose)
         await self.parent._ServoCommand_Publish("Head", 0.0)
-        await self.parent._Audio_Publish("Growl")
+        await self.parent._Audio_Publish(sound)
         await asyncio.sleep(3.0)
 
     async def _aggressive_pursuit(self) -> None:

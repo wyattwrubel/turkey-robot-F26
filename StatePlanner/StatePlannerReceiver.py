@@ -31,6 +31,13 @@ Chase navigation:
     Behavior task — loops _aggressive_pursuit / _burst_attack based on
                     distance to nearest turkey; never blocks the nav task.
     _growl_and_chase fires as a background task so it does not delay Move.
+  Approach shape (CHASE_APPROACH, X2): "zigzag" sends one Move per leg from
+  ZigZag.py, alternating left/right of the line of sight within the camera's
+  FOV, then the straight chase for the last few metres; "straight" is W26's
+  Move-toward-the-bird every 0.5 s.
+  F8 combos (CHASE_RANDOM_COMBOS, X3): each chase picks one row of
+  Combos.COMBOS (approach x speed profile x opening pose x sound) from a
+  shuffle bag, so no two chases in a row look the same; each pick is logged.
 
   VisionObject_Receiver is memory-only: stores turkeys/ghosts, updates
   last_known_turkey_pos and last_known_fov_angle, never publishes movement.
@@ -54,15 +61,36 @@ Waypoint resumption:
   _scan_idx and _scan_target are preserved across interruptions.
   The robot always resumes toward the waypoint it was heading to;
   waypoints are never skipped.
+
+Deter mode (deter_mode=True, DR2 plan X5 / C8):
+  Stationary detect-and-deter with the drivetrain off. UnlockUI arms
+  ModuleDeter.run() (head toward the turkey and bark); any other MacroState
+  disarms it. Vision goes only to ModuleDeter; the SCAN/CHASE/ALERT machine
+  never runs, Scan and Alert requests are ignored, and the MotionCommand
+  publisher is replaced by a no-op, so nothing here can move the wheels.
+
+Geofence (Geofence_Receiver, DR2 plan X6 / C4):
+  Every MotionCommand passes through GeofenceGate. near_edge caps speed at
+  0.5 m/s and clips Move targets into the polygon; outside / unknown / a stale
+  feed (and a bad fix with gps_real) latch STOP: SpeedCap 0 and no motion until
+  AUTO is pressed with the geofence OK again. No Geofence messages at all =
+  nothing enforced, so profiles without a geofence run unchanged.
 """
 
+from __future__ import annotations   # lets "X | None" hints run on a laptop's Python 3.9
+
 import asyncio
+import math
 import numpy as np
 from enum import Enum, auto
 
+from StatePlanner.ZigZag      import ZigZag
+from StatePlanner.Combos      import Combo, ComboPicker, SPEED_PROFILES, fixed_combo
+from StatePlanner.GeofenceGate import GeofenceGate, evaluate as evaluate_geofence
 from StatePlanner.ModuleScan  import ModuleScan
 from StatePlanner.ModuleChase import ModuleChase
 from StatePlanner.ModuleAlert import ModuleAlert
+from StatePlanner.ModuleDeter import ModuleDeter
 from StatePlanner.ZoneChecker import ZoneChecker
 from config.paths import WAYPOINTS_CSV
 
@@ -73,6 +101,28 @@ class Mode(Enum):
     CHASE = auto()
     ALERT = auto()
     STOP  = auto()
+    DETER = auto()
+
+
+class _NoMotionPublisher:
+    """Stands in for the MotionCommand publisher in deter mode (C8): drops every message."""
+
+    def subscribe(self, callback) -> None:
+        pass
+
+    async def publish(self, data) -> None:
+        print(f"[StatePlanner] deter mode: MotionCommand dropped {data}")
+
+
+def _resolve_clip_target(geofence):
+    """clip_target(x, y) from the object Main.py passes, else Navigation/Geofence.py (C4), else None."""
+    if geofence is not None:
+        return getattr(geofence, "clip_target", None)
+    try:
+        from Navigation import Geofence as _geofence_module
+    except ImportError:
+        return None
+    return getattr(_geofence_module, "clip_target", None)
 
 
 class StatePlannerReceiver:
@@ -88,8 +138,8 @@ class StatePlannerReceiver:
     STOPPED_THRESHOLD_M      = 0.2    # metres — displacement below this = robot stopped
 
     # ── Speed caps (m/s) — tune these at the top level ────────────────────────
-    SPEED_SCAN               = 3.0    # cruising speed during waypoint scan
-    SPEED_ALERT              = 3.0    # speed cap during alert routines
+    SPEED_SCAN               = 1.0    # cruising speed during waypoint scan
+    SPEED_ALERT              = 1.0    # speed cap during alert routines
     SPEED_CHASE_GROWL        = 1.0    # slow speed during initial growl sequence
     SPEED_CHASE              = 2.0    # full chase pursuit speed
 
@@ -97,7 +147,20 @@ class StatePlannerReceiver:
     # When the robot is within this radius of the turkey, speed cap drops to 0
     # (robot holds position).  Speed is restored as soon as the turkey moves
     # back beyond this distance.
+    # Keep equal to MovementExecutor.CHASE_MIN_DIST (one hold distance, C7).
     CHASE_STOP_DIST_M        = 4.0    # metres
+
+    # F8 combos (X3): each chase picks approach x speed profile x opening pose x
+    # sound from Combos.COMBOS. False = W26's chase with CHASE_APPROACH below.
+    CHASE_RANDOM_COMBOS      = True
+    # Chase approach shape (X2) when combos are off: "zigzag" (ZigZag.py) or "straight" (W26).
+    CHASE_APPROACH           = "zigzag"
+    ZIGZAG_TICK_S            = 0.1    # seconds — leg-switch check interval
+    ZIGZAG_SWITCH_EARLY_M    = 0.3    # metres — start the next leg this far before the vertex
+    ZIGZAG_BEARING_GUARD_DEG = 4.0    # end a leg early if the bird gets this close to the FOV edge
+    ZIGZAG_TURKEY_MOVED_M    = 2.0    # metres — replan the leg if the bird moved this far
+    ZIGZAG_LEG_TIMEOUT_S     = 12.0   # seconds — replan if a leg takes longer than this
+    ZIGZAG_RESTART_M         = 10.0   # metres — bird this far during the final approach → zig again
 
     # Lost-visual debounce: turkey must be absent for this long continuously
     # before the chase nav loop treats it as lost and transitions to Alert.
@@ -106,17 +169,38 @@ class StatePlannerReceiver:
 
     # Direction-biased rotation in Alert Path2/Path3.
     # Total steps = ALERT_ROTATION_STEPS (8 = two full 360° rotations).
-    # Direction is determined by last_known_fov_angle:
-    #   fov_angle > 0  → turkey was right of centre → turn right (negative steps)
-    #   fov_angle < 0  → turkey was left  of centre → turn left  (positive steps)
+    # Direction is determined by last_known_fov_angle (+ = left, as in C2):
+    #   fov_angle > 0  → turkey was left  of centre → turn left  (positive steps, CCW)
+    #   fov_angle < 0  → turkey was right of centre → turn right (negative steps, CW)
     ALERT_ROTATION_STEPS     = 8
     ALERT_ROTATION_STEP_DEG  = 90.0
 
-    def __init__(self, MacroState_Publisher, Canine_Publisher, MotionCommand_Publisher, Verbose=False):
+    # MacroStates that start routines which drive the wheels; ignored in deter mode.
+    DETER_BLOCKED_STATES     = ("Scan", "Alert")
+
+    def __init__(self, MacroState_Publisher, Canine_Publisher, MotionCommand_Publisher,
+                 Verbose=False, deter_mode=False, geofence=None, gps_real=False):
+        """
+        geofence: optional object with clip_target(x, y) (Navigation/Geofence.py, C4);
+                  if None, Navigation/Geofence.py's module-level clip_target is used if present.
+        gps_real: True with --gps real; then a Fix worse than rtk_float means STOP (C4).
+        """
         self.MacroState_Publisher    = MacroState_Publisher
         self.Canine_Publisher        = Canine_Publisher
-        self.MotionCommand_Publisher = MotionCommand_Publisher
+        self.deter_mode              = deter_mode
+        self.gps_real                = gps_real
+        self._geofence_gate          = (None if deter_mode else
+                                        GeofenceGate(MotionCommand_Publisher,
+                                                     clip_target=_resolve_clip_target(geofence)))
+        self.MotionCommand_Publisher = (_NoMotionPublisher() if deter_mode
+                                        else self._geofence_gate)
         self.Verbose                 = Verbose
+
+        # Geofence bookkeeping (Geofence_Receiver)
+        self._geofence_decision: str | None = None   # "inside" | "near_edge" | "stop"
+        self._geofence_reason:   str        = ""
+        self._geofence_last_rx:  float      = 0.0
+        self._geofence_watchdog: asyncio.Task | None = None
 
         self.Current_RobotPose = np.array([0.0, 0.0, 0.0])
         self.IsManualMode      = True
@@ -128,6 +212,11 @@ class StatePlannerReceiver:
         self._module_scan  = ModuleScan(self)
         self._module_chase = ModuleChase(self)
         self._module_alert = ModuleAlert(self)
+        self._module_deter = ModuleDeter(self)
+        self._zigzag       = ZigZag(hold_m=self.CHASE_STOP_DIST_M)
+        self._combo_picker = ComboPicker()
+        self._combo: Combo | None = None
+        self._chase_count  = 0
 
         # Single source of truth for mode
         self._mode         : Mode             = Mode.IDLE
@@ -145,8 +234,8 @@ class StatePlannerReceiver:
         self.last_known_turkey_pos = None
 
         # Last known FOV angle of the nearest turkey (col 2 of Turkeys array).
-        # Positive = turkey was right of camera centre.
-        # Negative = turkey was left  of camera centre.
+        # Positive = turkey was left  of camera centre.
+        # Negative = turkey was right of camera centre.
         # Updated whenever a turkey is visible; preserved on loss so Alert
         # rotation knows which direction to spin.
         self.last_known_fov_angle: float = 0.0
@@ -283,6 +372,10 @@ class StatePlannerReceiver:
             print(f"[StatePlanner] RobotPose_Receiver: invalid data '{data}'")
 
     async def VisionObject_Receiver(self, data: dict) -> None:
+        if self.deter_mode:
+            self._module_deter.on_vision(data)   # stores only; never awaits
+            return
+
         if self.IsManualMode:
             return
 
@@ -300,7 +393,7 @@ class StatePlannerReceiver:
             self.last_known_turkey_pos = np.array(nearest[:2])
 
             # Col 2 is the relative angle from camera centre (radians).
-            # Positive = right of centre, negative = left of centre.
+            # Positive = left of centre, negative = right of centre.
             # Only update when turkey is visible so we preserve the last-seen
             # direction for Alert rotation after the turkey disappears.
             self.last_known_fov_angle = float(nearest[2])
@@ -321,7 +414,20 @@ class StatePlannerReceiver:
         state = data.get("Id", "")
 
         if state == "UnlockUI":
+            gate = self._geofence_gate
+            if gate is not None and gate.latched:
+                if self._geofence_decision == "stop":
+                    print(f"[Geofence] AUTO refused — geofence says {self._geofence_reason}; "
+                          f"drive back inside in manual first")
+                    return
+                gate.release()
+                print("[Geofence] STOP released by AUTO")
             self.IsManualMode = False
+            if self.deter_mode:
+                self._dbg("[StatePlanner] UnlockUI — deter mode armed")
+                self._mode = Mode.DETER
+                self._start_task(self._module_deter.run())
+                return
             self._mode        = Mode.IDLE
             self._dbg("[StatePlanner] UnlockUI — starting auto")
             await self._arbitrate(turkey_in_zone=self._turkey_in_zone_event.is_set())
@@ -330,6 +436,10 @@ class StatePlannerReceiver:
         self.IsManualMode = True
         self._cancel_current_task()
         self._mode = Mode.IDLE
+
+        if self.deter_mode and state in self.DETER_BLOCKED_STATES:
+            print(f"[StatePlanner] deter mode: '{state}' ignored (it drives the wheels)")
+            return
 
         dispatch = {
             "Scan":               lambda: self._start_task(self.Scan_Routine()),
@@ -351,12 +461,60 @@ class StatePlannerReceiver:
         else:
             print(f"[StatePlanner] MacroState_Receiver: unknown state '{state}'")
 
+    async def Geofence_Receiver(self, data: dict) -> None:
+        """Contract C4: Geofence at 10 Hz from Navigation/Geofence.py (wired in Main.py)."""
+        gate = self._geofence_gate
+        if gate is None:                 # deter mode: the wheels never move anyway
+            return
+        if not isinstance(data, dict) or data.get("Id") != "Geofence":
+            print(f"[Geofence] ignored malformed message {data}")
+            return
+
+        self._geofence_last_rx = asyncio.get_event_loop().time()
+        if not gate.active:
+            gate.active = True
+            print("[Geofence] first message — geofence enforced from now on")
+            self._geofence_watchdog = asyncio.get_event_loop().create_task(
+                self._geofence_watchdog_loop())
+
+        decision, reason = evaluate_geofence(data, self.gps_real)
+        await self._apply_geofence(decision, reason, data)
+
+    async def _apply_geofence(self, decision: str, reason: str, data: dict | None = None) -> None:
+        gate = self._geofence_gate
+        if (decision, reason) != (self._geofence_decision, self._geofence_reason):
+            extra = ""
+            if data is not None:
+                dist = data.get("DistToEdge_m")
+                if isinstance(dist, (int, float)):
+                    extra += f", {dist:+.2f} m to edge"
+                extra += f", fix {data.get('Fix')}"
+            print(f"[Geofence] {self._geofence_decision or 'start'} -> {decision} "
+                  f"({reason}{extra}) | mode {self._mode.name}")
+            self._geofence_decision, self._geofence_reason = decision, reason
+
+        if decision == "stop":
+            if not gate.latched:
+                await gate.latch(reason)
+                self._enter_stop()
+            return
+        await gate.set_near_edge(decision == "near_edge")
+
+    async def _geofence_watchdog_loop(self) -> None:
+        """After the first Geofence message, silence for GeofenceGate.STALE_S counts as unknown."""
+        loop = asyncio.get_event_loop()
+        while True:
+            await asyncio.sleep(0.2)
+            if loop.time() - self._geofence_last_rx > GeofenceGate.STALE_S:
+                await self._apply_geofence(
+                    "stop", f"no Geofence message for > {GeofenceGate.STALE_S:.0f} s")
+
     # ------------------------------------------------------------------
     # Arbitration
     # ------------------------------------------------------------------
 
     async def _arbitrate(self, turkey_in_zone: bool) -> None:
-        if self.IsManualMode:
+        if self.IsManualMode or self.deter_mode:
             return
 
         if self.Verbose:
@@ -444,6 +602,19 @@ class StatePlannerReceiver:
 
         end_of_chase_result: list = [None]
 
+        # F8 combo for this chase (X3): approach shape, speed profile, opening pose + sound.
+        combo    = self._pick_combo()
+        approach = combo.approach
+        # The profile sets "target"; the nav loop holds at 0 near the bird
+        # ("holding") and the profile never raises speed while it does.
+        chase_speed = {"target": self._speed_level(SPEED_PROFILES[combo.speed][0][1]),
+                       "holding": False}
+
+        # Zig-zag approach state for this chase (used when approach == "zigzag").
+        self._zigzag.reset()
+        zz = {"leg": None, "target": None, "turkey_ref": None, "t_leg": 0.0,
+              "final": False, "t_final": 0.0}
+
         def _nearest_turkey() -> np.ndarray | None:
             if not self.Turkeys:
                 return None
@@ -454,7 +625,10 @@ class StatePlannerReceiver:
 
         async def _chase_nav_loop() -> None:
             """
-            Publishes Move toward nearest in-zone turkey every CHASE_NAV_RATE_S.
+            Approaches the nearest in-zone turkey. The combo's approach "straight"
+            publishes Move toward it every CHASE_NAV_RATE_S (W26). "zigzag"
+            publishes one Move per zig-zag leg, then the same straight chase
+            for the last few metres (see _zigzag_step).
 
             Lost-visual handling:
               A 0.5 s countdown timer is reset every time a turkey is visible.
@@ -481,7 +655,8 @@ class StatePlannerReceiver:
                     deadline = now + self.LOST_VISUAL_DEBOUNCE_S
                     if stopped:
                         self._dbg("[Chase/Nav] Turkey back in frame — resuming chase")
-                        await self._SpeedCap_Publish(self.SPEED_CHASE)
+                        chase_speed["holding"] = False
+                        await self._SpeedCap_Publish(chase_speed["target"])
                         stopped   = False
                         too_close = False   # re-evaluate proximity from scratch
 
@@ -508,6 +683,7 @@ class StatePlannerReceiver:
                                 f"[Chase/Nav] Turkey within {self.CHASE_STOP_DIST_M}m "
                                 f"(dist={dist_to_turkey:.2f}m) — holding position"
                             )
+                            chase_speed["holding"] = True
                             await self._SpeedCap_Publish(0.0)
                             too_close = True
                         await asyncio.sleep(self.CHASE_NAV_RATE_S)
@@ -519,17 +695,27 @@ class StatePlannerReceiver:
                             f"[Chase/Nav] Turkey moved beyond {self.CHASE_STOP_DIST_M}m "
                             f"(dist={dist_to_turkey:.2f}m) — resuming"
                         )
-                        await self._SpeedCap_Publish(self.SPEED_CHASE)
+                        chase_speed["holding"] = False
+                        await self._SpeedCap_Publish(chase_speed["target"])
                         too_close = False
 
-                    await self.MotionCommand_Publisher.publish(
-                        {"Id": "Move", "Mode": "Chase", "Cmd": turkey_pos.tolist()}
-                    )
-                    self._dbg(f"[Chase/Nav] Move -> {np.round(turkey_pos, 2)}")
-                    await asyncio.sleep(self.CHASE_NAV_RATE_S)
+                    if approach == "zigzag":
+                        await self._zigzag_step(zz, turkey_pos, now)
+                        await asyncio.sleep(self.ZIGZAG_TICK_S)
+                    else:
+                        await self._publish_chase_move(turkey_pos)
+                        await asyncio.sleep(self.CHASE_NAV_RATE_S)
 
                 else:
                     # Turkey not in frame this tick.
+                    if (approach == "zigzag" and zz["leg"] is not None
+                            and self.last_known_turkey_pos is not None):
+                        # A zig took the bird out of frame: stop zigging and head
+                        # straight back toward where it was last seen. Zig-zag
+                        # replans from wherever the robot is once it's back.
+                        self._dbg("[ZigZag] Bird left the frame mid-leg — turning back toward it")
+                        zz.update(leg=None, turkey_ref=None)
+                        await self._publish_chase_move(self.last_known_turkey_pos)
                     if now >= deadline:
                         # Timer expired — stop and transition to Alert.
                         if not stopped:
@@ -538,6 +724,7 @@ class StatePlannerReceiver:
                                 f"{self.LOST_VISUAL_DEBOUNCE_S}s — "
                                 f"stopping, transitioning to Alert"
                             )
+                            chase_speed["holding"] = True
                             await self.MotionCommand_Publisher.publish(
                                 {"Id": "SpeedCap", "Cmd": 0.0}
                             )
@@ -547,10 +734,19 @@ class StatePlannerReceiver:
                     # Still within window — poll fast and wait for turkey to return.
                     await asyncio.sleep(self.HEADING_POLL_S)
 
+        async def _chase_speed_loop() -> None:
+            """Walks the combo's speed profile; never raises speed while holding."""
+            t0 = asyncio.get_event_loop().time()
+            for t_step, level in SPEED_PROFILES[combo.speed]:
+                delay = t0 + t_step - asyncio.get_event_loop().time()
+                if delay > 0:
+                    await asyncio.sleep(delay)
+                chase_speed["target"] = self._speed_level(level)
+                if not chase_speed["holding"]:
+                    await self._SpeedCap_Publish(chase_speed["target"])
+
         async def _chase_canine_loop() -> None:
-            await self._SpeedCap_Publish(self.SPEED_CHASE_GROWL)
-            await self._module_chase._growl_and_chase()
-            await self._SpeedCap_Publish(self.SPEED_CHASE)
+            await self._module_chase._opening(combo.pose, combo.sound)
 
             while True:
                 turkey_pos = _nearest_turkey()
@@ -570,6 +766,7 @@ class StatePlannerReceiver:
 
         loop   = asyncio.get_event_loop()
         nav    = loop.create_task(_chase_nav_loop())
+        speed  = loop.create_task(_chase_speed_loop())
         canine = loop.create_task(_chase_canine_loop())
 
         try:
@@ -578,6 +775,7 @@ class StatePlannerReceiver:
             pass
         finally:
             nav.cancel()
+            speed.cancel()
             canine.cancel()
 
         if end_of_chase_result[0] is not None:
@@ -645,9 +843,10 @@ class StatePlannerReceiver:
             use_path2 = (self._lose_visual_count % 2 == 1)
 
             # Determine rotation direction from the last known FOV angle.
-            # Coordinate system is inverted relative to camera convention, so:
-            # fov_angle > 0 → turkey was right of centre → turn left  (step = +90°)
-            # fov_angle < 0 → turkey was left  of centre → turn right (step = -90°)
+            # fov_angle is + = left (C2) and +theta is CCW, so we turn toward
+            # the side the turkey was last seen:
+            # fov_angle > 0 → turkey was left  of centre → turn left  (step = +90°)
+            # fov_angle < 0 → turkey was right of centre → turn right (step = -90°)
             # fov_angle == 0 is excluded by design (only lost when not in frame).
             step_sign   = 1.0 if self.last_known_fov_angle > 0.0 else -1.0
             step_rad    = step_sign * np.radians(self.ALERT_ROTATION_STEP_DEG)
@@ -733,6 +932,10 @@ class StatePlannerReceiver:
     # ------------------------------------------------------------------
 
     async def Stop_Routine(self) -> None:
+        # Hold the wheels. Without this the MPC keeps driving the last path after
+        # MANUAL / Stop (W26 only stopped the dog).
+        if not self.deter_mode:
+            await self._SpeedCap_Publish(0.0)
         await self.MacroState_Publisher.publish({"Id": "Stop"})
         await self._Pose_Publish("IdlePose")
         await self._Audio_Publish("Stop")
@@ -740,6 +943,87 @@ class StatePlannerReceiver:
     # ------------------------------------------------------------------
     # Navigation helpers
     # ------------------------------------------------------------------
+
+    def _pick_combo(self) -> Combo:
+        """Next F8 combo (X3); every pick is logged."""
+        combo = (self._combo_picker.pick() if self.CHASE_RANDOM_COMBOS
+                 else fixed_combo(self.CHASE_APPROACH))
+        self._chase_count += 1
+        self._combo = combo
+        print(f"[F8] chase #{self._chase_count}: combo {combo.describe()}")
+        return combo
+
+    def _speed_level(self, level: str) -> float:
+        """Speed-profile level -> m/s, using only the existing chase limits (C7)."""
+        return self.SPEED_CHASE if level == "full" else self.SPEED_CHASE_GROWL
+
+    async def _publish_chase_move(self, turkey_pos) -> None:
+        """W26's straight chase: Move toward the bird; Navigation goes direct inside 5 m."""
+        await self.MotionCommand_Publisher.publish(
+            {"Id": "Move", "Mode": "Chase", "Cmd": np.asarray(turkey_pos, dtype=float).tolist()}
+        )
+        self._dbg(f"[Chase/Nav] Move -> {np.round(turkey_pos, 2)}")
+
+    async def _zigzag_step(self, zz: dict, turkey_pos: np.ndarray, now: float) -> None:
+        """
+        One tick of the zig-zag approach (X2). Publishes a plain Move only when
+        a new leg starts: when the robot passes the current vertex, when the
+        bird nears the edge of the image on the side this leg pushes it, when
+        the bird has moved, or when a leg times out. When ZigZag has no leg
+        left (a few metres out), finishes with the straight chase, which holds
+        at CHASE_STOP_DIST_M.
+        """
+        robot = np.array(self.Current_RobotPose[:2], dtype=float)
+
+        if zz["final"]:
+            if np.linalg.norm(turkey_pos - robot) > self.ZIGZAG_RESTART_M:
+                self._dbg("[ZigZag] Bird pulled away — zig-zag again")
+                self._zigzag.reset()
+                zz.update(final=False, leg=None, target=None, turkey_ref=None)
+            else:
+                if now - zz["t_final"] >= self.CHASE_NAV_RATE_S:
+                    await self._publish_chase_move(turkey_pos)
+                    zz["t_final"] = now
+                return
+
+        leg, reason = zz["leg"], "start"
+        if leg is not None:
+            bearing = self._bearing_of_turkey_at(turkey_pos)
+            edge    = math.radians(self._zigzag.hfov_deg / 2.0 - self.ZIGZAG_BEARING_GUARD_DEG)
+            along   = float(np.dot(robot - leg["start"], leg["dir"]))
+            if along >= leg["length"] - self.ZIGZAG_SWITCH_EARLY_M:
+                reason = "vertex"
+            elif bearing is not None and -leg["side"] * bearing > edge:
+                # On a leg to side s the bird sits at bearing ~ -s * offset.
+                reason = "near FOV edge"
+            elif np.linalg.norm(turkey_pos - zz["turkey_ref"]) > self.ZIGZAG_TURKEY_MOVED_M:
+                reason = "bird moved"
+            elif now - zz["t_leg"] > self.ZIGZAG_LEG_TIMEOUT_S:
+                reason = "timeout"
+            else:
+                return
+
+        nxt = self._zigzag.next_leg(robot, turkey_pos, last_target=zz["target"])
+        if nxt is None:
+            self._dbg(f"[ZigZag] {np.linalg.norm(turkey_pos - robot):.1f} m out — "
+                      f"final straight approach")
+            zz.update(final=True, leg=None, t_final=now)
+            await self._publish_chase_move(turkey_pos)
+            return
+
+        info = self._zigzag.legs[-1]
+        self._dbg(f"[ZigZag] leg {len(self._zigzag.legs)} ({reason}): {info['side']} "
+                  f"{info['offset_deg']} deg x {info['length_m']} m -> {info['end']}")
+        zz.update(leg=nxt, target=nxt["target"],
+                  turkey_ref=np.array(turkey_pos, dtype=float), t_leg=now)
+        await self.MotionCommand_Publisher.publish({"Id": "Move", "Cmd": nxt["target"].tolist()})
+
+    def _bearing_of_turkey_at(self, turkey_pos) -> float | None:
+        """Camera bearing (col 2, + = left) of the visible turkey at turkey_pos, if any."""
+        if not self.Turkeys:
+            return None
+        t = min(self.Turkeys, key=lambda e: np.linalg.norm(np.array(e[:2]) - turkey_pos))
+        return float(t[2]) if len(t) >= 3 else None
 
     def _next_target(self) -> np.ndarray:
         if self.GhostQueue:
