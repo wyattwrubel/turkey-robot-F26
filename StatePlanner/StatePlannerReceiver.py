@@ -436,6 +436,9 @@ class StatePlannerReceiver:
         self.IsManualMode = True
         self._cancel_current_task()
         self._mode = Mode.IDLE
+        # Vision is ignored in manual, so "bird in zone" would go stale. W26 kept it,
+        # and AUTO with it still set left the planner stuck in IDLE.
+        self._turkey_in_zone_event.clear()
 
         if self.deter_mode and state in self.DETER_BLOCKED_STATES:
             print(f"[StatePlanner] deter mode: '{state}' ignored (it drives the wheels)")
