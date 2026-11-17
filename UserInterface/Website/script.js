@@ -72,6 +72,7 @@ let _activeSubCmd     = null
 
 // Heartbeat
 let _heartbeatTimer = null
+let _lastBeatMs     = 0
 
 // ═══════════════════════════════════════════════
 // BUILD DYNAMIC UI
@@ -135,6 +136,13 @@ function handle(m) {
 
   // ── State (10 Hz) ──────────────────────────────────────────
   if (m.type === 'state') {
+
+    // Answer the robot's 10 Hz state with a heartbeat. Browsers slow timers in a background
+    // tab to about 1 per second, which tripped the 1 s watchdog; incoming WebSocket messages
+    // aren't slowed, so this keeps the beat going while the tab is hidden.
+    _beat()
+
+    _applyPlannerState(m)
 
     // Raw sensors
     set('uwb-x', fmt(m.uwb_x, 2))
@@ -300,6 +308,29 @@ function _syncPoseButtons(activePoseId) {
   document.querySelectorAll('.pose-g .btn').forEach(b => {
     b.classList.toggle('lit', b.dataset.poseId === activePoseId)
   })
+}
+
+// ── Planner state readout ─────────────────────────────────────
+// Manual and E-stop come first: the planner's last state goes stale once the UI takes over.
+const PLANNER_STATES = {
+  Deter:     ['DETER · TURKEY CONFIRMED', 'v e'],
+  DeterIdle: ['DETER · WATCHING',         'v ok'],
+  Scanning:  ['SCAN',                     'v ok'],
+  Chase:     ['CHASE',                    'v w'],
+  Alert:     ['ALERT',                    'v w'],
+  Stop:      ['STOPPED',                  'v'],
+}
+
+function _applyPlannerState(m) {
+  const el = document.getElementById('planner-state')
+  if (!el) return
+  let text, cls
+  if      (m.is_estopped)       { text = 'E-STOP';  cls = 'v e' }
+  else if (m.is_manual)         { text = 'MANUAL';  cls = 'v'   }
+  else if (PLANNER_STATES[m.macrostate]) [text, cls] = PLANNER_STATES[m.macrostate]
+  else                          { text = m.macrostate ?? '—'; cls = 'v' }
+  if (el.textContent !== text) el.textContent = text
+  if (el.className   !== cls)  el.className   = cls
 }
 
 // ── Macrostate state machine ───────────────────────────────────
@@ -494,11 +525,19 @@ function flash(el, duration=1200) {
 // ═══════════════════════════════════════════════
 // HEARTBEAT
 // ═══════════════════════════════════════════════
+// Two sources, one rate limit: the 500 ms timer (works while the tab is visible) and a reply to
+// every incoming 'state' message (works while it's hidden, see handle()). The robot's watchdog
+// still E-stops if the page closes, freezes, or loses its connection: both sources stop then.
+function _beat() {
+  const now = performance.now()
+  if (now - _lastBeatMs < 200) return
+  _lastBeatMs = now
+  send({ type: 'heartbeat' })
+}
+
 function _startHeartbeat() {
   _stopHeartbeat()
-  _heartbeatTimer = setInterval(() => {
-    send({ type: 'heartbeat' })
-  }, 500)
+  _heartbeatTimer = setInterval(_beat, 500)
 }
 
 function _stopHeartbeat() {
