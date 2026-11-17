@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TURKEYSQUAD</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- HEADER -->
+<header>
+  <div class="hdr-l">
+    <div class="sys-title">TURKEYSQUAD</div>
+  </div>
+  <div class="hdr-r">
+    <div class="spill"><div class="dot"></div>UWB</div>
+    <div class="spill"><div class="dot"></div>IMU</div>
+    <!--
+      CAM STATUS DOT
+      id="cam-dot" is updated by _initCamera() in script.js:
+        (no class)      → green blinking  (stream live)
+        class="warn"    → amber blinking  (stalled / error)
+    -->
+    <div class="spill"><div class="dot" id="cam-dot"></div>CAM</div>
+    <!--
+      DRIVETRAIN STATUS DOT
+      id="dt-dot" is updated by applyDrivetrainStatus() in script.js.
+      Protocol (from robot.py to_state_msg → drivetrain_status field):
+        0  → class="dot"       → green blinking  (nominal)
+        1  → class="dot warn"  → amber blinking  (warning)
+        2  → class="dot err"   → red solid       (error)
+    -->
+    <div class="spill"><div class="dot off" id="dt-dot"></div>DRIVETRAIN</div>
+    <!--
+      GEOFENCE STATUS DOT
+      id="gf-dot" is updated by applyGeofence() in script.js (contract C4):
+        inside → green · near_edge → amber · outside / unknown → red · off until a fence publishes
+      Hover for the distance to the edge and the GPS fix type.
+    -->
+    <div class="spill" title="No geofence running"><div class="dot off" id="gf-dot"></div>GEOFENCE</div>
+    <div class="mode-badge" id="mode-badge">AUTO</div>
+  </div>
+</header>
+
+<!-- 2×2 GRID -->
+<div class="layout">
+
+  <!-- ① CAMERA -->
+  <div class="panel">
+    <div class="ph">
+      <div class="ph-title">Live Camera Feed</div>
+      <div class="ph-sub" id="cam-sub">LIVE STREAM</div>
+    </div>
+    <div class="pbody" style="padding:0; position:relative; overflow:hidden;">
+      <div class="feed-ph" id="cam-ph">
+        <div class="cr tl"></div><div class="cr tr"></div>
+        <div class="cr bl"></div><div class="cr br"></div>
+        <div class="fi">⬡</div>
+        <div class="fl">Camera Feed</div>
+        <div class="fs">AWAITING STREAM</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ③ DIAGNOSTICS -->
+  <div class="panel">
+    <div class="ph">
+      <div class="ph-title">System Diagnostics</div>
+      <div class="ph-sub">LIVE &nbsp;·&nbsp; 10 HZ</div>
+    </div>
+    <div class="pbody">
+
+      <div class="drow">
+        <div class="db">
+          <div class="dl">Raw Measurements</div>
+          <div class="dv">
+            X:<span class="v"    id="uwb-x"> —</span> m &nbsp;
+            Y:<span class="v"    id="uwb-y"> —</span> m &nbsp;
+            θ:<span class="v"    id="imu-t"> —</span>°
+          </div>
+        </div>
+        <div class="db">
+          <div class="dl">UKF Fused Estimate</div>
+          <div class="dv">
+            X:<span class="v ok" id="ukf-x"> —</span> m &nbsp;
+            Y:<span class="v ok" id="ukf-y"> —</span> m &nbsp;
+            θ:<span class="v ok" id="ukf-t"> —</span>°
+          </div>
+        </div>
+      </div>
+
+      <div class="drow">
+        <div class="db">
+          <div class="dl">Nav Command</div>
+          <div class="dv"><span class="v w" id="nav-cmd-type">IDLE</span></div>
+        </div>
+        <div class="db">
+          <div class="dl">Current Destination</div>
+          <div class="dv">
+            X:<span class="v"    id="dest-x"> —</span> m &nbsp;
+            Y:<span class="v"    id="dest-y"> —</span> m &nbsp;
+            θ:<span class="v"    id="dest-t"> —</span>°
+          </div>
+        </div>
+      </div>
+
+      <div class="drow">
+        <div class="db full">
+          <div class="dl">Drivetrain</div>
+          <div class="drive-readout">
+            <div class="drive-val">
+              <span class="drive-lbl">L</span>
+              <span class="drive-num v ok" id="cmd-l">0.00</span>
+            </div>
+            <div class="drive-val">
+              <span class="drive-lbl">R</span>
+              <span class="drive-num v ok" id="cmd-r">0.00</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="drow">
+        <div class="db full">
+          <div class="dl">Planner State</div>
+          <div class="dv"><span class="v" id="planner-state">—</span></div>
+        </div>
+      </div>
+
+      <div class="drow">
+        <div class="db full">
+          <div class="dl">MacroState Commands</div>
+          <div class="macrostate-g">
+
+            <!-- Top-level macrostate buttons + Stop -->
+            <div class="macrostate-top-row">
+              <button class="btn" data-state="Scanning" onclick="sendMacrostate('Scan',  this)">⟳ Scan</button>
+              <button class="btn" data-state="Chase"    onclick="sendMacrostate('Chase', this)">⚡ Chase</button>
+              <button class="btn" data-state="Alert"    onclick="sendMacrostate('Alert', this)">⚠ Alert</button>
+              <button class="btn stop-cmd" id="macro-stop-btn" onclick="stopMacrostate()">✕ Stop</button>
+            </div>
+
+            <!-- Sub-commands: always visible, locked in auto mode -->
+            <div class="macrostate-sub-row">
+              <button class="btn sub-cmd" data-sub-cmd="TravelWaypoint"   data-sub-for="Scan"  onclick="sendMacrostateSub('TravelWaypoint',   this)">Travel Waypoint</button>
+              <button class="btn sub-cmd" data-sub-cmd="AggressivePursuit" data-sub-for="Chase" onclick="sendMacrostateSub('AggressivePursuit', this)">Aggressive Pursuit</button>
+              <button class="btn sub-cmd" data-sub-cmd="WatchfulDog"       data-sub-for="Alert" onclick="sendMacrostateSub('WatchfulDog',       this)">Watchful Dog</button>
+            </div>
+            <div class="macrostate-sub-row">
+              <button class="btn sub-cmd" data-sub-cmd="StationaryScan"    data-sub-for="Scan"  onclick="sendMacrostateSub('StationaryScan',    this)">Stationary Scan</button>
+              <button class="btn sub-cmd" data-sub-cmd="BurstAttack"        data-sub-for="Chase" onclick="sendMacrostateSub('BurstAttack',        this)">Burst Attack</button>
+              <button class="btn sub-cmd" data-sub-cmd="TerritorialWarning" data-sub-for="Alert" onclick="sendMacrostateSub('TerritorialWarning', this)">Territorial Warning</button>
+            </div>
+            <div class="macrostate-sub-row">
+              <button class="btn sub-cmd" data-sub-cmd="StationaryCrouch"  data-sub-for="Scan"  onclick="sendMacrostateSub('StationaryCrouch',  this)">Stationary Crouch</button>
+              <button class="btn sub-cmd" data-sub-cmd="GrowlAndChase"      data-sub-for="Chase" onclick="sendMacrostateSub('GrowlAndChase',      this)">Growl &amp; Chase</button>
+              <button class="btn sub-cmd" data-sub-cmd="ShortWarningBurst"  data-sub-for="Alert" onclick="sendMacrostateSub('ShortWarningBurst',  this)">Short Warning Burst</button>
+            </div>
+
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ④ CONTROLS -->
+  <div class="panel" id="pctrl">
+    <div class="ph">
+      <div class="ph-title">Manual Controls</div>
+      <div class="ph-sub" id="ctrl-tag">MODE: AUTO — INPUTS LOCKED</div>
+    </div>
+    <div class="pbody">
+
+      <div class="ctrl-top">
+
+        <!-- LEFT: Poses + Servos + Audio -->
+        <div class="ctrl-col">
+
+          <div class="clbl">Robot Poses</div>
+          <div class="pose-g">
+            <button class="btn" data-pose-id="IdlePose"        onclick="sendPose('IdlePose',this)">Idle Pose</button>
+            <button class="btn" data-pose-id="AlertPose"       onclick="sendPose('AlertPose',this)">Alert Pose</button>
+            <button class="btn" data-pose-id="AggressivePose"  onclick="sendPose('AggressivePose',this)">Aggressive Pose</button>
+            <button class="btn" data-pose-id="WalkGait"        onclick="sendPose('WalkGait',this)">Walk Gait</button>
+            <button class="btn" data-pose-id="ExcitedGait"     onclick="sendPose('ExcitedGait',this)">Excited Gait</button>
+            <button class="btn" data-pose-id="AlertStep"       onclick="sendPose('AlertStep',this)">Alert Step</button>
+            <button class="btn" data-pose-id="HeadScan"        onclick="sendPose('HeadScan',this)">Head Scan</button>
+          </div>
+
+          <div class="div"></div>
+          <div class="clbl">Servo Angles</div>
+          <div class="servo-list" id="servo-list"></div>
+
+          <div class="div"></div>
+          <div class="clbl">Audio</div>
+          <div class="audio-g" id="audio-grid"></div>
+
+        </div>
+
+        <!-- RIGHT: Speed + Drive + WASD -->
+        <div class="ctrl-col">
+
+          <div class="clbl">Speed Limit</div>
+          <div class="speed-wrap">
+            <div class="speed-row">
+              <div class="speed-disp">
+                <span id="spd-disp">1.5</span>
+                <span style="font-size:9px;color:var(--text-dim)">m/s</span>
+              </div>
+              <input type="range" class="srange" id="spd-range"
+                min="0" max="5" step="0.1" value="2.5"
+                style="flex:1;" oninput="onSpeedRange(this)">
+            </div>
+            <div class="speed-btns">
+              <button class="btn" onclick="setSpeed(0.5)">0.5</button>
+              <button class="btn" onclick="setSpeed(2.5)">2.5</button>
+              <button class="btn" onclick="setSpeed(5.0)">MAX</button>
+            </div>
+          </div>
+
+          <div class="div"></div>
+          <div class="clbl">Drivetrain</div>
+          <div class="drive-g">
+            <button class="btn" id="drive-fwd"
+              onmousedown="startDrive('w','drive-fwd')"   onmouseup="stopDrive('w','drive-fwd')">▲ Fwd</button>
+            <button class="btn" id="drive-rev"
+              onmousedown="startDrive('s','drive-rev')"   onmouseup="stopDrive('s','drive-rev')">▼ Rev</button>
+            <button class="btn" id="drive-left"
+              onmousedown="startDrive('a','drive-left')"  onmouseup="stopDrive('a','drive-left')">◄ Left</button>
+            <button class="btn" id="drive-right"
+              onmousedown="startDrive('d','drive-right')" onmouseup="stopDrive('d','drive-right')">► Right</button>
+          </div>
+
+          <div class="div"></div>
+          <div class="clbl">WASD Drive</div>
+          <div class="wasd-wrap">
+            <div class="wasd-g">
+              <div class="wbtn empty"></div>
+              <div class="wbtn" id="key-w"
+                onmousedown="wasdPress('w')" onmouseup="wasdRelease('w')">W</div>
+              <div class="wbtn empty"></div>
+              <div class="wbtn" id="key-a"
+                onmousedown="wasdPress('a')" onmouseup="wasdRelease('a')">A</div>
+              <div class="wbtn" id="key-s"
+                onmousedown="wasdPress('s')" onmouseup="wasdRelease('s')">S</div>
+              <div class="wbtn" id="key-d"
+                onmousedown="wasdPress('d')" onmouseup="wasdRelease('d')">D</div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <div class="ctrl-bot">
+        <button class="estop"   id="estop-btn" onclick="emergencyStop()">⬡ EMERGENCY STOP</button>
+        <button class="modetog" id="mode-btn"  onclick="toggleMode()">⇄ SWITCH TO MANUAL</button>
+      </div>
+
+    </div>
+  </div>
+
+</div><!-- /layout -->
+
+<script src="script.js"></script>
+</body>
+</html>
