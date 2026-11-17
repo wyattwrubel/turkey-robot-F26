@@ -8,6 +8,9 @@ No robot needed. Run from the repo root with the laptop venv:
   1. Every MacroState Id the planner publishes is one the UI accepts (no "Invalid Data"),
      found by scanning StatePlanner/*.py, so a new planner state without a UI entry fails here.
   2. Deter and DeterIdle reach the page's state message as macrostate.
+  4. Servo limits: the UI sliders' ranges equal the servo driver's command limits, the driver
+     clamps an out-of-range leg command (Rear Right at -135 stalled the rail on 11-17), and every
+     W26 pose stays inside the limits.
   3. The watchdog with a real server (--profile sim):
      a. heartbeats sent only in reply to the 10 Hz 'state' messages (what a hidden browser tab
         still does) keep AUTO alive for 8 s: no E-stop;
@@ -77,6 +80,53 @@ def check_states():
         asyncio.run(PanelDiagnostics(robot).MacroState_Receiver({"Id": sid}))
         got = robot.to_state_msg()["macrostate"]
         check(f"{sid} reaches the page as macrostate", got == sid, f"got {got!r}")
+
+
+# ── 4. Servo limits: UI sliders, driver clamp, poses ─────────────────────────
+SLIDER = re.compile(r"\{\s*id:\s*'(\w+)'.*?min:\s*(-?\d+),\s*max:\s*(-?\d+)")
+POSE_CMD = re.compile(r'self\.servos\["(\w+)"\]\.servo_control_receiver\(\s*"(\w+)"\s*,\s*'
+                      r'(-?\d+(?:\.\d+)?)(?:\s*,\s*(-?\d+(?:\.\d+)?))?')
+
+
+def check_servo_limits():
+    from Canine.ServoDriver import Servo
+
+    def limits(servo_id):
+        if servo_id == "Head":
+            return Servo.Min_Head_Command, Servo.Max_Head_Command
+        return Servo.Min_Leg_Command, Servo.Max_Leg_Command
+
+    js = (REPO / "UserInterface" / "Website" / "script.js").read_text()
+    block = js[js.index("\nconst SERVO_DEFS"):]
+    block = block[:block.index("]")]
+    sliders = {sid: (int(lo), int(hi)) for sid, lo, hi in SLIDER.findall(block)}
+    check("UI has a slider for all five servos", set(sliders) ==
+          {"FrontLeft", "FrontRight", "RearLeft", "RearRight", "Head"}, str(sorted(sliders)))
+    wrong = {s: r for s, r in sliders.items() if r != limits(s)}
+    check("UI slider ranges equal the driver's command limits", not wrong,
+          f"mismatch: {wrong}" if wrong else f"legs {limits('FrontLeft')}, head {limits('Head')}")
+
+    leg = Servo("RearRight", "Leg", 0, -18, False, Simulated=True)
+    leg.SetAngle(-135)
+    head = Servo("Head", "Head", 1, -6, True, Simulated=True)
+    head.SetAngle(90)
+    check("driver clamps a -135 leg command to the leg limit", leg.Current_Angle == Servo.Min_Leg_Command,
+          f"got {leg.Current_Angle}")
+    check("driver clamps a 90 head command to the head limit", head.Current_Angle == Servo.Max_Head_Command,
+          f"got {head.Current_Angle}")
+
+    poses = (REPO / "Canine" / "PoseDriver.py").read_text()
+    over = []
+    n = 0
+    for sid, _kind, a, b in POSE_CMD.findall(poses):
+        lo, hi = limits(sid)
+        for v in (a, b):
+            if v:
+                n += 1
+                if not lo <= float(v) <= hi:
+                    over.append(f"{sid} {v}")
+    check("every W26 pose angle is inside the limits", n > 20 and not over,
+          f"{n} angles checked" + (f"; over: {over}" if over else ""))
 
 
 # ── 3. Watchdog against a real server ────────────────────────────────────────
@@ -163,6 +213,7 @@ def main():
     ap.add_argument("--no-sim", action="store_true", help="skip the live watchdog checks")
     args = ap.parse_args()
     check_states()
+    check_servo_limits()
     if not args.no_sim:
         check_watchdog()
     print("\nALL PASS" if FAILS == 0 else f"\n{FAILS} check(s) FAILED")

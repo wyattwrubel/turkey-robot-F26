@@ -9,12 +9,15 @@
 //   { id: 'Head',       name: 'Head',        min: -60, max: 60, val: 0 },
 // ]
 
+// Slider ranges = the servo driver's command limits (Canine/ServoDriver.py Max_Leg_Command,
+// Max_Head_Command), which clamp every command anyway. +-180 let a leg reach its end stop and
+// stall the servo rail (11-17). tests/check_ui.py fails if these drift from the driver.
 const SERVO_DEFS = [
-  { id: 'FrontLeft',  name: 'Front Left',  min: -180, max: 180, val: 0 },
-  { id: 'FrontRight', name: 'Front Right', min: -180, max: 180, val: 0 },
-  { id: 'RearLeft',   name: 'Rear Left',   min: -180, max: 180, val: 0 },
-  { id: 'RearRight',  name: 'Rear Right',  min: -180, max: 180, val: 0 },
-  { id: 'Head',       name: 'Head',        min: -180, max: 180, val: 0 },
+  { id: 'FrontLeft',  name: 'Front Left',  min: -45, max: 45, val: 0 },
+  { id: 'FrontRight', name: 'Front Right', min: -45, max: 45, val: 0 },
+  { id: 'RearLeft',   name: 'Rear Left',   min: -45, max: 45, val: 0 },
+  { id: 'RearRight',  name: 'Rear Right',  min: -45, max: 45, val: 0 },
+  { id: 'Head',       name: 'Head',        min: -60, max: 60, val: 0 },
 ]
 
 const AUDIO_DEFS = [
