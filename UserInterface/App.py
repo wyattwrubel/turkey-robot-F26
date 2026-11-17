@@ -26,7 +26,13 @@ from Controls    import PanelControls
 
 from config.paths import ZONE_CSV, WAYPOINTS_CSV
 
-STATIC_DIR    = Path(__file__).parent / "Website"
+# Which page port 8000 serves (Main.py --ui): "ops" = the full operator UI, "present" = the
+# presentation copy (no zone map) shown to an audience. Same server, robot and controls behind both.
+SITES = {
+    "ops":     Path(__file__).parent / "Website",
+    "present": Path(__file__).parent / "WebsitePresent",
+}
+STATIC_DIR    = SITES["ops"]
 MAP_CSV       = ZONE_CSV
 
 
@@ -46,7 +52,12 @@ def _to_json(msg: dict) -> str:
 
 class CDSControlServer:
 
-    def __init__(self, drivetrain_publisher, canine_publisher, macrostate_publisher, navigation_publisher):
+    def __init__(self, drivetrain_publisher, canine_publisher, macrostate_publisher, navigation_publisher,
+                 site: str = "ops"):
+        if site not in SITES:
+            raise ValueError(f"unknown UI site {site!r}; choose from {sorted(SITES)}")
+        self.site       = site
+        self.static_dir = SITES[site]
         self.robot = Robot()
         self._last_frame_time: float = 0.0
         self.camera      = PanelCamera()
@@ -162,7 +173,7 @@ class CDSControlServer:
 
         @asynccontextmanager
         async def lifespan(app: FastAPI):
-            print("[SERVER] Starting — http://localhost:8000")
+            print(f"[SERVER] Starting — http://localhost:8000 (UI: {self.site})")
             asyncio.create_task(self._broadcast_state())
             yield
 
@@ -170,17 +181,17 @@ class CDSControlServer:
 
         @app.get("/")
         async def root():
-            f = STATIC_DIR / "index.html"
+            f = self.static_dir / "index.html"
             return FileResponse(str(f)) if f.exists() else HTMLResponse("index.html not found", 404)
 
         @app.get("/styles.css")
         async def styles():
-            f = STATIC_DIR / "styles.css"
+            f = self.static_dir / "styles.css"
             return FileResponse(str(f), media_type="text/css") if f.exists() else HTMLResponse("", 404)
 
         @app.get("/script.js")
         async def script():
-            f = STATIC_DIR / "script.js"
+            f = self.static_dir / "script.js"
             return FileResponse(str(f), media_type="application/javascript") if f.exists() else HTMLResponse("", 404)
 
         @app.get("/camera")

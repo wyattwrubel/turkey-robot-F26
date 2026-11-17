@@ -1,5 +1,5 @@
 """
-check_ui.py: checks for the operator UI's state display and its heartbeat watchdog.
+check_ui.py: checks for the operator and presentation UIs and the heartbeat watchdog.
 No robot needed. Run from the repo root with the laptop venv:
 
     python tests/check_ui.py            # all checks (starts --profile sim on port 8000, ~25 s)
@@ -16,6 +16,9 @@ No robot needed. Run from the repo root with the laptop venv:
         still does) keep AUTO alive for 8 s: no E-stop;
      b. a timer slowed to one beat per 1.2 s (what a hidden tab did before) trips the E-stop,
         so the watchdog still catches a page that stops answering.
+     c. --ui ops serves the operator UI and --ui present the presentation copy, on port 8000.
+  5. Both page copies (UserInterface/Website, WebsitePresent) exist; only the presentation copy
+     drops the zone map; both keep the servo limits (check 4).
 Exit code 0 means every check passed.
 """
 
@@ -29,6 +32,7 @@ import socket
 import subprocess
 import sys
 import time
+import urllib.request
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -82,6 +86,28 @@ def check_states():
         check(f"{sid} reaches the page as macrostate", got == sid, f"got {got!r}")
 
 
+# ── 5. The two page copies: operator UI and presentation UI ──────────────────
+SITES = ("Website", "WebsitePresent")     # Main.py --ui ops / --ui present
+
+
+def check_sites():
+    for site in SITES:
+        missing = [f for f in ("index.html", "script.js", "styles.css")
+                   if not (REPO / "UserInterface" / site / f).exists()]
+        check(f"{site} has index.html, script.js, styles.css", not missing, f"missing {missing}")
+    ops = (REPO / "UserInterface" / "Website" / "index.html").read_text()
+    pres = (REPO / "UserInterface" / "WebsitePresent" / "index.html").read_text()
+    check("operator UI keeps the zone map", 'id="map-canvas"' in ops)
+    check("presentation UI has no zone map", 'id="map-canvas"' not in pres and "Zone Map" not in pres)
+    check("presentation UI keeps camera, Planner State and E-stop",
+          all(k in pres for k in ('id="cam-ph"', 'id="planner-state"', 'id="estop-btn"')))
+
+
+def fetch(path):
+    with urllib.request.urlopen(f"http://127.0.0.1:{PORT}{path}", timeout=5) as r:
+        return r.status, r.read().decode()
+
+
 # ── 4. Servo limits: UI sliders, driver clamp, poses ─────────────────────────
 SLIDER = re.compile(r"\{\s*id:\s*'(\w+)'.*?min:\s*(-?\d+),\s*max:\s*(-?\d+)")
 POSE_CMD = re.compile(r'self\.servos\["(\w+)"\]\.servo_control_receiver\(\s*"(\w+)"\s*,\s*'
@@ -96,15 +122,16 @@ def check_servo_limits():
             return Servo.Min_Head_Command, Servo.Max_Head_Command
         return Servo.Min_Leg_Command, Servo.Max_Leg_Command
 
-    js = (REPO / "UserInterface" / "Website" / "script.js").read_text()
-    block = js[js.index("\nconst SERVO_DEFS"):]
-    block = block[:block.index("]")]
-    sliders = {sid: (int(lo), int(hi)) for sid, lo, hi in SLIDER.findall(block)}
-    check("UI has a slider for all five servos", set(sliders) ==
-          {"FrontLeft", "FrontRight", "RearLeft", "RearRight", "Head"}, str(sorted(sliders)))
-    wrong = {s: r for s, r in sliders.items() if r != limits(s)}
-    check("UI slider ranges equal the driver's command limits", not wrong,
-          f"mismatch: {wrong}" if wrong else f"legs {limits('FrontLeft')}, head {limits('Head')}")
+    for site in SITES:
+        js = (REPO / "UserInterface" / site / "script.js").read_text()
+        block = js[js.index("\nconst SERVO_DEFS"):]
+        block = block[:block.index("]")]
+        sliders = {sid: (int(lo), int(hi)) for sid, lo, hi in SLIDER.findall(block)}
+        check(f"{site}: a slider for all five servos", set(sliders) ==
+              {"FrontLeft", "FrontRight", "RearLeft", "RearRight", "Head"}, str(sorted(sliders)))
+        wrong = {s: r for s, r in sliders.items() if r != limits(s)}
+        check(f"{site}: slider ranges equal the driver's command limits", not wrong,
+              f"mismatch: {wrong}" if wrong else f"legs {limits('FrontLeft')}, head {limits('Head')}")
 
     leg = Servo("RearRight", "Leg", 0, -18, False, Simulated=True)
     leg.SetAngle(-135)
@@ -183,29 +210,49 @@ async def watchdog_session():
               estops > 0, f"E-stop frames {estops}")
 
 
-def check_watchdog():
-    if port_open():
-        check("port 8000 free for the sim server", False, "something is already listening")
-        return
-    log = REPO / "tests" / ".check_ui_sim.log"
+@contextlib.contextmanager
+def sim_server(ui):
+    """Main.py --profile sim --ui <ui> on port 8000; yields once the port answers, or None."""
+    log = REPO / "tests" / f".check_ui_sim_{ui}.log"
     with open(log, "w") as f:
-        proc = subprocess.Popen([sys.executable, "Main.py", "--profile", "sim", "--run-for", "40"],
-                                cwd=REPO, stdout=f, stderr=subprocess.STDOUT)
+        proc = subprocess.Popen([sys.executable, "Main.py", "--profile", "sim", "--ui", ui,
+                                 "--run-for", "40"], cwd=REPO, stdout=f, stderr=subprocess.STDOUT)
     try:
         t0 = time.monotonic()
         while not port_open() and time.monotonic() - t0 < 30 and proc.poll() is None:
             time.sleep(0.3)
-        if not port_open():
-            check("sim server came up on port 8000", False, f"see {log.relative_to(REPO)}")
-            return
-        asyncio.run(watchdog_session())
+        ok = port_open()
+        if not ok:
+            check(f"sim server (--ui {ui}) came up on port 8000", False, f"see {log.relative_to(REPO)}")
+        yield proc if ok else None
     finally:
         proc.terminate()
         with contextlib.suppress(subprocess.TimeoutExpired):
             proc.wait(timeout=10)
         if proc.poll() is None:
             proc.kill()
+        while port_open():          # let the port free up before the next server
+            time.sleep(0.2)
     log.unlink(missing_ok=True)
+
+
+def check_watchdog():
+    if port_open():
+        check("port 8000 free for the sim server", False, "something is already listening")
+        return
+    with sim_server("ops") as srv:
+        if srv:
+            status, page = fetch("/")
+            check("--ui ops (default) serves the operator UI with the zone map",
+                  status == 200 and 'id="map-canvas"' in page)
+            asyncio.run(watchdog_session())
+    with sim_server("present") as srv:
+        if srv:
+            status, page = fetch("/")
+            js_status, _ = fetch("/script.js")
+            check("--ui present serves the presentation UI on the same port, no zone map",
+                  status == 200 and js_status == 200 and 'id="map-canvas"' not in page
+                  and 'id="planner-state"' in page)
 
 
 def main():
@@ -214,6 +261,7 @@ def main():
     args = ap.parse_args()
     check_states()
     check_servo_limits()
+    check_sites()
     if not args.no_sim:
         check_watchdog()
     print("\nALL PASS" if FAILS == 0 else f"\n{FAILS} check(s) FAILED")

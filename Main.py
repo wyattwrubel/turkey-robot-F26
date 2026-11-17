@@ -7,6 +7,8 @@ Main.py: starts the robot software in one of four run profiles (DR2 plan, contra
     python Main.py --profile sim      laptop, no hardware: fake turkey, simulated drive and dog
 
 Options:
+    --ui ops|present which page port 8000 serves: the full operator UI (default) or the
+                     presentation copy with no zone map (UserInterface/WebsitePresent)
     --gps sim|real   real GPS receiver (full only; default sim)
     --imu sim|real   real IMU (full only; default sim until the gyro-heading work, W1, lands:
                      today's IMU mode is the magnetometer heading the robot's motors corrupt)
@@ -81,6 +83,8 @@ def link(publisher, *receivers):
 def parse_args(argv=None):
     ap = argparse.ArgumentParser(description="Start the turkey robot software.")
     ap.add_argument("--profile", choices=PROFILES, default="full")
+    ap.add_argument("--ui", choices=("ops", "present"), default="ops",
+                    help="page served on port 8000: operator UI or the presentation copy")
     ap.add_argument("--gps", choices=("sim", "real"), default="sim")
     ap.add_argument("--imu", choices=("sim", "real"), default="sim")
     ap.add_argument("--run-for", type=float, default=None, metavar="SECONDS")
@@ -181,7 +185,8 @@ async def main(args):
         Accelerometer = IMUDriver(Accelerometer_AccelPublisher_pub, Simulation=(args.imu == "sim"),
                                   Log=(args.imu == "real"))
 
-    UI = CDSControlServer(DriveCommand_UI_pub, Canine_UI_pub, MacroState_UI_pub, MotionCommand_UI_pub)
+    UI = CDSControlServer(DriveCommand_UI_pub, Canine_UI_pub, MacroState_UI_pub, MotionCommand_UI_pub,
+                          site=args.ui)
 
     # ─────────────────────────────────────────────────────────────────────────
     # SUBSCRIPTION PATHS (a receiver on a missing module is skipped)
