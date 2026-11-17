@@ -799,18 +799,8 @@ function drawMap(canvas) {
     ctx.beginPath(); ctx.moveTo(OX, y); ctx.lineTo(OX + fw, y); ctx.stroke()
   }
 
-  // Sweep line
-  const sweepY   = OY + ((t * 0.18) % 1.0) * fh
-  const sweepGrd = ctx.createLinearGradient(OX, OY, OX, OY + fh)
-  const fade     = Math.sin(t * 0.57 * Math.PI) * 0.5 + 0.5
-  sweepGrd.addColorStop(0,   'rgba(0,212,255,0)')
-  sweepGrd.addColorStop(0.3, `rgba(0,212,255,${0.45 * fade})`)
-  sweepGrd.addColorStop(0.7, `rgba(0,212,255,${0.45 * fade})`)
-  sweepGrd.addColorStop(1,   'rgba(0,212,255,0)')
-  ctx.strokeStyle = sweepGrd; ctx.lineWidth = 1.5
-  ctx.beginPath(); ctx.moveTo(OX, sweepY); ctx.lineTo(OX + fw, sweepY); ctx.stroke()
-
-  const wallPulse = 0.75 + 0.25 * Math.sin(t * 1.4)
+  // Walls and border are drawn steady (no sweep line, no pulsing glow).
+  const wallPulse = 1
 
   // Obstacles
   mapObstacles.filter(o => o.type === 'line').forEach(ob => {
@@ -847,11 +837,6 @@ function drawMap(canvas) {
   })
 
   // Border
-  ctx.strokeStyle = `rgba(0,212,255,${0.18 * wallPulse})`
-  ctx.lineWidth   = 8
-  ctx.shadowColor = '#00d4ff'; ctx.shadowBlur = 18
-  ctx.strokeRect(fx0, fy0, fw, fh)
-  ctx.shadowBlur  = 0
   ctx.strokeStyle = `rgba(0,212,255,${wallPulse})`
   ctx.lineWidth   = 1.5
   ctx.strokeRect(fx0, fy0, fw, fh)
