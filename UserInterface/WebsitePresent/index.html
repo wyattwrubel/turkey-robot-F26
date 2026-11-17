@@ -14,8 +14,8 @@
     <div class="sys-title">TURKEYSQUAD</div>
   </div>
   <div class="hdr-r">
-    <div class="spill"><div class="dot"></div>UWB</div>
-    <div class="spill"><div class="dot"></div>IMU</div>
+    <div class="spill" title="GPS receiver (position)"><div class="dot off" id="gps-dot"></div>GPS</div>
+    <div class="spill" title="IMU (heading)"><div class="dot off" id="imu-dot"></div>IMU</div>
     <!--
       CAM STATUS DOT
       id="cam-dot" is updated by _initCamera() in script.js:
@@ -73,7 +73,7 @@
 
       <div class="drow">
         <div class="db">
-          <div class="dl">Raw Measurements</div>
+          <div class="dl">GPS + IMU (raw)</div>
           <div class="dv">
             X:<span class="v"    id="uwb-x"> —</span> m &nbsp;
             Y:<span class="v"    id="uwb-y"> —</span> m &nbsp;

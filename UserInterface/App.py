@@ -33,6 +33,9 @@ SITES = {
     "present": Path(__file__).parent / "WebsitePresent",
 }
 STATIC_DIR    = SITES["ops"]
+# Browsers revalidate the page files on every load, so a UI update shows on a plain refresh
+# instead of a stale cached stylesheet or script.
+NO_CACHE      = {"Cache-Control": "no-cache"}
 MAP_CSV       = ZONE_CSV
 
 
@@ -53,12 +56,13 @@ def _to_json(msg: dict) -> str:
 class CDSControlServer:
 
     def __init__(self, drivetrain_publisher, canine_publisher, macrostate_publisher, navigation_publisher,
-                 site: str = "ops"):
+                 site: str = "ops", sources: dict | None = None):
         if site not in SITES:
             raise ValueError(f"unknown UI site {site!r}; choose from {sorted(SITES)}")
         self.site       = site
         self.static_dir = SITES[site]
         self.robot = Robot()
+        self.robot.set_sources(sources or {})
         self._last_frame_time: float = 0.0
         self.camera      = PanelCamera()
         self.map         = PanelMap(MAP_CSV, WAYPOINTS_CSV, self.robot)
@@ -182,17 +186,17 @@ class CDSControlServer:
         @app.get("/")
         async def root():
             f = self.static_dir / "index.html"
-            return FileResponse(str(f)) if f.exists() else HTMLResponse("index.html not found", 404)
+            return FileResponse(str(f), headers=NO_CACHE) if f.exists() else HTMLResponse("index.html not found", 404)
 
         @app.get("/styles.css")
         async def styles():
             f = self.static_dir / "styles.css"
-            return FileResponse(str(f), media_type="text/css") if f.exists() else HTMLResponse("", 404)
+            return FileResponse(str(f), media_type="text/css", headers=NO_CACHE) if f.exists() else HTMLResponse("", 404)
 
         @app.get("/script.js")
         async def script():
             f = self.static_dir / "script.js"
-            return FileResponse(str(f), media_type="application/javascript") if f.exists() else HTMLResponse("", 404)
+            return FileResponse(str(f), media_type="application/javascript", headers=NO_CACHE) if f.exists() else HTMLResponse("", 404)
 
         @app.get("/camera")
         async def camera_feed():

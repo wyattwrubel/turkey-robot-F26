@@ -69,6 +69,7 @@
   .dot { width:6px; height:6px; border-radius:50%; background:var(--success); box-shadow:0 0 6px var(--success); }
   .dot.warn { background:var(--warn); box-shadow:0 0 6px var(--warn); }
   .dot.off  { background:var(--text-dim); box-shadow:none; animation:none; }
+  .dot.sim  { background:transparent; border:1px solid var(--warn); box-shadow:none; animation:none; }
 
   /*
    * DRIVETRAIN STATUS DOT PROTOCOL

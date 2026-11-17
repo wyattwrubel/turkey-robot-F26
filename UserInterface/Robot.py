@@ -63,7 +63,14 @@ class Robot:
         self.active_audio = None
         self._audio_timer = 0.0
 
-        self.drivetrain_status = 0    # 0=nominal, 1=warning, 2=error
+        self.drivetrain_status = 0    # 0=nominal, 1=warning, 2=error (nothing sets this; see sources)
+
+        # Header status dots for the data sources. mode comes from Main.py's profile and flags:
+        # "real" = hardware expected, "sim" = simulated, "off" = not running in this profile.
+        # last_seen is when that source's data last reached the UI; a real source with no
+        # data for SOURCE_STALE_S shows as an error on the page.
+        self.sources   = {"gps": "off", "imu": "off", "drivetrain": "off"}
+        self.last_seen = {name: None for name in self.sources}
 
         self.reference_trajectory = []   # full reference path   — N×2 [x, y]
         self.mpc_horizon          = []   # live lookahead horizon — N×2 [x, y]
@@ -156,6 +163,25 @@ class Robot:
             return True
         return (time.monotonic() - self._last_heartbeat) < self.HEARTBEAT_TIMEOUT
 
+    # ── Data sources (header dots) ────────────────────────────
+    SOURCE_STALE_S = 2.0
+
+    def set_sources(self, sources: dict) -> None:
+        for name, mode in sources.items():
+            if name in self.sources and mode in ("real", "sim", "off"):
+                self.sources[name] = mode
+
+    def mark_seen(self, name: str) -> None:
+        if name in self.last_seen:
+            self.last_seen[name] = time.monotonic()
+
+    def sources_msg(self) -> dict:
+        now = time.monotonic()
+        return {name: {"mode": mode,
+                       "age": None if self.last_seen[name] is None
+                              else round(now - self.last_seen[name], 1)}
+                for name, mode in self.sources.items()}
+
     # ── Serialisers ───────────────────────────────────────────
     def to_state_msg(self) -> dict:
         return {
@@ -181,6 +207,7 @@ class Robot:
             "servos":               [{"id": k, "angle": v} for k, v in self.servo_angles.items()],
             "is_manual":            self.ui_locked or self._estop,
             "is_estopped": self._estop,
+            "sources":              self.sources_msg(),
         }
 
     def to_servo_msg(self) -> dict:
