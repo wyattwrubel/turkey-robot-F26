@@ -102,13 +102,17 @@ class PanelDiagnostics:
           Id="Scan"     → sys_state = "Scanning"
           Id="Chase"    → sys_state = "Chase"
           Id="Alert"    → sys_state = "Alert"
+          Id="Deter"    → sys_state = "Deter"      (deter mode: turkey confirmed, head + bark)
+          Id="DeterIdle"→ sys_state = "DeterIdle"  (deter mode: armed, no turkey)
           Id="UnlockUI" → sys_state = "Scanning"  (auto mode restored)
         """
 
         mainstates = {
-            "Scan":     "Scanning",
-            "Chase":    "Chase",
-            "Alert":    "Alert",
+            "Scan":      "Scanning",
+            "Chase":     "Chase",
+            "Alert":     "Alert",
+            "Deter":     "Deter",       # ModuleDeter (profile deter)
+            "DeterIdle": "DeterIdle",
         }
         
         allowed_substates = {

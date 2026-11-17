@@ -196,6 +196,7 @@
   .dv .v    { color:var(--accent); }
   .dv .v.ok { color:var(--success); }
   .dv .v.w  { color:var(--warn); }
+  .dv .v.e  { color:var(--danger); }
   .dv .v.d  { color:var(--danger); }
   .ds { font-size:12px; color:var(--text-dim); margin-top:2px; }
   .crow { display:flex; gap:4px; flex-wrap:wrap; margin-top:3px; }
