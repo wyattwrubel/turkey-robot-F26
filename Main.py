@@ -185,8 +185,14 @@ async def main(args):
         Accelerometer = IMUDriver(Accelerometer_AccelPublisher_pub, Simulation=(args.imu == "sim"),
                                   Log=(args.imu == "real"))
 
+    # What each header status dot should expect: real hardware, simulated, or not running at all.
+    sources = {
+        "gps":        (args.gps if p["sensors"] else "off"),
+        "imu":        (args.imu if p["sensors"] else "off"),
+        "drivetrain": (p["drivetrain"] or "off"),
+    }
     UI = CDSControlServer(DriveCommand_UI_pub, Canine_UI_pub, MacroState_UI_pub, MotionCommand_UI_pub,
-                          site=args.ui)
+                          site=args.ui, sources=sources)
 
     # ─────────────────────────────────────────────────────────────────────────
     # SUBSCRIPTION PATHS (a receiver on a missing module is skipped)

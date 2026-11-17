@@ -19,6 +19,8 @@ No robot needed. Run from the repo root with the laptop venv:
      c. --ui ops serves the operator UI and --ui present the presentation copy, on port 8000.
   5. Both page copies (UserInterface/Website, WebsitePresent) exist; only the presentation copy
      drops the zone map; both keep the servo limits (check 4).
+  6. The GPS / IMU / drivetrain dots come from the run profile and data arrival, not hard-coded
+     green (the drivetrain dot said 'on' with the drivetrain powered off, 11-17).
 Exit code 0 means every check passed.
 """
 
@@ -101,6 +103,29 @@ def check_sites():
     check("presentation UI has no zone map", 'id="map-canvas"' not in pres and "Zone Map" not in pres)
     check("presentation UI keeps camera, Planner State and E-stop",
           all(k in pres for k in ('id="cam-ph"', 'id="planner-state"', 'id="estop-btn"')))
+
+
+# ── 6. Header status dots reflect real sources ───────────────────────────────
+def check_sources():
+    from Robot import Robot
+    r = Robot()
+    msg = r.to_state_msg()["sources"]
+    check("dots default to 'off' (nothing assumed running)",
+          all(v == {"mode": "off", "age": None} for v in msg.values()), str(msg))
+    r.set_sources({"gps": "off", "imu": "off", "drivetrain": "off"})      # what --profile deter passes
+    check("deter profile: drivetrain reported off, not 'nominal'",
+          r.to_state_msg()["sources"]["drivetrain"]["mode"] == "off" and r.drivetrain_status == 0)
+    r.set_sources({"drivetrain": "real"})
+    r.mark_seen("drivetrain")
+    d = r.to_state_msg()["sources"]["drivetrain"]
+    check("a source's age resets when its data arrives", d["mode"] == "real" and d["age"] is not None
+          and d["age"] < 0.5, str(d))
+    for site in SITES:
+        page = (REPO / "UserInterface" / site / "index.html").read_text()
+        js = (REPO / "UserInterface" / site / "script.js").read_text()
+        check(f"{site}: GPS / IMU / drivetrain dots have ids the page updates",
+              all(f'id="{i}"' in page for i in ("gps-dot", "imu-dot", "dt-dot"))
+              and "applySources(m.sources)" in js and ">UWB<" not in page)
 
 
 def fetch(path):
@@ -202,6 +227,11 @@ async def watchdog_session():
         await ws.send(json.dumps({"type": "heartbeat"}))
         await ws.send(json.dumps({"type": "toggle_mode"}))        # MANUAL -> AUTO arms the watchdog
         auto_seen, estops = await drain(8.0, reply="state")
+        src = state.get("sources", {})
+        check("sim profile: dots get gps/imu/drivetrain as 'sim', drivetrain data fresh",
+              {k: v.get("mode") for k, v in src.items()} == {"gps": "sim", "imu": "sim", "drivetrain": "sim"}
+              and src.get("drivetrain", {}).get("age") is not None
+              and src["drivetrain"]["age"] <= 2.0, str(src))
         check("hidden-tab pattern (beat on each state message) keeps AUTO for 8 s, no E-stop",
               auto_seen and estops == 0, f"auto seen {auto_seen}, E-stop frames {estops}")
 
@@ -262,6 +292,7 @@ def main():
     check_states()
     check_servo_limits()
     check_sites()
+    check_sources()
     if not args.no_sim:
         check_watchdog()
     print("\nALL PASS" if FAILS == 0 else f"\n{FAILS} check(s) FAILED")

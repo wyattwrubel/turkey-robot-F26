@@ -39,6 +39,7 @@ class PanelDiagnostics:
         arr = np.asarray(data, dtype=float).flatten()
         if arr.size >= 3:
             self._robot.set_robot_pose(arr[0], arr[1], arr[2])
+            self._robot.mark_seen("drivetrain")   # RobotPose comes only from the drivetrain
         else:
             print(f"[UI RobotPose_Receiver] Invalid Data '{data}'")   
 
@@ -81,6 +82,7 @@ class PanelDiagnostics:
         arr = np.asarray(data, dtype=float).flatten()
         if arr.size >= 2:
             self._robot.set_uwb(arr[0], arr[1])
+            self._robot.mark_seen("gps")          # W26 named this UWB; it's the GPS now
         else:
             print(f"[UI UWB_Sensors_Receiver] Invalid Data '{data}'")   
 
@@ -92,6 +94,7 @@ class PanelDiagnostics:
         arr = np.asarray(data, dtype=float).flatten()
         if arr.size >= 1:
             self._robot.set_imu(arr[0])
+            self._robot.mark_seen("imu")
         else:
             print(f"[UI Accelerometer_Receiver] Invalid Data '{data}'")    
 

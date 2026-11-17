@@ -158,10 +158,8 @@ function handle(m) {
     set('ukf-t', deg(m.theta))
     if (m.x != null) mapRobot = { x: m.x, y: m.y, theta: m.theta ?? 0, targetX: m.target?.x, targetY: m.target?.y }
 
-    // Drivetrain status dot
-    if (m.drivetrain_status != null) {
-      applyDrivetrainStatus(m.drivetrain_status)
-    }
+    // GPS / IMU / drivetrain dots: real data arriving, simulated, or not running
+    if (m.sources) applySources(m.sources)
 
     // Nav command type
     {
@@ -295,6 +293,37 @@ function applyGeofence(m) {
   else if (m.state !== 'inside')    dot.classList.add('err')
   const d = m.dist == null ? '' : ` · ${m.dist.toFixed(1)} m to edge`
   dot.parentElement.title = `Geofence ${m.state}${d} · fix ${m.fix ?? '?'}`
+}
+
+// ── GPS / IMU / drivetrain status dots ────────────────────────
+// From the robot's 'sources' (UserInterface/Robot.py): what this run profile starts for each
+// source, and how long ago its data last arrived.
+//   grey    not running, or simulated with no data    hollow amber  simulated, data arriving
+//   green   real hardware, data arriving              red           real hardware, no data for > 2 s
+const SOURCE_DOTS    = { gps: ['gps-dot', 'GPS'], imu: ['imu-dot', 'IMU'], drivetrain: ['dt-dot', 'Drivetrain'] }
+const SOURCE_STALE_S = 2
+
+function applySources(sources) {
+  for (const [name, [id, label]] of Object.entries(SOURCE_DOTS)) {
+    const dot = document.getElementById(id)
+    const s   = sources[name]
+    if (!dot || !s) continue
+    let cls, tip
+    const fresh = s.age != null && s.age <= SOURCE_STALE_S
+    if (s.mode === 'off') {
+      cls = 'dot off'; tip = `${label}: not running in this profile`
+    } else if (s.mode === 'sim' && !fresh) {
+      cls = 'dot off'; tip = `${label}: simulated, sends no data`
+    } else if (!fresh) {
+      cls = 'dot err'; tip = `${label}: no data ${s.age == null ? 'yet' : `for ${s.age} s`}`
+    } else if (s.mode === 'sim') {
+      cls = 'dot sim'; tip = `${label}: simulated, not real hardware`
+    } else {
+      cls = 'dot'; tip = `${label}: live`
+    }
+    if (dot.className !== cls) dot.className = cls
+    dot.parentElement.title = tip
+  }
 }
 
 // ── Drivetrain status dot ─────────────────────────────────────
