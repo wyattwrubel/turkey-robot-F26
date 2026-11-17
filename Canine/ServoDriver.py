@@ -21,8 +21,15 @@ class Servo:
     Leg_Motor_Max_Pulse = 2500
     Leg_Motor_Min_Pulse = 500
 
-    Max_Leg_Command = 180
-    Min_Leg_Command = -180
+    # Command limits = the safe envelope every source is clamped to (UI sliders, poses, planner).
+    # Legs were +-180 here, so a UI slider could send a leg to the motor's end stop (+-135) and
+    # past the leg's mechanical range: on 11-17 Rear Right at -135 stalled and the servo rail
+    # sagged until no servo responded. W26's poses never go past +-40 (PoseDriver), and W26's
+    # original slider range was +-45, so +-45 is known-safe. Widen only after measuring each leg's
+    # real mechanical range on the robot. UI sliders mirror these (script.js SERVO_DEFS);
+    # tests/check_ui.py fails if the two drift apart or a pose exceeds them.
+    Max_Leg_Command = 45
+    Min_Leg_Command = -45
 
     # ------------------------------------------------------------------
     # Head Specifications
