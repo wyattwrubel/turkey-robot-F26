@@ -35,6 +35,12 @@ Chase navigation:
   ZigZag.py, alternating left/right of the line of sight within the camera's
   FOV, then the straight chase for the last few metres; "straight" is W26's
   Move-toward-the-bird every 0.5 s.
+  Face the bird near the end (zig-zag only): within CHASE_ALIGN_DIST_M of the
+  bird, if it is more than CHASE_ALIGN_TRIGGER_DEG off-centre, the robot turns
+  in place to face it (Orient), then finishes with the straight chase.
+  Navigation stops 4-5 m out pointing along its last A* step, which can leave
+  the bird outside the camera's view. Not used for "straight": there, 5-7 m out,
+  the next A* Move pulls the heading straight back (worse in sim).
   F8 combos (CHASE_RANDOM_COMBOS, X3): each chase picks one row of
   Combos.COMBOS (approach x speed profile x opening pose x sound) from a
   shuffle bag, so no two chases in a row look the same; each pick is logged.
@@ -156,10 +162,19 @@ class StatePlannerReceiver:
     CHASE_APPROACH           = "zigzag"
     ZIGZAG_TICK_S            = 0.1    # seconds — leg-switch check interval
     ZIGZAG_SWITCH_EARLY_M    = 0.3    # metres — start the next leg this far before the vertex
-    ZIGZAG_BEARING_GUARD_DEG = 4.0    # end a leg early if the bird gets this close to the FOV edge
+    ZIGZAG_BEARING_GUARD_DEG = 10.0   # end a leg early if the bird gets this close to the FOV edge
+                                      # (4 was too late: the turn into the next leg overshoots)
     ZIGZAG_TURKEY_MOVED_M    = 2.0    # metres — replan the leg if the bird moved this far
     ZIGZAG_LEG_TIMEOUT_S     = 12.0   # seconds — replan if a leg takes longer than this
     ZIGZAG_RESTART_M         = 10.0   # metres — bird this far during the final approach → zig again
+
+    # Face the bird near the end of a zig-zag chase.
+    CHASE_ALIGN_DIST_M       = 7.0    # metres — only this close to the bird
+    CHASE_ALIGN_TRIGGER_DEG  = 15.0   # turn in place when the bird is this far off-centre
+    CHASE_ALIGN_REARM_DEG    = 8.0    # turn again only after it was back within this
+    CHASE_ALIGN_DONE_DEG     = 5.0    # turn finished when the heading is this close
+    CHASE_ALIGN_TIMEOUT_S    = 3.0    # seconds — give up on the turn after this
+    CHASE_ALIGN_SPEED        = 0.5    # m/s cap during the turn (a 0 cap also stops the MPC pivot)
 
     # Lost-visual debounce: turkey must be absent for this long continuously
     # before the chase nav loop treats it as lost and transitions to Alert.
@@ -647,6 +662,7 @@ class StatePlannerReceiver:
                                + self.LOST_VISUAL_DEBOUNCE_S)
             stopped:   bool  = False   # True once SpeedCap 0 sent for lost-visual
             too_close: bool  = False   # True once SpeedCap 0 sent for proximity
+            align_armed: bool = True   # face-the-bird turn allowed (re-armed once centred)
 
             while True:
                 now = asyncio.get_event_loop().time()
@@ -678,6 +694,26 @@ class StatePlannerReceiver:
                     # turkey moves back outside the radius.
                     robot_pos   = np.array(self.Current_RobotPose[:2])
                     dist_to_turkey = np.linalg.norm(turkey_pos - robot_pos)
+
+                    # ── Face the bird near the end (zig-zag only) ────────────
+                    bearing = self._bearing_of_turkey_at(turkey_pos)
+                    if (approach == "zigzag" and bearing is not None
+                            and dist_to_turkey < self.CHASE_ALIGN_DIST_M):
+                        off_deg = abs(math.degrees(bearing))
+                        if off_deg < self.CHASE_ALIGN_REARM_DEG:
+                            align_armed = True
+                        elif align_armed and off_deg > self.CHASE_ALIGN_TRIGGER_DEG:
+                            align_armed = False
+                            holding_before = chase_speed["holding"]
+                            chase_speed["holding"] = True     # profile must not change the cap mid-turn
+                            await self._face_turkey(
+                                turkey_pos, off_deg,
+                                restore_speed=0.0 if too_close else chase_speed["target"])
+                            chase_speed["holding"] = holding_before
+                            zz.update(final=True, leg=None, t_final=now - self.CHASE_NAV_RATE_S)
+                            deadline = (asyncio.get_event_loop().time()
+                                        + self.LOST_VISUAL_DEBOUNCE_S)
+                            continue
 
                     if dist_to_turkey < self.CHASE_STOP_DIST_M:
                         if not too_close:
@@ -958,6 +994,33 @@ class StatePlannerReceiver:
     def _speed_level(self, level: str) -> float:
         """Speed-profile level -> m/s, using only the existing chase limits (C7)."""
         return self.SPEED_CHASE if level == "full" else self.SPEED_CHASE_GROWL
+
+    async def _face_turkey(self, turkey_pos, off_deg: float, restore_speed: float) -> bool:
+        """
+        Turn in place to face turkey_pos (Orient), then set the speed cap to
+        restore_speed. The cap is raised to CHASE_ALIGN_SPEED for the turn,
+        because the MPC clips pivot wheel speeds to the cap. Returns True if
+        the heading got within CHASE_ALIGN_DONE_DEG before the timeout.
+        """
+        rx, ry, _ = (float(v) for v in self.Current_RobotPose[:3])
+        target = math.atan2(-(float(turkey_pos[1]) - ry), float(turkey_pos[0]) - rx)
+        self._dbg(f"[Chase] Bird {off_deg:.0f} deg off-centre — turning to face it")
+        await self._SpeedCap_Publish(self.CHASE_ALIGN_SPEED)
+        await self.MotionCommand_Publisher.publish({"Id": "Orient", "Cmd": [rx, ry, target]})
+
+        loop = asyncio.get_event_loop()
+        t_end, done = loop.time() + self.CHASE_ALIGN_TIMEOUT_S, False
+        while loop.time() < t_end:
+            await asyncio.sleep(self.HEADING_POLL_S)
+            err = math.atan2(math.sin(target - float(self.Current_RobotPose[2])),
+                             math.cos(target - float(self.Current_RobotPose[2])))
+            if abs(math.degrees(err)) < self.CHASE_ALIGN_DONE_DEG:
+                done = True
+                break
+        if not done:
+            self._dbg("[Chase] Face-the-bird turn timed out — carrying on")
+        await self._SpeedCap_Publish(restore_speed)
+        return done
 
     async def _publish_chase_move(self, turkey_pos) -> None:
         """W26's straight chase: Move toward the bird; Navigation goes direct inside 5 m."""
