@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import random
 import time
 from typing import Optional
 
@@ -51,7 +52,10 @@ class ModuleDeter:
     HEAD_DEADBAND_DEG = 3.0    # skip head updates smaller than this (detector jitter)
 
     # ── Timing ───────────────────────────────────────────────────────────────
-    BARK_SOUND        = "BarkShort_3x"   # 1.2 s clip; tune by ear on the robot
+    # Each bark is picked at random from these (never the same one twice in a row), so the
+    # birds don't hear one fixed sound. Name -> clip length in s (afinfo, 11-18); the next bark
+    # waits for the clip to finish. Growl (36 s) and AggressiveBark (16 s) are left out: too long.
+    BARK_SOUNDS       = {"BarkShort": 0.6, "BarkShort_2x2": 1.7, "BarkShort_3x": 1.2, "BarkBurst": 5.4}
     BARK_COOLDOWN_S   = 5.0
     LOST_TIMEOUT_S    = 2.0
     TICK_S            = 0.05
@@ -90,6 +94,16 @@ class ModuleDeter:
             if best is None or abs(b) < abs(best):
                 best = b
         return best
+
+    def next_bark(self) -> str:
+        """A random bark from BARK_SOUNDS, never the one just played."""
+        last = getattr(self, "_last_bark_sound", None)
+        return random.choice([b for b in self.BARK_SOUNDS if b != last] or list(self.BARK_SOUNDS))
+
+    def bark_gap(self) -> float:
+        """Seconds before the next bark: the cooldown, or the last clip's length + 0.5 s if longer."""
+        clip = self.BARK_SOUNDS.get(getattr(self, "_last_bark_sound", None), 0.0)
+        return max(self.BARK_COOLDOWN_S, clip + 0.5)
 
     def head_deg(self, bearing_rad: float) -> float:
         deg = self.HEAD_SIGN * math.degrees(bearing_rad)
@@ -135,8 +149,9 @@ class ModuleDeter:
                     last_head = head
 
                 now = time.monotonic()
-                if last_bark is None or now - last_bark >= self.BARK_COOLDOWN_S:
-                    await p._Audio_Publish(self.BARK_SOUND)
+                if last_bark is None or now - last_bark >= self.bark_gap():
+                    self._last_bark_sound = self.next_bark()
+                    await p._Audio_Publish(self._last_bark_sound)
                     last_bark = now
 
             await asyncio.sleep(self.TICK_S)

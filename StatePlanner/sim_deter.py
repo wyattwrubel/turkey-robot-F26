@@ -95,6 +95,8 @@ def is_canine(kind, value=None):
             return False
         if kind == "Servo":
             return d.get("Name") == "Head"
+        if isinstance(value, tuple):
+            return d.get("Data") in value
         return value is None or d.get("Data") == value
     return pred
 
@@ -142,7 +144,7 @@ async def main() -> int:
         tag = f"sighting {i} ({math.degrees(bearing):+.0f} deg)"
         alerts = between(canine, t_show, t_end, is_canine("Pose", "AlertPose"))
         heads  = between(canine, t_show, t_end, is_canine("Servo"))
-        barks  = between(canine, t_show, t_end, is_canine("Audio", ModuleDeter.BARK_SOUND))
+        barks  = between(canine, t_show, t_end, is_canine("Audio", tuple(ModuleDeter.BARK_SOUNDS)))
         idles  = between(canine, t_hide, t_end, is_canine("Pose", "IdlePose"))
 
         expected_head = max(-60.0, min(60.0, ModuleDeter.HEAD_SIGN * math.degrees(bearing)))
@@ -161,6 +163,8 @@ async def main() -> int:
                 check(alerts[0][0] <= heads[0][0] <= barks[0][0], f"{tag}: order AlertPose, head, bark")
         gaps = [b[0] - a[0] for a, b in zip(barks, barks[1:])]
         check(all(g >= ModuleDeter.BARK_COOLDOWN_S - 0.05 for g in gaps), f"{tag}: barks >= cooldown apart")
+        names = [b[1].get("Data") for b in barks]
+        check(all(a != b for a, b in zip(names, names[1:])), f"{tag}: no bark sound twice in a row")
         if show_s > ModuleDeter.BARK_COOLDOWN_S + 1.0:
             check(len(barks) >= 2, f"{tag}: re-barks while it stays in view")
         check(idle_lat is not None

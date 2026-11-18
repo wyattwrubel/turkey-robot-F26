@@ -269,6 +269,7 @@ function handle(m) {
     mapTurkeys = (m.turkeys ?? []).map(t => [t[0], t[1]])
     mapHumans  = (m.humans  ?? []).map(h => [h[0], h[1]])
     applyDetectorMeta(m.meta)
+    applyTurkeyAngle(m.turkeys, m.meta)
   }
 
   // ── Geofence (contract C4) ───────────────────────────────────
@@ -286,6 +287,25 @@ function applyDetectorMeta(meta) {
   const conf = meta.confidence ?? []
   parts.push(conf.length ? `TURKEY ${Math.max(...conf).toFixed(2)}` : 'NO TURKEY')
   el.textContent = parts.join(' · ')
+}
+
+// ── Turkey angle (presentation UI) ────────────────────────────
+// Bearing of the most confident confirmed turkey, in degrees (+ = left, same sign as the head).
+// Holds the last value for 1 s so a single missed frame doesn't blink it to a dash.
+let _lastTurkeyMs = 0
+function applyTurkeyAngle(turkeys, meta) {
+  const el = document.getElementById('turkey-angle')
+  if (!el) return
+  if (turkeys && turkeys.length) {
+    const conf = meta?.confidence ?? []
+    let i = 0
+    for (let k = 1; k < turkeys.length; k++) if ((conf[k] ?? 0) > (conf[i] ?? 0)) i = k
+    const deg = Math.round(turkeys[i][2] * 180 / Math.PI)
+    el.textContent = `${deg > 0 ? '+' : ''}${deg}°`
+    _lastTurkeyMs = Date.now()
+  } else if (Date.now() - _lastTurkeyMs > 1000) {
+    el.textContent = '—'
+  }
 }
 
 // ── Geofence status dot ───────────────────────────────────────
