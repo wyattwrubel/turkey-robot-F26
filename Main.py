@@ -95,6 +95,23 @@ def parse_args(argv=None):
     return args
 
 
+def make_canine(servo_pub, canine_pub, mode):
+    """
+    The dog driver (servos + audio). mode "real" needs the servo board (PCA9685) to answer on
+    I2C at startup. If it doesn't (a loose SCL/SDA wire, the board unpowered), keep going with
+    simulated servos instead of crashing: detection, the planner, the bark and the UI still run,
+    and the UI still shows the commanded angles. Audio never needs the board. (11-17: a loose SCL
+    wire made Main.py --profile deter crash at startup.)
+    """
+    if mode == "real":
+        try:
+            return CanineDriver(servo_pub, canine_pub, Simulated=False, Verbose=False)
+        except Exception as e:
+            print(f"[MAIN] !!! Servo board not answering on I2C ({type(e).__name__}: {e}). "
+                  "Running with simulated servos: no servo motion; audio, detection and the UI still work.")
+    return CanineDriver(servo_pub, canine_pub, Simulated=True, Verbose=False)
+
+
 async def main(args):
     p = PROFILES[args.profile]
     if args.ui == "present":
@@ -150,8 +167,7 @@ async def main(args):
 
     Canine = None
     if p["canine"]:
-        Canine = CanineDriver(ServoFeedback_Canine_pub, Canine_Canine_pub,
-                              Simulated=(p["canine"] == "sim"), Verbose=False)
+        Canine = make_canine(ServoFeedback_Canine_pub, Canine_Canine_pub, p["canine"])
 
     Drivetrain = None
     if p["drivetrain"]:

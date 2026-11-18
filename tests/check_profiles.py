@@ -129,12 +129,46 @@ def check_sim(seconds):
     check("sim reached the timed stop", "--run-for" in text and "stopped" in text)
 
 
+# ── 4. Servo board missing: Main.py keeps going with simulated servos ────────
+def check_canine_fallback():
+    """11-17: a loose SCL wire made the servo board miss its I2C read and Main.py crash at startup."""
+    import contextlib, io
+    import Main
+    SD = sys.modules["ServoDriver"]          # Canine/ imports its modules top-level ("import ServoDriver")
+
+    class Pub:
+        async def publish(self, *_a, **_k):
+            pass
+
+    def no_board():
+        raise BlockingIOError(11, "Resource temporarily unavailable")
+
+    orig_get, orig_kit = SD._get_kit, SD._kit
+    SD._get_kit, SD._kit = no_board, None
+    out = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(out):
+            dog = Main.make_canine(Pub(), Pub(), "real")
+    except Exception as e:
+        dog = None
+        out.write(f"raised {type(e).__name__}: {e}")
+    finally:
+        SD._get_kit, SD._kit = orig_get, orig_kit
+    sims = [sc.servo.Simulated for sc in dog.PoseDriver.servos.values()] if dog else []
+    check("servo board not answering: Main.py falls back to simulated servos, no crash",
+          dog is not None and len(sims) == 5 and all(sims) and "Servo board not answering" in out.getvalue(),
+          out.getvalue().strip()[:90])
+    check("the fallback keeps the audio driver (the bark doesn't need the board)",
+          dog is not None and hasattr(dog, "Audio") and "BarkShort" in dog.Audio.sounds)
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--sim", type=float, default=60.0, metavar="SECONDS")
     a = ap.parse_args()
     check_paths()
     check_profiles()
+    check_canine_fallback()
     check_sim(a.sim)
     print(f"\n{'ALL PASS' if not FAILS else f'{FAILS} FAILED'}")
     sys.exit(1 if FAILS else 0)
