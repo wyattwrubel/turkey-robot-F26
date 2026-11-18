@@ -52,11 +52,18 @@ MODEL_DIR = Path(_env("MODEL_DIR", str(Path.home() / "ME450" / "Sandbox" / "hef"
 # On the robot's Hailo, 67 held-out Open Images photos (94 turkeys): AP50 0.893 vs W26's 0.562,
 # recall@0.25 0.830 vs 0.436, precision 0.876 vs 0.932; live on the camera both ~28 fps, 0 false
 # turkeys in 1,277 lab frames. Its lower precision is mostly real turkeys Open Images didn't label
-# (8 of its 11 'false' boxes; 3 real mistakes: a pebble, a hen, a fence object). Model files aren't
-# in git: if ours isn't on this machine, use W26's turkey_640_v4.hef.
-HEF_OURS = MODEL_DIR / "f26_turkey_v1.hef"
-HEF_W26  = MODEL_DIR / "turkey_640_v4.hef"
-HEF_PATH  = Path(_env("HEF_PATH", str(HEF_OURS if HEF_OURS.exists() else HEF_W26)))
+# (8 of its 11 'false' boxes; 3 real mistakes: a pebble, a hen, a fence object).
+# f26_turkey_v2.hef (default since 11-17) = v1's data plus Open Images people, other birds (Open Images
+# and ENA24) as negatives, camera-degraded copies and small distant turkeys; built by
+# Vision/training/v2_build.py + train_v2.py, compiled at optimization level 1. v1 read people and other
+# birds as turkeys. On the robot's Hailo, same 562 held-out photos, turkey threshold 0.30: people photos
+# with a turkey box 0.7% (v1 24.7%, W26 2.0%), bird photos 4.4% (v1 60.0%, W26 31.1%); turkey AP50
+# 0.871 (v1 0.929, W26 0.554), recall 0.79 / precision 0.95 (v1 0.86 / 0.92). Same speed (~39 ms/image).
+# Model files aren't in git: use v2 if it's on this machine, else v1, else W26's turkey_640_v4.hef.
+HEF_OURS    = MODEL_DIR / "f26_turkey_v2.hef"
+HEF_OURS_V1 = MODEL_DIR / "f26_turkey_v1.hef"
+HEF_W26     = MODEL_DIR / "turkey_640_v4.hef"
+HEF_PATH  = Path(_env("HEF_PATH", str(next((h for h in (HEF_OURS, HEF_OURS_V1) if h.exists()), HEF_W26))))
 PT_PATH   = Path(_env("PT_PATH", str(MODEL_DIR / "turkey_1280.pt")))          # W26 baseline weights
 PT_IMGSZ  = _env("PT_IMGSZ", 640, int)                                         # baseline runs 1280 weights at 640
 
