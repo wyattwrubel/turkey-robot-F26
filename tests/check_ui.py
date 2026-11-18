@@ -144,6 +144,11 @@ def check_presentation_extras():
     check("presentation page: big planner state and head angle, fluff hidden",
           'id="head-angle"' in pres and pres.count("present-hide") >= 7
           and 'id="servo-list"' in pres and 'id="audio-grid"' in pres and 'id="estop-btn"' in pres)
+    pjs = (REPO / "UserInterface" / "WebsitePresent" / ("script" + ".js")).read_text()
+    check("presentation page: Turkey Angle (detected) sits between Planner State and Head Angle",
+          0 < pres.find('id="planner-state"') < pres.find('id="turkey-angle"') < pres.find('id="head-angle"'))
+    check("presentation page: turkey angle follows the vision feed (most confident turkey, degrees)",
+          "applyTurkeyAngle(m.turkeys, m.meta)" in pjs and "turkeys[i][2] * 180 / Math.PI" in pjs)
     for site in SITES:
         js = (REPO / "UserInterface" / site / ("script" + ".js")).read_text()
         check(f"{site}: CAM light counts detector updates as live (Chrome loads MJPEG once)",
