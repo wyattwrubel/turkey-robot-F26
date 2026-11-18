@@ -172,6 +172,14 @@ def check_estop_resume():
     pjs = (REPO / "UserInterface" / "WebsitePresent" / ("script" + ".js")).read_text()
     check("presentation page: Planner State reads ESTOP while E-stopped",
           "if      (m.is_estopped)       { text = 'ESTOP'" in pjs)
+    for site in SITES:
+        js = (REPO / "UserInterface" / site / ("script" + ".js")).read_text()
+        check(f"{site}: E-stop fires on press, and its button is only rewritten when the state changes",
+              "b.onpointerdown    = emergencyStop" in js and "estopped === _estopShown" in js)
+        check(f"{site}: RESET ignores the release of the press that stopped it",
+              "if (Date.now() - _estopPressedAt < 800) return" in js)
+        check(f"{site}: mode button only rewritten when MANUAL/AUTO changes",
+              "m.is_manual !== undefined && m.is_manual !== isManual" in js)
 
 
 # ── 7. Presentation extras: no candidate boxes, stripped page, CAM light ─────
