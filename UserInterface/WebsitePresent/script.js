@@ -273,10 +273,11 @@ function handle(m) {
 
 // ── Detector readout on the camera panel ──────────────────────
 // Meta comes with the onboard detector (contract C2): backend, fps, one confidence per turkey.
+// Presentation UI: fps and turkey status only, large and white over the top of the camera area.
 function applyDetectorMeta(meta) {
-  const el = document.getElementById('cam-sub')
+  const el = document.getElementById('cam-stats')
   if (!el || !meta) return
-  const parts = [`DETECTOR ${String(meta.backend ?? '?').toUpperCase()}`]
+  const parts = []
   if (meta.fps != null) parts.push(`${Math.round(meta.fps)} FPS`)
   const conf = meta.confidence ?? []
   parts.push(conf.length ? `TURKEY ${Math.max(...conf).toFixed(2)}` : 'NO TURKEY')
