@@ -31,6 +31,9 @@ Mode / estop invariants
 Resume sequence after estop:
   1. Operator presses RESET  → estop_reset  → _estop cleared, stays manual
   2. Operator presses AUTO   → toggle_mode  → unlocks only if _estop clear
+  Exception (resume_auto_after_estop=True, set by Main.py only when there is no
+  drivetrain, i.e. deter / vision): if E-stop interrupted AUTO, RESET goes straight
+  back to AUTO. A driving profile never restarts motion on RESET.
 """
 
 import json
@@ -55,12 +58,14 @@ class PanelControls:
                  drivetrain_publisher,
                  canine_publisher,
                  macrostate_publisher,
-                 navigation_publisher):
+                 navigation_publisher,
+                 resume_auto_after_estop: bool = False):
         self._robot          = robot
         self._drivetrain_pub = drivetrain_publisher
         self._canine_pub     = canine_publisher
         self._macrostate_pub = macrostate_publisher
         self._navigation_pub = navigation_publisher
+        self._resume_auto_after_estop = resume_auto_after_estop
 
     # ═══════════════════════════════════════════════════════════
     # INBOUND — system → UI state
@@ -143,7 +148,11 @@ class PanelControls:
 
         elif msg_type == "estop_reset":
             self._robot.estop_release()
-            # Stays in manual — operator must explicitly press AUTO to resume.
+            # Stays in manual, unless this profile can't drive and E-stop interrupted AUTO.
+            if self._resume_auto_after_estop and self._robot.was_auto_at_estop:
+                self._robot.was_auto_at_estop = False
+                print("[UI SAFETY] E-stop reset → back to AUTO (no drivetrain in this profile)")
+                await self._handle_toggle_mode()
 
         elif msg_type == "toggle_mode":
             await self._handle_toggle_mode()
@@ -242,3 +251,4 @@ class PanelControls:
         await self._pub_drivetrain("UI", 0.0, 0.0)
         await self._navigation_pub.publish({"Id": "SpeedCap", "Cmd": 0})
         await self._macrostate_pub.publish({"Id": "Stop"})
+        await self._pub_audio("Stop")      # silence the dog now, not only via the planner

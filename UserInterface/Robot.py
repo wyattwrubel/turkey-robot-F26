@@ -78,6 +78,7 @@ class Robot:
         self._last_heartbeat = time.monotonic()
         self.HEARTBEAT_TIMEOUT = 1.0   # seconds
         self._auto_ever_engaged = False
+        self.was_auto_at_estop  = False   # set by estop_engage; read by Controls on RESET
 
     # ── Sensors ───────────────────────────────────────────────
     def set_robot_pose(self, x, y, theta): self.x, self.y, self.theta = x, y, theta
@@ -99,6 +100,8 @@ class Robot:
 
     # ── Safety ────────────────────────────────────────────────
     def estop_engage(self):
+        if not self._estop:                       # remember the mode E-stop interrupted
+            self.was_auto_at_estop = not self.ui_locked
         self._estop    = True
         self.ui_locked = True
         self.cmd_left  = 0.0
