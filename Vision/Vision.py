@@ -426,6 +426,9 @@ class VisionObject:
         self._confirmer = Confirmer()
         self._camera_model = CameraModel()
         model = vcfg.HEF_PATH.name if self.Backend == "hailo" else vcfg.PT_PATH.name
+        if self.Backend == "hailo" and vcfg.HEF_PATH == vcfg.HEF_OURS_V1 and not vcfg.HEF_OURS.exists():
+            print(f"[Vision] !!! {vcfg.HEF_OURS.name} isn't in {vcfg.MODEL_DIR}; running {vcfg.HEF_OURS_V1.name}, "
+                  "which reads people and other birds as turkeys")
         if self.Backend == "hailo" and vcfg.HEF_PATH == vcfg.HEF_W26 and not vcfg.HEF_OURS.exists():
             print(f"[Vision] !!! our model {vcfg.HEF_OURS.name} isn't in {vcfg.MODEL_DIR}; "
                   f"running W26's {vcfg.HEF_W26.name} instead")
