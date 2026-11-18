@@ -11,11 +11,14 @@ Checks the X2 "done when" rules:
   2. the bird's bearing never leaves the FOV (|bearing| <= HFOV_DEG / 2)
   3. the robot stops 4 m +- 0.5 m from the bird
   4. it never loses the bird (no Alert)
-and saves a plot of W26's straight chase vs. the zig-zag for the slides.
+for 8 start angles, each with the zig-zag and with W26's straight chase (most
+grid directions matter: from 180 deg alone the A* path lines up with the bird),
+and saves a plot of both for the slides.
 
 Needs casadi and scipy (matplotlib for the plot). Run from the repo root:
-    python3 -m StatePlanner.sim_zigzag                      # ~1.5 min
+    python3 -m StatePlanner.sim_zigzag                      # ~5 min
     python3 -m StatePlanner.sim_zigzag --plot zigzag.png --seed 7
+    python3 -m StatePlanner.sim_zigzag --angles 180 140 220 --no-straight   # quicker
 It runs in real time on the open 100 x 100 m test field (Navigation/FakeZone.csv).
 Until W0 lands, it points the map loaders at the repo's own files itself.
 """
@@ -197,13 +200,15 @@ def plot(runs, path):
         print("matplotlib not installed — skipping the plot")
         return
     fig, (ax, axb) = plt.subplots(1, 2, figsize=(13, 5.5), gridspec_kw={"width_ratios": [1.3, 1]})
-    colors = ["#2a78d6", "#e8743b", "#1a9e77", "#8f5bd6", "#d6455d"]
-    zi = 0
+    colors = ["#2a78d6", "#e8743b", "#1a9e77", "#8f5bd6", "#d6455d", "#b8860b", "#17becf", "#7f7f2f"]
+    zi, straight_labelled = 0, False
     for run in runs:
         s = np.array([r[:6] for r in run["samples"]], dtype=float)
         t = s[:, 0] - s[0, 0]
         if run["approach"] == "straight":
-            style = dict(color="#777777", ls="--", lw=2, label="W26 straight chase")
+            style = dict(color="#777777", ls="--", lw=1.2,
+                         label=None if straight_labelled else "W26 straight chase")
+            straight_labelled = True
         else:
             style = dict(color=colors[zi % len(colors)], lw=2, label=f"zig-zag (seed {run['seed']})")
             zi += 1
@@ -233,9 +238,10 @@ def plot(runs, path):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--seed", type=int, default=1, help="first zig-zag seed")
-    ap.add_argument("--angles", type=float, nargs="+", default=[180.0, 140.0, 220.0],
+    ap.add_argument("--angles", type=float, nargs="+",
+                    default=[180.0, 140.0, 220.0, 160.0, 200.0, 120.0, 240.0, 150.0],
                     help="start angles around the decoy (deg, zone heading)")
-    ap.add_argument("--no-straight", action="store_true", help="skip the W26 comparison run")
+    ap.add_argument("--no-straight", action="store_true", help="skip the W26 comparison runs")
     ap.add_argument("--plot", default="zigzag_vs_straight.png", help="output image")
     ap.add_argument("--verbose", action="store_true", help="planner debug prints")
     args = ap.parse_args()
@@ -243,9 +249,9 @@ def main():
     print(f"HFOV_DEG = {HFOV_DEG}  (zig offsets <= {HFOV_DEG / 2 - 10:.0f} deg)")
     jobs = [("zigzag", a, args.seed + i) for i, a in enumerate(args.angles)]
     if not args.no_straight:
-        jobs.append(("straight", args.angles[0], 0))
+        jobs += [("straight", a, 0) for a in args.angles]
 
-    runs, failures = [], 0
+    runs, failures, summary = [], 0, []
     for approach, angle, seed in jobs:
         print(f"\n── {approach}, start angle {angle:.0f} deg, seed {seed} ──")
         run = asyncio.run(run_one(start_pose(angle), approach, seed, args.verbose))
@@ -268,6 +274,19 @@ def main():
         for ok, what in checks:
             print(f"   {'PASS' if ok else 'FAIL'}  {what}")
             failures += not ok
+        summary.append((approach, angle, seed, run["outcome"], ev["max_bearing_deg"], ev["final_dist_m"]))
+
+    print("\nSummary")
+    print("approach  start  seed  outcome                max|bearing|  stopped at")
+    for approach, angle, seed, outcome, mb, d in summary:
+        flag = "" if mb <= HFOV_DEG / 2.0 else "  <- out of view"
+        print(f"{approach:8s}  {angle:5.0f}  {seed:4d}  {outcome:21s}  {mb:9.1f} deg  {d:6.2f} m{flag}")
+    for approach in ("zigzag", "straight"):
+        rows = [r for r in summary if r[0] == approach]
+        if rows:
+            kept = sum(1 for r in rows if r[4] <= HFOV_DEG / 2.0)
+            held = sum(1 for r in rows if r[3] == "held")
+            print(f"{approach:8s}: bird kept in view {kept}/{len(rows)}, held without losing it {held}/{len(rows)}")
 
     plot(runs, args.plot)
     print(f"\n{'ALL PASSED' if failures == 0 else f'{failures} check(s) FAILED'}")
