@@ -130,6 +130,50 @@ def check_sources():
               and "applySources(m.sources)" in js and ">UWB<" not in page)
 
 
+# ── 8. E-stop: silences the dog, stops the planner, RESET resumes only when nothing drives ──
+class _Rec:
+    def __init__(self):
+        self.msgs = []
+
+    async def publish(self, data):
+        self.msgs.append(data)
+
+
+def check_estop_resume():
+    from Robot import Robot
+    from Controls import PanelControls
+
+    async def scenario(resume_allowed, start_auto):
+        r = Robot()
+        drive, canine, macro, nav = _Rec(), _Rec(), _Rec(), _Rec()
+        c = PanelControls(r, drive, canine, macro, nav, resume_auto_after_estop=resume_allowed)
+        if start_auto:
+            await c.handle_ui_message({"type": "toggle_mode"})
+        macro.msgs.clear(); canine.msgs.clear()
+        await c.handle_ui_message({"type": "estop"})
+        after_estop = (r.to_state_msg()["is_estopped"], list(macro.msgs), list(canine.msgs))
+        macro.msgs.clear()
+        await c.handle_ui_message({"type": "estop_reset"})
+        return after_estop, r.to_state_msg()["is_manual"], list(macro.msgs)
+
+    (est, mac, can), manual, mac2 = asyncio.run(scenario(True, True))
+    check("E-stop: planner told Stop and the dog's audio stopped directly",
+          est and {"Id": "Stop"} in mac and {"Id": "UI", "Type": "Audio", "Data": "Stop"} in can, f"{mac} {can}")
+    check("RESET after E-stop in AUTO, no-drivetrain profile: back to AUTO (planner re-armed)",
+          not manual and {"Id": "UnlockUI"} in mac2, f"manual={manual} {mac2}")
+    _, manual, mac2 = asyncio.run(scenario(False, True))
+    check("RESET in a driving profile: stays MANUAL, nothing re-armed",
+          manual and {"Id": "UnlockUI"} not in mac2, f"manual={manual} {mac2}")
+    _, manual, mac2 = asyncio.run(scenario(True, False))
+    check("RESET after E-stop in MANUAL: stays MANUAL", manual and not mac2, f"manual={manual} {mac2}")
+    main_py = (REPO / "Main.py").read_text()
+    check("Main.py allows RESET-to-AUTO only without a drivetrain",
+          'resume_auto_after_estop=(p["drivetrain"] is None)' in main_py)
+    pjs = (REPO / "UserInterface" / "WebsitePresent" / ("script" + ".js")).read_text()
+    check("presentation page: Planner State reads ESTOP while E-stopped",
+          "if      (m.is_estopped)       { text = 'ESTOP'" in pjs)
+
+
 # ── 7. Presentation extras: no candidate boxes, stripped page, CAM light ─────
 def check_presentation_extras():
     import Vision.config as vcfg
@@ -321,6 +365,7 @@ def main():
     check_sites()
     check_sources()
     check_presentation_extras()
+    check_estop_resume()
     if not args.no_sim:
         check_watchdog()
     print("\nALL PASS" if FAILS == 0 else f"\n{FAILS} check(s) FAILED")

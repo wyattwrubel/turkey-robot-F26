@@ -56,7 +56,8 @@ def _to_json(msg: dict) -> str:
 class CDSControlServer:
 
     def __init__(self, drivetrain_publisher, canine_publisher, macrostate_publisher, navigation_publisher,
-                 site: str = "ops", sources: dict | None = None):
+                 site: str = "ops", sources: dict | None = None,
+                 resume_auto_after_estop: bool = False):
         if site not in SITES:
             raise ValueError(f"unknown UI site {site!r}; choose from {sorted(SITES)}")
         self.site       = site
@@ -73,6 +74,7 @@ class CDSControlServer:
             canine_publisher,
             macrostate_publisher,
             navigation_publisher,
+            resume_auto_after_estop=resume_auto_after_estop,
         )
 
         self.connections: set[WebSocket] = set()

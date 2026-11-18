@@ -382,7 +382,7 @@ function _applyPlannerState(m) {
   const el = document.getElementById('planner-state')
   if (!el) return
   let text, cls
-  if      (m.is_estopped)       { text = 'E-STOP';  cls = 'v e' }
+  if      (m.is_estopped)       { text = 'ESTOP';   cls = 'v e' }
   else if (m.is_manual)         { text = 'MANUAL';  cls = 'v'   }
   else if (PLANNER_STATES[m.macrostate]) [text, cls] = PLANNER_STATES[m.macrostate]
   else                          { text = m.macrostate ?? '—'; cls = 'v' }

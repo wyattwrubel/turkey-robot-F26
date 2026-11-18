@@ -213,7 +213,9 @@ async def main(args):
         "drivetrain": (p["drivetrain"] or "off"),
     }
     UI = CDSControlServer(DriveCommand_UI_pub, Canine_UI_pub, MacroState_UI_pub, MotionCommand_UI_pub,
-                          site=args.ui, sources=sources)
+                          site=args.ui, sources=sources,
+                          # RESET may go back to AUTO only when nothing can drive
+                          resume_auto_after_estop=(p["drivetrain"] is None))
 
     # ─────────────────────────────────────────────────────────────────────────
     # SUBSCRIPTION PATHS (a receiver on a missing module is skipped)
