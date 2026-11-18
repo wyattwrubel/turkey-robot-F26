@@ -67,12 +67,13 @@
   <!-- ③ DIAGNOSTICS -->
   <div class="panel">
     <div class="ph">
-      <div class="ph-title">System Diagnostics</div>
-      <div class="ph-sub">LIVE &nbsp;·&nbsp; 10 HZ</div>
+      <div class="ph-title">Robot Status</div>
     </div>
-    <div class="pbody">
+    <div class="pbody status-body">
 
-      <div class="drow">
+      <!-- Hidden in the presentation UI (all zeros in deter mode). Kept in the page because
+           script.js writes to these elements. -->
+      <div class="drow present-hide">
         <div class="db">
           <div class="dl">GPS + IMU (raw)</div>
           <div class="dv">
@@ -91,7 +92,7 @@
         </div>
       </div>
 
-      <div class="drow">
+      <div class="drow present-hide">
         <div class="db">
           <div class="dl">Nav Command</div>
           <div class="dv"><span class="v w" id="nav-cmd-type">IDLE</span></div>
@@ -106,7 +107,7 @@
         </div>
       </div>
 
-      <div class="drow">
+      <div class="drow present-hide">
         <div class="db full">
           <div class="dl">Drivetrain</div>
           <div class="drive-readout">
@@ -123,13 +124,20 @@
       </div>
 
       <div class="drow">
-        <div class="db full">
+        <div class="db full big">
           <div class="dl">Planner State</div>
           <div class="dv"><span class="v" id="planner-state">—</span></div>
         </div>
       </div>
 
       <div class="drow">
+        <div class="db full big">
+          <div class="dl">Head Angle (commanded)</div>
+          <div class="dv"><span class="v" id="head-angle">0°</span></div>
+        </div>
+      </div>
+
+      <div class="drow present-hide">
         <div class="db full">
           <div class="dl">MacroState Commands</div>
           <div class="macrostate-g">
@@ -179,8 +187,8 @@
         <!-- LEFT: Poses + Servos + Audio -->
         <div class="ctrl-col">
 
-          <div class="clbl">Robot Poses</div>
-          <div class="pose-g">
+          <div class="clbl present-hide">Robot Poses</div>
+          <div class="pose-g present-hide">
             <button class="btn" data-pose-id="IdlePose"        onclick="sendPose('IdlePose',this)">Idle Pose</button>
             <button class="btn" data-pose-id="AlertPose"       onclick="sendPose('AlertPose',this)">Alert Pose</button>
             <button class="btn" data-pose-id="AggressivePose"  onclick="sendPose('AggressivePose',this)">Aggressive Pose</button>
@@ -190,7 +198,7 @@
             <button class="btn" data-pose-id="HeadScan"        onclick="sendPose('HeadScan',this)">Head Scan</button>
           </div>
 
-          <div class="div"></div>
+          <div class="div present-hide"></div>
           <div class="clbl">Servo Angles</div>
           <div class="servo-list" id="servo-list"></div>
 
@@ -200,8 +208,8 @@
 
         </div>
 
-        <!-- RIGHT: Speed + Drive + WASD -->
-        <div class="ctrl-col">
+        <!-- RIGHT: Speed + Drive + WASD (hidden in the presentation UI: no driving in the demo) -->
+        <div class="ctrl-col present-hide">
 
           <div class="clbl">Speed Limit</div>
           <div class="speed-wrap">

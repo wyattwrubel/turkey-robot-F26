@@ -67,6 +67,9 @@ let _lastS      = 1
 
 // Camera — base64/WebSocket fields removed; MJPEG uses an <img> element
 const CAM_TIMEOUT_MS = 3000
+// Last detector update (vision Meta, ~28 Hz). Chrome fires an <img> load only once for an
+// MJPEG stream, so the robot's own frame updates are the reliable sign the camera is live.
+let _lastVisionMs = 0
 
 // Pose / macrostate
 let _activePose       = null
@@ -262,6 +265,7 @@ function handle(m) {
 
   // ── Vision detections ────────────────────────────────────────
   if (m.type === 'vision') {
+    if (m.meta) _lastVisionMs = Date.now()
     mapTurkeys = (m.turkeys ?? []).map(t => [t[0], t[1]])
     mapHumans  = (m.humans  ?? []).map(h => [h[0], h[1]])
     applyDetectorMeta(m.meta)
@@ -388,6 +392,13 @@ function syncServos(servos) {
     if (sl) { sl.value = sv.angle; updateSliderBg(sl) }
     if (vl) vl.textContent = `${Number(sv.angle).toFixed(1)}°`
   })
+  // Presentation UI: the head's commanded angle, large (the dog aims it at the turkey's bearing)
+  const head = servos?.find(sv => sv.id === 'Head')
+  const hv   = document.getElementById('head-angle')
+  if (head && hv) {
+    const deg = Math.round(Number(head.angle))
+    hv.textContent = `${deg > 0 ? '+' : ''}${deg}°`
+  }
 }
 
 // ═══════════════════════════════════════════════
@@ -649,7 +660,7 @@ function _initCamera() {
   // If no onload has fired in CAM_TIMEOUT_MS, show overlay and
   // force a fresh HTTP request by replacing the src with a cache-buster.
   setInterval(() => {
-    const elapsed = Date.now() - lastLoad
+    const elapsed = Date.now() - Math.max(lastLoad, _lastVisionMs)
     if (elapsed > CAM_TIMEOUT_MS) {
       if (!stalled) {
         stalled = true
@@ -662,6 +673,7 @@ function _initCamera() {
       // Prod the src — opens a brand-new TCP connection to /camera
       if (!reloading) _reloadCamImg(img)
     } else {
+      stalled = false
       if (camDot) camDot.className = 'dot'      // green — frames flowing
     }
   }, 1000)

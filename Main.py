@@ -8,7 +8,8 @@ Main.py: starts the robot software in one of four run profiles (DR2 plan, contra
 
 Options:
     --ui ops|present which page port 8000 serves: the full operator UI (default) or the
-                     presentation copy with no zone map (UserInterface/WebsitePresent)
+                     presentation copy with no zone map (UserInterface/WebsitePresent);
+                     present also hides the grey "candidate" boxes in the video
     --gps sim|real   real GPS receiver (full only; default sim)
     --imu sim|real   real IMU (full only; default sim until the gyro-heading work, W1, lands:
                      today's IMU mode is the magnetometer heading the robot's motors corrupt)
@@ -96,6 +97,10 @@ def parse_args(argv=None):
 
 async def main(args):
     p = PROFILES[args.profile]
+    if args.ui == "present":
+        # No grey "candidate" boxes in the video for an audience; confirmed turkeys still drawn.
+        from Vision import config as vcfg
+        vcfg.SHOW_CANDIDATES = False
     print(f"[MAIN] Profile '{args.profile}': " + ", ".join(f"{k}={v}" for k, v in p.items())
           + f", gps={args.gps if p['sensors'] else None}, imu={args.imu if p['sensors'] else None}")
 

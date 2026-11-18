@@ -85,5 +85,10 @@ CONFIRM_N = _env("CONFIRM_N", 5, int)
 TRACK_GATE = 0.15        # max centroid jump between frames, as a fraction of image width
 TRACK_DROP_MISSES = 5    # forget a track after this many frames without a match
 
+# Draw unconfirmed turkey candidates (grey boxes) into the video. On by default, so the operator
+# sees what the model sees; Main.py --ui present turns it off for an audience, where a grey box on a
+# person reads as a detection. Read on every frame, so it can be changed at runtime.
+SHOW_CANDIDATES = bool(_env("SHOW_CANDIDATES", 1, int))
+
 # ── Camera-only range (fallback until the LiDAR gives range along the bearing) ─
 TURKEY_HEIGHT_M = 0.75   # assumed standing height of a wild turkey (0.6 to 0.9 m)

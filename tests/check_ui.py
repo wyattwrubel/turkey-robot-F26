@@ -21,6 +21,8 @@ No robot needed. Run from the repo root with the laptop venv:
      drops the zone map; both keep the servo limits (check 4).
   6. The GPS / IMU / drivetrain dots come from the run profile and data arrival, not hard-coded
      green (the drivetrain dot said 'on' with the drivetrain powered off, 11-17).
+  7. --ui present hides the grey candidate boxes and serves the stripped page; both pages treat
+     the detector's updates as proof the camera is live.
 Exit code 0 means every check passed.
 """
 
@@ -126,6 +128,26 @@ def check_sources():
         check(f"{site}: GPS / IMU / drivetrain dots have ids the page updates",
               all(f'id="{i}"' in page for i in ("gps-dot", "imu-dot", "dt-dot"))
               and "applySources(m.sources)" in js and ">UWB<" not in page)
+
+
+# ── 7. Presentation extras: no candidate boxes, stripped page, CAM light ─────
+def check_presentation_extras():
+    import Vision.config as vcfg
+    check("candidate boxes on by default (operator UI)", vcfg.SHOW_CANDIDATES is True)
+    vis = (REPO / "Vision" / "Vision.py").read_text()
+    main_py = (REPO / "Main.py").read_text()
+    check("Vision draws candidates only when config.SHOW_CANDIDATES",
+          "if vcfg.SHOW_CANDIDATES:" in vis)
+    check("--ui present turns candidate boxes off",
+          'if args.ui == "present":' in main_py and "vcfg.SHOW_CANDIDATES = False" in main_py)
+    pres = (REPO / "UserInterface" / "WebsitePresent" / "index.html").read_text()
+    check("presentation page: big planner state and head angle, fluff hidden",
+          'id="head-angle"' in pres and pres.count("present-hide") >= 7
+          and 'id="servo-list"' in pres and 'id="audio-grid"' in pres and 'id="estop-btn"' in pres)
+    for site in SITES:
+        js = (REPO / "UserInterface" / site / ("script" + ".js")).read_text()
+        check(f"{site}: CAM light counts detector updates as live (Chrome loads MJPEG once)",
+              "_lastVisionMs = Date.now()" in js and "Math.max(lastLoad, _lastVisionMs)" in js)
 
 
 def fetch(path):
@@ -293,6 +315,7 @@ def main():
     check_servo_limits()
     check_sites()
     check_sources()
+    check_presentation_extras()
     if not args.no_sim:
         check_watchdog()
     print("\nALL PASS" if FAILS == 0 else f"\n{FAILS} check(s) FAILED")
