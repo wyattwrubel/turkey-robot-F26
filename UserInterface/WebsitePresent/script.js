@@ -241,8 +241,8 @@ function handle(m) {
     }
 
     // Mode sync
-    if (m.is_manual !== undefined) {
-      isManual = m.is_manual
+    if (m.is_manual !== undefined && m.is_manual !== isManual) {   // only on change: rewriting
+      isManual = m.is_manual                                       // the mode button 10x/s ate clicks
       _applyModeUI()
     }
   }
@@ -532,11 +532,17 @@ document.addEventListener('keyup', e => {
 // ═══════════════════════════════════════════════
 // E-STOP
 // ═══════════════════════════════════════════════
+// E-stop fires on PRESS (pointerdown), not on release: a stop shouldn't wait for the click
+// to complete, and the button's text used to be rewritten 10x/s, which made Chrome drop clicks.
+let _estopPressedAt = 0
 function emergencyStop() {
+  _estopPressedAt = Date.now()
   send({ type: 'estop' })
 }
 
 function resetEStop() {
+  // Ignore the release of the same press that triggered the stop.
+  if (Date.now() - _estopPressedAt < 800) return
   send({ type: 'estop_reset' })
 }
 
@@ -608,17 +614,22 @@ function _stopHeartbeat() {
   if (_heartbeatTimer) { clearInterval(_heartbeatTimer); _heartbeatTimer = null }
 }
 
+// Touch the button only when the E-stop state changes (rewriting it every 100 ms ate clicks).
+let _estopShown = null
 function _applyEstopUI(estopped) {
   const b = document.getElementById('estop-btn')
-  if (!b) return
+  if (!b || estopped === _estopShown) return
+  _estopShown = estopped
   if (estopped) {
     b.textContent      = '⬡ STOPPED — CLICK TO RESET'
     b.style.background = 'rgba(255,34,51,.35)'
+    b.onpointerdown    = null
     b.onclick          = resetEStop
   } else {
     b.textContent      = '⬡ EMERGENCY STOP'
     b.style.background = ''
-    b.onclick          = emergencyStop
+    b.onpointerdown    = emergencyStop
+    b.onclick          = null
   }
 }
 
