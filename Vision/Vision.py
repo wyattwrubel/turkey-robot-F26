@@ -458,11 +458,13 @@ class VisionObject:
             x_cam, y_cam, bearing, _ = cam.locate(d.box)
             human_local.append([x_cam, y_cam, bearing])
             overlay.append({"class_name": "person", "confidence": d.conf, "bbox": list(d.box)})
-        # unconfirmed turkey candidates are drawn too, so the demo shows what the model sees
-        confirmed_ids = {id(t) for t in confirmed}
-        for tr in self._confirmer.tracks:
-            if id(tr) not in confirmed_ids and tr.hits and tr.hits[-1] == 1:
-                overlay.append({"class_name": "candidate", "confidence": tr.conf, "bbox": list(tr.box)})
+        # unconfirmed turkey candidates are drawn too, so the operator sees what the model sees
+        # (off for an audience: config.SHOW_CANDIDATES, set by Main.py --ui present)
+        if vcfg.SHOW_CANDIDATES:
+            confirmed_ids = {id(t) for t in confirmed}
+            for tr in self._confirmer.tracks:
+                if id(tr) not in confirmed_ids and tr.hits and tr.hits[-1] == 1:
+                    overlay.append({"class_name": "candidate", "confidence": tr.conf, "bbox": list(tr.box)})
 
         with self._detections_lock:
             self._latest_detections = overlay
